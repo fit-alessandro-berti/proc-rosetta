@@ -216,6 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+nohup.out
 
 # proc-rosetta generated artifacts
 /data/
