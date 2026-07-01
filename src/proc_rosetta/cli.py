@@ -41,6 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--hidden-dim", type=int, default=128)
     train.add_argument("--seed", type=int, default=13)
     train.add_argument("--device", default="cpu")
+    train.add_argument("--quiet", action="store_true", help="disable stderr debug messages and progress bars")
 
     test = subparsers.add_parser("test", help="load a checkpoint and evaluate the persisted test split")
     test.add_argument("--data-dir", default="data")
@@ -94,6 +95,7 @@ def run_train(args: argparse.Namespace) -> int:
         data_dir=args.data_dir,
         checkpoint_path=args.checkpoint,
         train_config=train_config,
+        show_progress=not args.quiet,
     )
     for row in history:
         print(json.dumps(round_nested_metrics(row), sort_keys=True))

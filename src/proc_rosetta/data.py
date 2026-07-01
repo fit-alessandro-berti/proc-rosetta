@@ -58,12 +58,12 @@ class SyntheticProcessDataset(Dataset[ProcessSample]):
 
 
 class JsonlProcessDataset(Dataset[ProcessSample]):
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, show_progress: bool = False) -> None:
         path = Path(path)
         if path.is_dir():
             path = path / SAMPLES_FILENAME
         self.path = path
-        self.samples = read_samples_jsonl(path)
+        self.samples = read_samples_jsonl(path, show_progress=show_progress)
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -172,13 +172,21 @@ def write_samples_jsonl(path: str | Path, samples: Sequence[ProcessSample]) -> N
             handle.write("\n")
 
 
-def read_samples_jsonl(path: str | Path) -> list[ProcessSample]:
+def read_samples_jsonl(path: str | Path, show_progress: bool = False) -> list[ProcessSample]:
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"sample file does not exist: {path}")
     samples: list[ProcessSample] = []
+    total = count_lines(path) if show_progress else None
     with path.open("r", encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
+        iterator = progress_iterator(
+            handle,
+            total=total,
+            desc=f"Loading {path.parent.name}",
+            enabled=show_progress,
+            unit="samples",
+        )
+        for line_number, line in enumerate(iterator, start=1):
             line = line.strip()
             if not line:
                 continue
@@ -252,6 +260,19 @@ def load_data_metadata(data_dir: str | Path) -> dict[str, object]:
         raise FileNotFoundError(f"metadata file does not exist: {metadata_path}")
     with metadata_path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def count_lines(path: Path) -> int:
+    with path.open("r", encoding="utf-8") as handle:
+        return sum(1 for _ in handle)
+
+
+def progress_iterator(iterable: Any, enabled: bool, **kwargs: Any) -> Any:
+    if not enabled:
+        return iterable
+    from tqdm.auto import tqdm
+
+    return tqdm(iterable, leave=False, **kwargs)
 
 
 def _mean(values: Sequence[float] | Any) -> float:

@@ -99,6 +99,7 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert exit_code == 0
+    assert "[train] Starting epoch 1/1" in captured.err
     row = json.loads(captured.out.strip().splitlines()[-1])
     assert row["epoch"] == 1
     assert row["training"]["loss"] > 0

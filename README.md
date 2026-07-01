@@ -47,6 +47,10 @@ epoch, and saves a checkpoint to `checkpoints/proc_rosetta.pt`. `test.py` loads
 that checkpoint and evaluates `data/test` with a human-readable benchmark
 report.
 
+Training progress bars and debug messages are printed to stderr, while per-epoch
+metrics stay as JSON lines on stdout. Use `./train.py --quiet` to suppress the
+debug/progress output.
+
 You can control the generated data and training run:
 
 ```bash
