@@ -29,9 +29,9 @@ class BatchConfig:
 
 @dataclass(frozen=True)
 class SplitCounts:
-    training: int = 128
-    validation: int = 32
-    test: int = 32
+    training: int = 2000
+    validation: int = 256
+    test: int = 256
 
     def items(self) -> tuple[tuple[str, int], ...]:
         return (

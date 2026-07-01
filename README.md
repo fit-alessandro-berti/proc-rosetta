@@ -50,8 +50,8 @@ report.
 You can control the generated data and training run:
 
 ```bash
-./sample.py --train-count 256 --validation-count 64 --test-count 64 --traces-per-sample 12
-./train.py --epochs 10 --batch-size 16 --checkpoint checkpoints/proc_rosetta.pt
+./sample.py --train-count 4000 --validation-count 512 --test-count 512 --traces-per-sample 24
+./train.py --epochs 30 --batch-size 64 --checkpoint checkpoints/proc_rosetta.pt
 ./test.py --checkpoint checkpoints/proc_rosetta.pt
 ```
 

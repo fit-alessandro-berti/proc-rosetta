@@ -1,6 +1,22 @@
 import json
 
 from proc_rosetta.cli import main
+from proc_rosetta.cli import build_parser, split_counts_from_args
+
+
+def test_default_sample_and_train_values_match_recommended_run():
+    parser = build_parser()
+
+    sample_args = parser.parse_args(["sample"])
+    train_args = parser.parse_args(["train"])
+    split_counts = split_counts_from_args(sample_args)
+
+    assert split_counts.training == 2000
+    assert split_counts.validation == 256
+    assert split_counts.test == 256
+    assert sample_args.traces_per_sample == 16
+    assert train_args.epochs == 20
+    assert train_args.batch_size == 32
 
 
 def test_sample_cli_recreates_data_splits(tmp_path, capsys):
