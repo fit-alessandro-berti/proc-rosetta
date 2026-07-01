@@ -20,6 +20,37 @@ This is intentionally block-structured first. Direct arbitrary Petri-net
 decoding is left for a later stage because validity, soundness, and graph
 matching are materially harder.
 
+## Research questions
+
+The current implementation addresses three paper-level research questions:
+
+1. Can heterogeneous process-mining artifacts, namely event logs, process trees,
+   and Petri nets, be encoded into a shared latent space that preserves
+   process-behavior similarity?
+2. Can neural cross-modal translation recover a valid block-structured process
+   tree from either an event log or a Petri net, and can the decoded tree be
+   converted back into a valid Petri net?
+3. Do learned ProcRosetta embeddings and decoded models capture behavioral
+   similarity better than deterministic log features, Petri structural features,
+   and a pm4py Petri-net Node2Vec baseline?
+
+## Preliminary answers
+
+1. The shared latent-space objective is feasible in the current synthetic
+   setting. `test.py` measures this through cross-modal retrieval, pairwise
+   distance agreement, nearest-neighbor behavioral distance, and Spearman
+   correlation between latent distance and behavioral distance.
+2. ProcRosetta can translate event logs and Petri nets into process trees when
+   the inputs resemble the block-structured training distribution. The
+   decode-quality report measures whether each latent source terminates as a
+   valid process tree, whether the tree exactly matches the synthetic ground
+   truth, and whether it can be converted into a Petri net with pm4py.
+3. The learned representation is competitive but not uniformly dominant. The
+   benchmark compares ProcRosetta against deterministic log features, Petri
+   structural counts, and pm4py Petri Node2Vec; the strongest method can vary by
+   metric, so the reported ranking should be interpreted as empirical evidence
+   rather than a universal claim.
+
 ## Quick start
 
 Run the root command scripts directly from a checkout. No editable install is
