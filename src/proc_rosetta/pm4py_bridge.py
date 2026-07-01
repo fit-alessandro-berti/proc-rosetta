@@ -45,6 +45,19 @@ class PetriGraph:
             "final_marking": list(self.final_marking),
         }
 
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "PetriGraph":
+        return PetriGraph(
+            node_types=tuple(int(value) for value in data["node_types"]),
+            node_names=tuple(str(value) for value in data["node_names"]),
+            transition_labels=tuple(
+                None if value is None else str(value) for value in data["transition_labels"]
+            ),
+            edges=tuple(tuple(int(value) for value in edge) for edge in data["edges"]),
+            initial_marking=tuple(float(value) for value in data["initial_marking"]),
+            final_marking=tuple(float(value) for value in data["final_marking"]),
+        )
+
 
 @dataclass(frozen=True)
 class PetriNetBundle:

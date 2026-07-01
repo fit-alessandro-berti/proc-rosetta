@@ -8,11 +8,22 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_sample_script_runs_without_install_bootstrap():
+    data_dir = ROOT / ".tmp-test-data-script"
+    if data_dir.exists():
+        import shutil
+
+        shutil.rmtree(data_dir)
     result = subprocess.run(
         [
             sys.executable,
             str(ROOT / "sample.py"),
-            "--count",
+            "--data-dir",
+            str(data_dir),
+            "--train-count",
+            "1",
+            "--validation-count",
+            "1",
+            "--test-count",
             "1",
             "--max-depth",
             "2",
@@ -25,32 +36,61 @@ def test_sample_script_runs_without_install_bootstrap():
         text=True,
     )
 
-    row = json.loads(result.stdout.strip().splitlines()[-1])
-    assert "tree" in row
-    assert "petri_graph" in row
+    metadata = json.loads(result.stdout.strip().splitlines()[-1])
+    assert metadata["splits"]["training"]["statistics"]["count"] == 1
+    assert (data_dir / "training" / "samples.jsonl").exists()
+    import shutil
+
+    shutil.rmtree(data_dir)
 
 
 def test_train_script_runs_without_install_bootstrap():
-    result = subprocess.run(
+    data_dir = ROOT / ".tmp-test-data-train-script"
+    checkpoint = ROOT / ".tmp-test-checkpoints" / "model.pt"
+    import shutil
+
+    shutil.rmtree(data_dir, ignore_errors=True)
+    shutil.rmtree(checkpoint.parent, ignore_errors=True)
+    subprocess.run(
         [
             sys.executable,
-            str(ROOT / "train.py"),
-            "--samples",
+            str(ROOT / "sample.py"),
+            "--data-dir",
+            str(data_dir),
+            "--train-count",
             "2",
-            "--epochs",
+            "--validation-count",
             "1",
-            "--batch-size",
+            "--test-count",
             "1",
             "--max-depth",
             "2",
             "--max-activities",
             "4",
+            "--traces-per-sample",
+            "1",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "train.py"),
+            "--data-dir",
+            str(data_dir),
+            "--checkpoint",
+            str(checkpoint),
+            "--epochs",
+            "1",
+            "--batch-size",
+            "1",
             "--hidden-dim",
             "16",
             "--latent-dim",
             "8",
-            "--traces-per-sample",
-            "1",
         ],
         cwd=ROOT,
         check=True,
@@ -60,4 +100,28 @@ def test_train_script_runs_without_install_bootstrap():
 
     row = json.loads(result.stdout.strip().splitlines()[-1])
     assert row["epoch"] == 1
-    assert row["loss"] > 0
+    assert row["training"]["loss"] > 0
+    assert row["validation"]["loss"] > 0
+    assert checkpoint.exists()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "test.py"),
+            "--data-dir",
+            str(data_dir),
+            "--checkpoint",
+            str(checkpoint),
+            "--batch-size",
+            "1",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    test_row = json.loads(result.stdout.strip().splitlines()[-1])
+    assert test_row["split"] == "test"
+    assert test_row["loss"] > 0
+    shutil.rmtree(data_dir, ignore_errors=True)
+    shutil.rmtree(checkpoint.parent, ignore_errors=True)

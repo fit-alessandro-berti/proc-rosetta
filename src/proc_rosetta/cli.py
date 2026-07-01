@@ -3,16 +3,21 @@ from __future__ import annotations
 import argparse
 import json
 
-from proc_rosetta.synthetic import SyntheticConfig, generate_samples
-from proc_rosetta.training import TrainConfig, train_synthetic
+from proc_rosetta.data import SplitCounts, recreate_data_splits
+from proc_rosetta.synthetic import SyntheticConfig
+from proc_rosetta.training import TrainConfig, evaluate_split_from_checkpoint, train_from_data_dir
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="proc-rosetta")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    sample = subparsers.add_parser("sample", help="print synthetic process triples as JSON lines")
-    sample.add_argument("--count", type=int, default=3)
+    sample = subparsers.add_parser("sample", help="recreate synthetic data/training, validation, and test splits")
+    sample.add_argument("--data-dir", default="data")
+    sample.add_argument("--count", type=int, default=None, help="legacy alias for --train-count")
+    sample.add_argument("--train-count", type=int, default=None)
+    sample.add_argument("--validation-count", type=int, default=None)
+    sample.add_argument("--test-count", type=int, default=None)
     sample.add_argument("--seed", type=int, default=13)
     sample.add_argument("--max-depth", type=int, default=3)
     sample.add_argument("--max-activities", type=int, default=6)
@@ -21,7 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
     sample.add_argument("--curriculum-phase", type=int, default=2)
 
     train = subparsers.add_parser("train", help="train the first-stage multimodal model")
-    train.add_argument("--samples", type=int, default=128)
+    train.add_argument("--data-dir", default="data")
+    train.add_argument("--checkpoint", default="checkpoints/proc_rosetta.pt")
     train.add_argument("--epochs", type=int, default=3)
     train.add_argument("--batch-size", type=int, default=16)
     train.add_argument("--learning-rate", type=float, default=1e-3)
@@ -29,11 +35,12 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--hidden-dim", type=int, default=128)
     train.add_argument("--seed", type=int, default=13)
     train.add_argument("--device", default="cpu")
-    train.add_argument("--max-depth", type=int, default=3)
-    train.add_argument("--max-activities", type=int, default=6)
-    train.add_argument("--max-arity", type=int, default=3)
-    train.add_argument("--traces-per-sample", type=int, default=8)
-    train.add_argument("--curriculum-phase", type=int, default=2)
+
+    test = subparsers.add_parser("test", help="load a checkpoint and evaluate the persisted test split")
+    test.add_argument("--data-dir", default="data")
+    test.add_argument("--checkpoint", default="checkpoints/proc_rosetta.pt")
+    test.add_argument("--batch-size", type=int, default=16)
+    test.add_argument("--device", default="cpu")
 
     return parser
 
@@ -49,16 +56,18 @@ def synthetic_config_from_args(args: argparse.Namespace) -> SyntheticConfig:
 
 
 def run_sample(args: argparse.Namespace) -> int:
-    samples = generate_samples(args.count, config=synthetic_config_from_args(args), seed=args.seed)
-    for sample in samples:
-        print(json.dumps(sample.to_dict(), sort_keys=True))
+    metadata = recreate_data_splits(
+        data_dir=args.data_dir,
+        counts=split_counts_from_args(args),
+        config=synthetic_config_from_args(args),
+        seed=args.seed,
+    )
+    print(json.dumps(metadata, sort_keys=True))
     return 0
 
 
 def run_train(args: argparse.Namespace) -> int:
-    synthetic_config = synthetic_config_from_args(args)
     train_config = TrainConfig(
-        samples=args.samples,
         epochs=args.epochs,
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
@@ -67,10 +76,25 @@ def run_train(args: argparse.Namespace) -> int:
         seed=args.seed,
         device=args.device,
     )
-    _, history = train_synthetic(train_config=train_config, synthetic_config=synthetic_config)
-    for epoch_idx, metrics in enumerate(history, start=1):
-        row = {"epoch": epoch_idx, **{key: round(value, 6) for key, value in metrics.items()}}
-        print(json.dumps(row, sort_keys=True))
+    _, history = train_from_data_dir(
+        data_dir=args.data_dir,
+        checkpoint_path=args.checkpoint,
+        train_config=train_config,
+    )
+    for row in history:
+        print(json.dumps(round_nested_metrics(row), sort_keys=True))
+    return 0
+
+
+def run_test(args: argparse.Namespace) -> int:
+    metrics = evaluate_split_from_checkpoint(
+        checkpoint_path=args.checkpoint,
+        data_dir=args.data_dir,
+        split="test",
+        batch_size=args.batch_size,
+        device=args.device,
+    )
+    print(json.dumps({"split": "test", **round_metrics(metrics)}, sort_keys=True))
     return 0
 
 
@@ -81,8 +105,40 @@ def main(argv: list[str] | None = None) -> int:
         return run_sample(args)
     if args.command == "train":
         return run_train(args)
+    if args.command == "test":
+        return run_test(args)
     parser.error(f"unknown command: {args.command}")
     return 2
+
+
+def split_counts_from_args(args: argparse.Namespace) -> SplitCounts:
+    train_count = args.train_count if args.train_count is not None else args.count
+    return SplitCounts(
+        training=_positive(train_count, default=128, name="train-count"),
+        validation=_positive(args.validation_count, default=32, name="validation-count"),
+        test=_positive(args.test_count, default=32, name="test-count"),
+    )
+
+
+def _positive(value: int | None, default: int, name: str) -> int:
+    value = default if value is None else value
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
+def round_metrics(metrics: dict[str, float]) -> dict[str, float]:
+    return {key: round(value, 6) for key, value in metrics.items()}
+
+
+def round_nested_metrics(row: dict[str, object]) -> dict[str, object]:
+    rounded: dict[str, object] = {}
+    for key, value in row.items():
+        if isinstance(value, dict):
+            rounded[key] = round_metrics(value)
+        else:
+            rounded[key] = value
+    return rounded
 
 
 if __name__ == "__main__":

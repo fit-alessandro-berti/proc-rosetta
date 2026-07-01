@@ -1,5 +1,5 @@
 from proc_rosetta.pm4py_bridge import simulate_traces, tree_to_petri_net
-from proc_rosetta.synthetic import SyntheticConfig, generate_sample
+from proc_rosetta.synthetic import ProcessSample, SyntheticConfig, generate_sample
 from proc_rosetta.tree import ProcessTreeNode
 
 
@@ -21,3 +21,6 @@ def test_generate_sample_contains_all_modalities():
     assert sample.tree.size() >= 2
     assert len(sample.traces) == 4
     assert sample.petri_graph.num_nodes > 0
+
+    restored = ProcessSample.from_dict(sample.to_dict())
+    assert restored.to_dict() == sample.to_dict()

@@ -17,6 +17,29 @@ class SyntheticConfig:
     reuse_activity_probability: float = 0.15
     leaf_probability: float = 0.35
 
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "max_depth": self.max_depth,
+            "max_activities": self.max_activities,
+            "max_arity": self.max_arity,
+            "traces_per_sample": self.traces_per_sample,
+            "curriculum_phase": self.curriculum_phase,
+            "reuse_activity_probability": self.reuse_activity_probability,
+            "leaf_probability": self.leaf_probability,
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, object]) -> "SyntheticConfig":
+        return SyntheticConfig(
+            max_depth=int(data.get("max_depth", 3)),
+            max_activities=int(data.get("max_activities", 6)),
+            max_arity=int(data.get("max_arity", 3)),
+            traces_per_sample=int(data.get("traces_per_sample", 16)),
+            curriculum_phase=int(data.get("curriculum_phase", 2)),
+            reuse_activity_probability=float(data.get("reuse_activity_probability", 0.15)),
+            leaf_probability=float(data.get("leaf_probability", 0.35)),
+        )
+
 
 @dataclass(frozen=True)
 class ProcessSample:
@@ -32,6 +55,17 @@ class ProcessSample:
             "petri_graph": self.petri_graph.to_dict(),
             "equivalence_id": self.equivalence_id,
         }
+
+    @staticmethod
+    def from_dict(data: dict[str, object]) -> "ProcessSample":
+        from proc_rosetta.pm4py_bridge import PetriGraph
+
+        return ProcessSample(
+            tree=ProcessTreeNode.from_dict(data["tree"]),
+            traces=tuple(tuple(str(event) for event in trace) for trace in data["traces"]),
+            petri_graph=PetriGraph.from_dict(data["petri_graph"]),
+            equivalence_id=str(data["equivalence_id"]),
+        )
 
 
 def generate_process_tree(config: SyntheticConfig, rng: random.Random | None = None) -> ProcessTreeNode:

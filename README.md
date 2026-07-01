@@ -27,19 +27,35 @@ required as long as the Python dependencies are already available in the active
 environment.
 
 ```bash
-./sample.py --count 2 --traces-per-sample 4 --seed 7
-./train.py --samples 32 --epochs 1 --batch-size 8 --traces-per-sample 6
+./sample.py
+./train.py
+./test.py
 ```
 
-The same commands also work through Python explicitly:
+`sample.py` recreates a local split dataset:
+
+```text
+data/
+  metadata.json
+  training/samples.jsonl
+  validation/samples.jsonl
+  test/samples.jsonl
+```
+
+`train.py` reads `data/training`, prints training and validation metrics each
+epoch, and saves a checkpoint to `checkpoints/proc_rosetta.pt`. `test.py` loads
+that checkpoint and evaluates `data/test`.
+
+You can control the generated data and training run:
 
 ```bash
-python sample.py --count 1
-python train.py --samples 16 --epochs 1
+./sample.py --train-count 256 --validation-count 64 --test-count 64 --traces-per-sample 12
+./train.py --epochs 10 --batch-size 16 --checkpoint checkpoints/proc_rosetta.pt
+./test.py --checkpoint checkpoints/proc_rosetta.pt
 ```
 
-For package-style installation, the `proc-rosetta sample` and
-`proc-rosetta train` console commands remain available after
+For package-style installation, the `proc-rosetta sample`, `proc-rosetta train`,
+and `proc-rosetta test` console commands remain available after
 `python -m pip install -e .`.
 
 ## Architecture
@@ -85,6 +101,8 @@ block-structured behavior.
 - `sample.py`: root command for generating synthetic process triples without
   installation.
 - `train.py`: root command for training without installation.
+- `test.py`: root command for checkpoint evaluation on the test split without
+  installation.
 
 ## Notes
 
