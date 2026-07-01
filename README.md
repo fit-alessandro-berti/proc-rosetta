@@ -51,6 +51,32 @@ Training progress bars and debug messages are printed to stderr, while per-epoch
 metrics stay as JSON lines on stdout. Use `./train.py --quiet` to suppress the
 debug/progress output.
 
+The training script includes several overfitting controls by default:
+
+- dropout in all encoders and the tree decoder (`--dropout`, default `0.15`);
+- AdamW weight decay (`--weight-decay`, default `1e-4`);
+- grammar-decoder label smoothing (`--label-smoothing`, default `0.05`);
+- validation-loss learning-rate reduction (`--lr-patience`, `--lr-factor`);
+- early stopping on validation loss (`--early-stopping-patience`);
+- separate latest and best checkpoints.
+
+For the default checkpoint path, training writes:
+
+```text
+checkpoints/proc_rosetta.pt       # latest completed epoch
+checkpoints/proc_rosetta.best.pt  # best validation-loss epoch
+```
+
+Per-epoch training statistics are recreated at the start of every run and then
+appended after each completed epoch:
+
+```text
+checkpoints/training_metrics.csv
+```
+
+The CSV includes training metrics, validation metrics, generalization gaps,
+learning rate, epoch duration, best-validation state, and patience counters.
+
 You can control the generated data and training run:
 
 ```bash

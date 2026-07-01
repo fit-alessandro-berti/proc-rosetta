@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import asdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,14 @@ class TrainConfig:
     hidden_dim: int = 128
     seed: int = 13
     device: str = "cpu"
+    dropout: float = 0.15
+    weight_decay: float = 1e-4
+    label_smoothing: float = 0.05
+    early_stopping_patience: int = 5
+    min_delta: float = 0.001
+    lr_patience: int = 2
+    lr_factor: float = 0.5
+    min_lr: float = 1e-5
 
 
 def move_batch_to_device(batch: dict[str, object], device: torch.device) -> dict[str, object]:
@@ -161,6 +170,7 @@ def build_model(
         activity_tokenizer=activity_tokenizer,
         latent_dim=train_config.latent_dim,
         hidden_dim=train_config.hidden_dim,
+        dropout=train_config.dropout,
     ).to(device)
 
 
@@ -182,9 +192,14 @@ def train_synthetic(
         batch_size=train_config.batch_size,
         seed=train_config.seed,
     )
-    optimizer = torch.optim.AdamW(model.parameters(), lr=train_config.learning_rate)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=train_config.learning_rate,
+        weight_decay=train_config.weight_decay,
+    )
+    weights = LossWeights(label_smoothing=train_config.label_smoothing)
     history = [
-        train_epoch(model, dataloader, optimizer, device)
+        train_epoch(model, dataloader, optimizer, device, weights=weights)
         for _ in range(train_config.epochs)
     ]
     return model, history
@@ -195,6 +210,7 @@ def train_from_data_dir(
     checkpoint_path: str | Path = "checkpoints/proc_rosetta.pt",
     train_config: TrainConfig | None = None,
     show_progress: bool = True,
+    metrics_csv_path: str | Path = "checkpoints/training_metrics.csv",
 ) -> tuple[ProcRosettaModel, list[dict[str, object]]]:
     train_config = train_config or TrainConfig()
     torch.manual_seed(train_config.seed)
@@ -206,7 +222,9 @@ def train_from_data_dir(
         "Training configuration: "
         f"epochs={train_config.epochs}, batch_size={train_config.batch_size}, "
         f"lr={train_config.learning_rate}, latent_dim={train_config.latent_dim}, "
-        f"hidden_dim={train_config.hidden_dim}, device={device}",
+        f"hidden_dim={train_config.hidden_dim}, dropout={train_config.dropout}, "
+        f"weight_decay={train_config.weight_decay}, label_smoothing={train_config.label_smoothing}, "
+        f"early_stopping_patience={train_config.early_stopping_patience}, device={device}",
         enabled=show_progress,
     )
     debug(
@@ -237,8 +255,26 @@ def train_from_data_dir(
     )
     debug_split("training", train_loader.dataset.samples, len(train_loader), enabled=show_progress)
     debug_split("validation", validation_loader.dataset.samples, len(validation_loader), enabled=show_progress)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=train_config.learning_rate)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=train_config.learning_rate,
+        weight_decay=train_config.weight_decay,
+    )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=train_config.lr_factor,
+        patience=train_config.lr_patience,
+        min_lr=train_config.min_lr,
+    )
+    weights = LossWeights(label_smoothing=train_config.label_smoothing)
     history: list[dict[str, object]] = []
+    best_validation_loss = float("inf")
+    epochs_without_improvement = 0
+    best_checkpoint_path = best_checkpoint_for(checkpoint_path)
+    metrics_csv_path = Path(metrics_csv_path)
+    init_metrics_csv(metrics_csv_path)
+    debug(f"Per-epoch metrics CSV: {metrics_csv_path}", enabled=show_progress)
     for epoch in range(1, train_config.epochs + 1):
         epoch_start = perf_counter()
         debug(f"Starting epoch {epoch}/{train_config.epochs}", enabled=show_progress)
@@ -247,28 +283,57 @@ def train_from_data_dir(
             train_loader,
             optimizer,
             device,
+            weights=weights,
             epoch=epoch,
             show_progress=show_progress,
         )
         debug(
-            f"Epoch {epoch} training complete: loss={training_metrics['loss']:.4f}",
+            f"Epoch {epoch} training complete: {format_metrics(training_metrics)}",
             enabled=show_progress,
         )
         validation_metrics = evaluate_epoch(
             model,
             validation_loader,
             device,
+            weights=weights,
             epoch=epoch,
             show_progress=show_progress,
         )
+        current_lr = optimizer.param_groups[0]["lr"]
+        scheduler.step(validation_metrics["loss"])
+        new_lr = optimizer.param_groups[0]["lr"]
+        if new_lr < current_lr:
+            debug(
+                f"Validation plateau detected; reducing learning rate {current_lr:.6g} -> {new_lr:.6g}",
+                enabled=show_progress,
+            )
+
+        validation_loss = validation_metrics["loss"]
+        improved = validation_loss < (best_validation_loss - train_config.min_delta)
+        if improved:
+            best_validation_loss = validation_loss
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+
+        gap = validation_metrics["loss"] - training_metrics["loss"]
         debug(
-            f"Epoch {epoch} validation complete: loss={validation_metrics['loss']:.4f}",
+            f"Epoch {epoch} validation complete: {format_metrics(validation_metrics)} "
+            f"| gap={gap:+.4f} | best_val={best_validation_loss:.4f} "
+            f"| patience={epochs_without_improvement}/{train_config.early_stopping_patience}",
             enabled=show_progress,
         )
+        elapsed = perf_counter() - epoch_start
         row: dict[str, object] = {
             "epoch": epoch,
             "training": training_metrics,
             "validation": validation_metrics,
+            "generalization_gap": metric_gaps(training_metrics, validation_metrics),
+            "learning_rate": new_lr,
+            "epoch_seconds": elapsed,
+            "best_validation_loss": best_validation_loss,
+            "is_best": improved,
+            "epochs_without_improvement": epochs_without_improvement,
         }
         history.append(row)
         save_checkpoint(
@@ -278,12 +343,36 @@ def train_from_data_dir(
             synthetic_config=synthetic_config,
             history=history,
             epoch=epoch,
+            best_validation_loss=best_validation_loss,
+            is_best=False,
         )
-        elapsed = perf_counter() - epoch_start
+        if improved:
+            save_checkpoint(
+                checkpoint_path=best_checkpoint_path,
+                model=model,
+                train_config=train_config,
+                synthetic_config=synthetic_config,
+                history=history,
+                epoch=epoch,
+                best_validation_loss=best_validation_loss,
+                is_best=True,
+            )
+        append_metrics_csv(metrics_csv_path, row)
         debug(
-            f"Epoch {epoch} checkpoint saved to {checkpoint_path} ({elapsed:.1f}s)",
+            f"Epoch {epoch} checkpoint saved to {checkpoint_path}; "
+            f"best checkpoint: {best_checkpoint_path if improved else 'unchanged'} ({elapsed:.1f}s)",
             enabled=show_progress,
         )
+        if (
+            train_config.early_stopping_patience > 0
+            and epochs_without_improvement >= train_config.early_stopping_patience
+        ):
+            debug(
+                f"Early stopping after {epoch} epochs; validation loss did not improve by "
+                f"{train_config.min_delta:g} for {train_config.early_stopping_patience} epochs.",
+                enabled=show_progress,
+            )
+            break
     return model, history
 
 
@@ -338,6 +427,91 @@ def debug_split(
     )
 
 
+def format_metrics(metrics: dict[str, float]) -> str:
+    names = [
+        "loss",
+        "tree_reconstruction",
+        "trace_to_tree",
+        "petri_to_tree",
+        "contrastive",
+        "kl",
+        "latent_alignment",
+    ]
+    return ", ".join(f"{name}={metrics[name]:.4f}" for name in names if name in metrics)
+
+
+def metric_gaps(training_metrics: dict[str, float], validation_metrics: dict[str, float]) -> dict[str, float]:
+    keys = sorted(set(training_metrics) & set(validation_metrics))
+    return {key: validation_metrics[key] - training_metrics[key] for key in keys}
+
+
+def best_checkpoint_for(checkpoint_path: str | Path) -> Path:
+    checkpoint_path = Path(checkpoint_path)
+    return checkpoint_path.with_name(f"{checkpoint_path.stem}.best{checkpoint_path.suffix}")
+
+
+CSV_METRIC_NAMES = (
+    "loss",
+    "tree_reconstruction",
+    "trace_to_tree",
+    "petri_to_tree",
+    "latent_alignment",
+    "contrastive",
+    "kl",
+)
+
+
+def metrics_csv_columns() -> list[str]:
+    columns = [
+        "epoch",
+        "learning_rate",
+        "epoch_seconds",
+        "best_validation_loss",
+        "is_best",
+        "epochs_without_improvement",
+    ]
+    for prefix in ("training", "validation", "gap"):
+        columns.extend(f"{prefix}_{name}" for name in CSV_METRIC_NAMES)
+    return columns
+
+
+def init_metrics_csv(path: str | Path) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=metrics_csv_columns())
+        writer.writeheader()
+
+
+def append_metrics_csv(path: str | Path, row: dict[str, object]) -> None:
+    flat = flatten_epoch_row(row)
+    with Path(path).open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=metrics_csv_columns())
+        writer.writerow(flat)
+
+
+def flatten_epoch_row(row: dict[str, object]) -> dict[str, object]:
+    training = row["training"]
+    validation = row["validation"]
+    gap = row["generalization_gap"]
+    assert isinstance(training, dict)
+    assert isinstance(validation, dict)
+    assert isinstance(gap, dict)
+    flat: dict[str, object] = {
+        "epoch": row["epoch"],
+        "learning_rate": row["learning_rate"],
+        "epoch_seconds": row["epoch_seconds"],
+        "best_validation_loss": row["best_validation_loss"],
+        "is_best": row["is_best"],
+        "epochs_without_improvement": row["epochs_without_improvement"],
+    }
+    for name in CSV_METRIC_NAMES:
+        flat[f"training_{name}"] = training.get(name, "")
+        flat[f"validation_{name}"] = validation.get(name, "")
+        flat[f"gap_{name}"] = gap.get(name, "")
+    return flat
+
+
 def save_checkpoint(
     checkpoint_path: str | Path,
     model: ProcRosettaModel,
@@ -345,6 +519,8 @@ def save_checkpoint(
     synthetic_config: SyntheticConfig,
     history: list[dict[str, object]],
     epoch: int,
+    best_validation_loss: float | None = None,
+    is_best: bool = False,
 ) -> None:
     checkpoint_path = Path(checkpoint_path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -356,6 +532,8 @@ def save_checkpoint(
             "train_config": asdict(train_config),
             "synthetic_config": synthetic_config.to_dict(),
             "history": history,
+            "best_validation_loss": best_validation_loss,
+            "is_best": is_best,
         },
         checkpoint_path,
     )

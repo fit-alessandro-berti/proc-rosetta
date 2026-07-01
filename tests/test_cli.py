@@ -1,4 +1,5 @@
 import json
+import csv
 
 from proc_rosetta.cli import main
 from proc_rosetta.cli import build_parser, split_counts_from_args
@@ -17,6 +18,10 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert sample_args.traces_per_sample == 16
     assert train_args.epochs == 20
     assert train_args.batch_size == 32
+    assert train_args.dropout == 0.15
+    assert train_args.weight_decay == 1e-4
+    assert train_args.label_smoothing == 0.05
+    assert train_args.early_stopping_patience == 5
 
 
 def test_sample_cli_recreates_data_splits(tmp_path, capsys):
@@ -58,6 +63,7 @@ def test_sample_cli_recreates_data_splits(tmp_path, capsys):
 def test_train_and_test_cli_smoke(tmp_path, capsys):
     data_dir = tmp_path / "data"
     checkpoint = tmp_path / "checkpoints" / "model.pt"
+    metrics_csv = tmp_path / "checkpoints" / "metrics.csv"
     assert main(
         [
             "sample",
@@ -86,6 +92,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
             str(data_dir),
             "--checkpoint",
             str(checkpoint),
+            "--metrics-csv",
+            str(metrics_csv),
             "--epochs",
             "1",
             "--batch-size",
@@ -104,7 +112,20 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert row["epoch"] == 1
     assert row["training"]["loss"] > 0
     assert row["validation"]["loss"] > 0
+    assert abs(
+        row["generalization_gap"]["loss"] - (row["validation"]["loss"] - row["training"]["loss"])
+    ) < 1e-5
+    assert "learning_rate" in row
+    assert "epoch_seconds" in row
     assert checkpoint.exists()
+    assert checkpoint.with_name("model.best.pt").exists()
+    assert metrics_csv.exists()
+    with metrics_csv.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 1
+    assert rows[0]["epoch"] == "1"
+    assert rows[0]["training_loss"]
+    assert rows[0]["validation_loss"]
 
     assert main(
         [

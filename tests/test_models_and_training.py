@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from proc_rosetta.data import ProcessBatchCollator, SyntheticProcessDataset
-from proc_rosetta.losses import multimodal_tree_loss
+from proc_rosetta.losses import multimodal_tree_loss, sequence_cross_entropy
 from proc_rosetta.models import ProcRosettaModel
 from proc_rosetta.synthetic import SyntheticConfig
 from proc_rosetta.tokenizers import ActivityTokenizer, TreeTokenizer
@@ -23,6 +23,16 @@ def test_model_forward_and_loss():
 
     assert outputs["tree_logits"]["tree"].shape[:2] == batch["tree_tokens"][:, :-1].shape
     assert torch.isfinite(losses["loss"])
+
+
+def test_label_smoothing_ignores_grammar_masked_logits():
+    logits = torch.tensor([[[2.0, -1e9, 0.0], [0.0, 2.0, -1e9]]])
+    targets = torch.tensor([[0, 1]])
+
+    loss = sequence_cross_entropy(logits, targets, label_smoothing=0.1)
+
+    assert torch.isfinite(loss)
+    assert loss.item() < 1.0
 
 
 def test_train_synthetic_smoke():

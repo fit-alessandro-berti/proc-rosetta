@@ -16,14 +16,34 @@ class LossWeights:
     latent_alignment: float = 0.1
     contrastive: float = 0.1
     kl: float = 0.001
+    label_smoothing: float = 0.05
 
 
-def sequence_cross_entropy(logits: torch.Tensor, targets: torch.Tensor, pad_id: int = 0) -> torch.Tensor:
-    return F.cross_entropy(
-        logits.reshape(-1, logits.shape[-1]),
-        targets.reshape(-1),
-        ignore_index=pad_id,
-    )
+def sequence_cross_entropy(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    pad_id: int = 0,
+    label_smoothing: float = 0.0,
+) -> torch.Tensor:
+    flat_logits = logits.reshape(-1, logits.shape[-1])
+    flat_targets = targets.reshape(-1)
+    if label_smoothing <= 0.0:
+        return F.cross_entropy(flat_logits, flat_targets, ignore_index=pad_id)
+
+    valid_rows = flat_targets.ne(pad_id)
+    if not valid_rows.any():
+        return flat_logits.sum() * 0.0
+
+    flat_logits = flat_logits[valid_rows]
+    flat_targets = flat_targets[valid_rows]
+    log_probs = F.log_softmax(flat_logits, dim=-1)
+    nll = -log_probs.gather(dim=-1, index=flat_targets.unsqueeze(-1)).squeeze(-1)
+
+    grammar_mask = flat_logits.gt(-1e8)
+    valid_token_count = grammar_mask.sum(dim=-1).clamp(min=1)
+    smooth = -(log_probs.masked_fill(~grammar_mask, 0.0).sum(dim=-1) / valid_token_count)
+    loss = (1.0 - label_smoothing) * nll + label_smoothing * smooth
+    return loss.mean()
 
 
 def latent_alignment_loss(dists: dict[str, LatentDistribution]) -> torch.Tensor:
@@ -77,9 +97,15 @@ def multimodal_tree_loss(
     assert isinstance(logits, dict)
     assert isinstance(dists, dict)
 
-    rec_tree = sequence_cross_entropy(logits["tree"], targets, pad_id)
-    trace_to_tree = sequence_cross_entropy(logits["trace"], targets, pad_id)
-    petri_to_tree = sequence_cross_entropy(logits["petri"], targets, pad_id)
+    rec_tree = sequence_cross_entropy(
+        logits["tree"], targets, pad_id, label_smoothing=weights.label_smoothing
+    )
+    trace_to_tree = sequence_cross_entropy(
+        logits["trace"], targets, pad_id, label_smoothing=weights.label_smoothing
+    )
+    petri_to_tree = sequence_cross_entropy(
+        logits["petri"], targets, pad_id, label_smoothing=weights.label_smoothing
+    )
     align = latent_alignment_loss(dists)
     contrastive = cross_modal_contrastive_loss(dists)
     kl = kl_divergence_loss(dists)

@@ -32,26 +32,41 @@ class LatentProjection(nn.Module):
 
 
 class TreeEncoder(nn.Module):
-    def __init__(self, vocab_size: int, latent_dim: int, hidden_dim: int = 128) -> None:
+    def __init__(
+        self,
+        vocab_size: int,
+        latent_dim: int,
+        hidden_dim: int = 128,
+        dropout: float = 0.0,
+    ) -> None:
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, hidden_dim, padding_idx=0)
         self.gru = nn.GRU(hidden_dim, hidden_dim, batch_first=True)
+        self.dropout = nn.Dropout(dropout)
         self.projection = LatentProjection(hidden_dim, latent_dim)
 
     def forward(self, tokens: torch.Tensor) -> LatentDistribution:
         lengths = tokens.ne(0).sum(dim=1).clamp(min=1)
-        embedded = self.embedding(tokens)
+        embedded = self.dropout(self.embedding(tokens))
         outputs, _ = self.gru(embedded)
         final = outputs[torch.arange(tokens.shape[0], device=tokens.device), lengths - 1]
+        final = self.dropout(final)
         return self.projection(final)
 
 
 class TraceEncoder(nn.Module):
-    def __init__(self, vocab_size: int, latent_dim: int, hidden_dim: int = 128) -> None:
+    def __init__(
+        self,
+        vocab_size: int,
+        latent_dim: int,
+        hidden_dim: int = 128,
+        dropout: float = 0.0,
+    ) -> None:
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, hidden_dim, padding_idx=0)
         self.gru = nn.GRU(hidden_dim, hidden_dim, batch_first=True)
         self.attention = nn.Linear(hidden_dim, 1)
+        self.dropout = nn.Dropout(dropout)
         self.projection = LatentProjection(hidden_dim, latent_dim)
 
     def forward(
@@ -63,7 +78,7 @@ class TraceEncoder(nn.Module):
         batch_size, trace_count, trace_length = tokens.shape
         flat_tokens = tokens.reshape(batch_size * trace_count, trace_length)
         flat_lengths = lengths.reshape(batch_size * trace_count).clamp(min=1)
-        embedded = self.embedding(flat_tokens)
+        embedded = self.dropout(self.embedding(flat_tokens))
         outputs, _ = self.gru(embedded)
         final = outputs[
             torch.arange(flat_tokens.shape[0], device=tokens.device),
@@ -74,7 +89,7 @@ class TraceEncoder(nn.Module):
 
         scores = self.attention(final).squeeze(-1).masked_fill(~trace_mask, -1e9)
         weights = torch.softmax(scores, dim=1).unsqueeze(-1)
-        pooled = (final * weights).sum(dim=1)
+        pooled = self.dropout((final * weights).sum(dim=1))
         return self.projection(pooled)
 
 
@@ -85,6 +100,7 @@ class PetriGraphEncoder(nn.Module):
         hidden_dim: int = 128,
         node_type_count: int = 3,
         message_passing_steps: int = 3,
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
         self.node_embedding = nn.Embedding(node_type_count, hidden_dim)
@@ -93,6 +109,7 @@ class PetriGraphEncoder(nn.Module):
         self.in_layers = nn.ModuleList(nn.Linear(hidden_dim, hidden_dim) for _ in range(message_passing_steps))
         self.out_layers = nn.ModuleList(nn.Linear(hidden_dim, hidden_dim) for _ in range(message_passing_steps))
         self.norms = nn.ModuleList(nn.LayerNorm(hidden_dim) for _ in range(message_passing_steps))
+        self.dropout = nn.Dropout(dropout)
         self.projection = LatentProjection(hidden_dim, latent_dim)
 
     def forward(
@@ -102,7 +119,7 @@ class PetriGraphEncoder(nn.Module):
         adjacency: torch.Tensor,
         node_mask: torch.Tensor,
     ) -> LatentDistribution:
-        h = self.node_embedding(node_types) + self.marking_projection(markings)
+        h = self.dropout(self.node_embedding(node_types) + self.marking_projection(markings))
         h = h * node_mask.unsqueeze(-1).to(h.dtype)
         adjacency_any = adjacency.sum(dim=1).clamp(max=1.0)
 
@@ -115,10 +132,10 @@ class PetriGraphEncoder(nn.Module):
             incoming = torch.bmm(adjacency_any.transpose(1, 2), in_layer(h))
             outgoing = torch.bmm(adjacency_any, out_layer(h))
             updated = self_layer(h) + incoming + outgoing
-            h = norm(F.relu(updated)) * node_mask.unsqueeze(-1).to(h.dtype)
+            h = self.dropout(norm(F.relu(updated))) * node_mask.unsqueeze(-1).to(h.dtype)
 
         denominator = node_mask.sum(dim=1).clamp(min=1).unsqueeze(-1)
-        pooled = h.sum(dim=1) / denominator
+        pooled = self.dropout(h.sum(dim=1) / denominator)
         return self.projection(pooled)
 
 
@@ -128,12 +145,14 @@ class GrammarTreeDecoder(nn.Module):
         tokenizer: TreeTokenizer,
         latent_dim: int,
         hidden_dim: int = 128,
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
         self.tokenizer = tokenizer
         self.embedding = nn.Embedding(tokenizer.vocab_size, hidden_dim, padding_idx=tokenizer.pad_id)
         self.latent_to_hidden = nn.Linear(latent_dim, hidden_dim)
         self.gru = nn.GRU(hidden_dim, hidden_dim, batch_first=True)
+        self.dropout = nn.Dropout(dropout)
         self.output = nn.Linear(hidden_dim, tokenizer.vocab_size)
 
     def forward(
@@ -143,9 +162,9 @@ class GrammarTreeDecoder(nn.Module):
         apply_grammar_mask: bool = True,
     ) -> torch.Tensor:
         hidden = torch.tanh(self.latent_to_hidden(z)).unsqueeze(0)
-        embedded = self.embedding(input_tokens)
+        embedded = self.dropout(self.embedding(input_tokens))
         outputs, _ = self.gru(embedded, hidden)
-        logits = self.output(outputs)
+        logits = self.output(self.dropout(outputs))
         if apply_grammar_mask:
             masks = self.tokenizer.valid_next_token_masks(input_tokens)
             logits = logits.masked_fill(~masks, -1e9)
@@ -200,16 +219,17 @@ class ProcRosettaModel(nn.Module):
         activity_tokenizer: ActivityTokenizer | None = None,
         latent_dim: int = 64,
         hidden_dim: int = 128,
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
         self.tree_tokenizer = tree_tokenizer or TreeTokenizer()
         self.activity_tokenizer = activity_tokenizer or ActivityTokenizer(
             max_activities=self.tree_tokenizer.max_activities
         )
-        self.tree_encoder = TreeEncoder(self.tree_tokenizer.vocab_size, latent_dim, hidden_dim)
-        self.trace_encoder = TraceEncoder(self.activity_tokenizer.vocab_size, latent_dim, hidden_dim)
-        self.petri_encoder = PetriGraphEncoder(latent_dim, hidden_dim)
-        self.tree_decoder = GrammarTreeDecoder(self.tree_tokenizer, latent_dim, hidden_dim)
+        self.tree_encoder = TreeEncoder(self.tree_tokenizer.vocab_size, latent_dim, hidden_dim, dropout)
+        self.trace_encoder = TraceEncoder(self.activity_tokenizer.vocab_size, latent_dim, hidden_dim, dropout)
+        self.petri_encoder = PetriGraphEncoder(latent_dim, hidden_dim, dropout=dropout)
+        self.tree_decoder = GrammarTreeDecoder(self.tree_tokenizer, latent_dim, hidden_dim, dropout)
 
     def encode_tree(self, tree_tokens: torch.Tensor) -> LatentDistribution:
         return self.tree_encoder(tree_tokens)

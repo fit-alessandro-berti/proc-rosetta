@@ -39,6 +39,15 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--learning-rate", type=float, default=1e-3)
     train.add_argument("--latent-dim", type=int, default=64)
     train.add_argument("--hidden-dim", type=int, default=128)
+    train.add_argument("--dropout", type=float, default=0.15)
+    train.add_argument("--weight-decay", type=float, default=1e-4)
+    train.add_argument("--label-smoothing", type=float, default=0.05)
+    train.add_argument("--early-stopping-patience", type=int, default=5)
+    train.add_argument("--min-delta", type=float, default=0.001)
+    train.add_argument("--lr-patience", type=int, default=2)
+    train.add_argument("--lr-factor", type=float, default=0.5)
+    train.add_argument("--min-lr", type=float, default=1e-5)
+    train.add_argument("--metrics-csv", default="checkpoints/training_metrics.csv")
     train.add_argument("--seed", type=int, default=13)
     train.add_argument("--device", default="cpu")
     train.add_argument("--quiet", action="store_true", help="disable stderr debug messages and progress bars")
@@ -88,6 +97,14 @@ def run_train(args: argparse.Namespace) -> int:
         learning_rate=args.learning_rate,
         latent_dim=args.latent_dim,
         hidden_dim=args.hidden_dim,
+        dropout=args.dropout,
+        weight_decay=args.weight_decay,
+        label_smoothing=args.label_smoothing,
+        early_stopping_patience=args.early_stopping_patience,
+        min_delta=args.min_delta,
+        lr_patience=args.lr_patience,
+        lr_factor=args.lr_factor,
+        min_lr=args.min_lr,
         seed=args.seed,
         device=args.device,
     )
@@ -96,6 +113,7 @@ def run_train(args: argparse.Namespace) -> int:
         checkpoint_path=args.checkpoint,
         train_config=train_config,
         show_progress=not args.quiet,
+        metrics_csv_path=args.metrics_csv,
     )
     for row in history:
         print(json.dumps(round_nested_metrics(row), sort_keys=True))

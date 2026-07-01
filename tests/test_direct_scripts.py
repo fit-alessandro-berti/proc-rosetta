@@ -47,6 +47,7 @@ def test_sample_script_runs_without_install_bootstrap():
 def test_train_script_runs_without_install_bootstrap():
     data_dir = ROOT / ".tmp-test-data-train-script"
     checkpoint = ROOT / ".tmp-test-checkpoints" / "model.pt"
+    metrics_csv = ROOT / ".tmp-test-checkpoints" / "metrics.csv"
     import shutil
 
     shutil.rmtree(data_dir, ignore_errors=True)
@@ -83,6 +84,8 @@ def test_train_script_runs_without_install_bootstrap():
             str(data_dir),
             "--checkpoint",
             str(checkpoint),
+            "--metrics-csv",
+            str(metrics_csv),
             "--epochs",
             "1",
             "--batch-size",
@@ -102,7 +105,9 @@ def test_train_script_runs_without_install_bootstrap():
     assert row["epoch"] == 1
     assert row["training"]["loss"] > 0
     assert row["validation"]["loss"] > 0
+    assert "generalization_gap" in row
     assert checkpoint.exists()
+    assert metrics_csv.exists()
 
     result = subprocess.run(
         [
