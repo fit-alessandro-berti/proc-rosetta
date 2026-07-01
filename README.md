@@ -22,18 +22,25 @@ matching are materially harder.
 
 ## Quick start
 
-```bash
-python -m pip install -e ".[dev]"
-proc-rosetta sample --count 2 --traces-per-sample 4 --seed 7
-proc-rosetta train --samples 32 --epochs 1 --batch-size 8 --traces-per-sample 6
-```
-
-Or run without installing:
+Run the root command scripts directly from a checkout. No editable install is
+required as long as the Python dependencies are already available in the active
+environment.
 
 ```bash
-PYTHONPATH=src python -m proc_rosetta.cli sample --count 1
-PYTHONPATH=src python -m proc_rosetta.cli train --samples 16 --epochs 1
+./sample.py --count 2 --traces-per-sample 4 --seed 7
+./train.py --samples 32 --epochs 1 --batch-size 8 --traces-per-sample 6
 ```
+
+The same commands also work through Python explicitly:
+
+```bash
+python sample.py --count 1
+python train.py --samples 16 --epochs 1
+```
+
+For package-style installation, the `proc-rosetta sample` and
+`proc-rosetta train` console commands remain available after
+`python -m pip install -e .`.
 
 ## Architecture
 
@@ -75,6 +82,9 @@ block-structured behavior.
   trace-length behavioral distances.
 - `src/proc_rosetta/training.py`: training loop utilities.
 - `src/proc_rosetta/cli.py`: sample and train commands.
+- `sample.py`: root command for generating synthetic process triples without
+  installation.
+- `train.py`: root command for training without installation.
 
 ## Notes
 
