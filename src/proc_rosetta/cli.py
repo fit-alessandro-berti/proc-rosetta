@@ -3,9 +3,15 @@ from __future__ import annotations
 import argparse
 import json
 
+from proc_rosetta.benchmarks import (
+    Pm4pyPetriEmbeddingConfig,
+    format_human_test_report,
+    rich_test_report,
+)
 from proc_rosetta.data import SplitCounts, recreate_data_splits
+from proc_rosetta.data import read_samples_jsonl, split_samples_path
 from proc_rosetta.synthetic import SyntheticConfig
-from proc_rosetta.training import TrainConfig, evaluate_split_from_checkpoint, train_from_data_dir
+from proc_rosetta.training import TrainConfig, train_from_data_dir
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,6 +47,14 @@ def build_parser() -> argparse.ArgumentParser:
     test.add_argument("--checkpoint", default="checkpoints/proc_rosetta.pt")
     test.add_argument("--batch-size", type=int, default=16)
     test.add_argument("--device", default="cpu")
+    test.add_argument("--skip-pm4py-petri-embedding", action="store_true")
+    test.add_argument("--petri-embedding-dim", type=int, default=64)
+    test.add_argument("--petri-num-walks", type=int, default=5)
+    test.add_argument("--petri-walk-length", type=int, default=20)
+    test.add_argument("--petri-window", type=int, default=5)
+    test.add_argument("--petri-epochs", type=int, default=5)
+    test.add_argument("--petri-seed", type=int, default=42)
+    test.add_argument("--json", action="store_true", help="print the full machine-readable JSON report")
 
     return parser
 
@@ -87,14 +101,27 @@ def run_train(args: argparse.Namespace) -> int:
 
 
 def run_test(args: argparse.Namespace) -> int:
-    metrics = evaluate_split_from_checkpoint(
+    samples = read_samples_jsonl(split_samples_path(args.data_dir, "test"))
+    report = rich_test_report(
         checkpoint_path=args.checkpoint,
         data_dir=args.data_dir,
-        split="test",
+        samples=samples,
         batch_size=args.batch_size,
         device=args.device,
+        include_pm4py_petri=not args.skip_pm4py_petri_embedding,
+        pm4py_petri_config=Pm4pyPetriEmbeddingConfig(
+            dimensions=args.petri_embedding_dim,
+            num_walks=args.petri_num_walks,
+            walk_length=args.petri_walk_length,
+            window=args.petri_window,
+            epochs=args.petri_epochs,
+            seed=args.petri_seed,
+        ),
     )
-    print(json.dumps({"split": "test", **round_metrics(metrics)}, sort_keys=True))
+    if args.json:
+        print(json.dumps(report, sort_keys=True))
+    else:
+        print(format_human_test_report(report))
     return 0
 
 

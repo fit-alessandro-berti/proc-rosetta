@@ -98,9 +98,47 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
             str(checkpoint),
             "--batch-size",
             "1",
+            "--petri-embedding-dim",
+            "8",
+            "--petri-num-walks",
+            "2",
+            "--petri-walk-length",
+            "6",
+            "--petri-epochs",
+            "2",
+            "--json",
         ]
     ) == 0
     captured = capsys.readouterr()
     test_row = json.loads(captured.out.strip().splitlines()[-1])
     assert test_row["split"] == "test"
-    assert test_row["loss"] > 0
+    assert test_row["loss_metrics"]["loss"] > 0
+    assert "cross_modal_retrieval" in test_row
+    assert "proc_rosetta_fused_mu" in test_row["embedding_methods"]
+    assert "trace_directly_follows" in test_row["embedding_methods"]
+    assert "pm4py_colonna_petri_node2vec" in test_row["embedding_methods"]
+    assert "method_comparisons_against_proc_rosetta_fused_mu" in test_row
+
+    assert main(
+        [
+            "test",
+            "--data-dir",
+            str(data_dir),
+            "--checkpoint",
+            str(checkpoint),
+            "--batch-size",
+            "1",
+            "--petri-embedding-dim",
+            "8",
+            "--petri-num-walks",
+            "2",
+            "--petri-walk-length",
+            "6",
+            "--petri-epochs",
+            "2",
+        ]
+    ) == 0
+    captured = capsys.readouterr()
+    assert "ProcRosetta Test Report" in captured.out
+    assert "pm4py Petri Node2Vec vs ProcRosetta fused" in captured.out
+    assert "Agreement against ProcRosetta fused encoding" in captured.out

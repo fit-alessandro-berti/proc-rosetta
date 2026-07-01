@@ -233,7 +233,9 @@ def recreate_data_splits(
         }
 
     metadata = {
-        "version": 1,
+        "version": 2,
+        "schema": "proc-rosetta.synthetic-splits.v2",
+        "sample_format": "jsonl/process-sample.v1",
         "seed": seed,
         "synthetic_config": config.to_dict(),
         "splits": split_metadata,

@@ -114,6 +114,15 @@ def test_train_script_runs_without_install_bootstrap():
             str(checkpoint),
             "--batch-size",
             "1",
+            "--petri-embedding-dim",
+            "8",
+            "--petri-num-walks",
+            "2",
+            "--petri-walk-length",
+            "6",
+            "--petri-epochs",
+            "2",
+            "--json",
         ],
         cwd=ROOT,
         check=True,
@@ -122,6 +131,8 @@ def test_train_script_runs_without_install_bootstrap():
     )
     test_row = json.loads(result.stdout.strip().splitlines()[-1])
     assert test_row["split"] == "test"
-    assert test_row["loss"] > 0
+    assert test_row["loss_metrics"]["loss"] > 0
+    assert "behavioral_distance_summary" in test_row
+    assert "pm4py_colonna_petri_node2vec" in test_row["embedding_methods"]
     shutil.rmtree(data_dir, ignore_errors=True)
     shutil.rmtree(checkpoint.parent, ignore_errors=True)

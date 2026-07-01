@@ -44,7 +44,8 @@ data/
 
 `train.py` reads `data/training`, prints training and validation metrics each
 epoch, and saves a checkpoint to `checkpoints/proc_rosetta.pt`. `test.py` loads
-that checkpoint and evaluates `data/test`.
+that checkpoint and evaluates `data/test` with a human-readable benchmark
+report.
 
 You can control the generated data and training run:
 
@@ -52,6 +53,33 @@ You can control the generated data and training run:
 ./sample.py --train-count 256 --validation-count 64 --test-count 64 --traces-per-sample 12
 ./train.py --epochs 10 --batch-size 16 --checkpoint checkpoints/proc_rosetta.pt
 ./test.py --checkpoint checkpoints/proc_rosetta.pt
+```
+
+The `test.py` report includes:
+
+- neural loss metrics on the test split;
+- behavioral distance summaries across test logs;
+- cross-modal retrieval for the learned tree, trace, and Petri latent vectors;
+- nearest-neighbor and distance-correlation statistics for each embedding;
+- deterministic event-log baselines: activity counts, trace variants,
+  directly-follows, eventually-follows, and pm4py case features;
+- deterministic Petri structural-count baselines;
+- pm4py's Petri-net Node2Vec/Word2Vec embedding from Colonna et al.,
+  "Process mining embeddings: Learning vector representations for Petri nets".
+- direct agreement between pm4py's Petri embedding geometry and ProcRosetta's
+  fused latent geometry, including pairwise distance Spearman correlation and
+  nearest-neighbor overlap.
+
+The pm4py Petri embedding baseline uses `gensim`. Its runtime can be tuned:
+
+```bash
+./test.py --petri-embedding-dim 32 --petri-num-walks 3 --petri-walk-length 12 --petri-epochs 3
+```
+
+For machine-readable output:
+
+```bash
+./test.py --json
 ```
 
 For package-style installation, the `proc-rosetta sample`, `proc-rosetta train`,
@@ -96,6 +124,8 @@ block-structured behavior.
   losses, including cross-modal contrastive alignment.
 - `src/proc_rosetta/behavior.py`: trace-variant, directly-follows, and
   trace-length behavioral distances.
+- `src/proc_rosetta/benchmarks.py`: rich test-set embedding comparisons and
+  event-log/Petri-net baseline reports.
 - `src/proc_rosetta/training.py`: training loop utilities.
 - `src/proc_rosetta/cli.py`: sample and train commands.
 - `sample.py`: root command for generating synthetic process triples without
