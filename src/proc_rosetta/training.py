@@ -28,7 +28,7 @@ from proc_rosetta.tokenizers import ActivityTokenizer, TreeTokenizer
 @dataclass(frozen=True)
 class TrainConfig:
     samples: int = 128
-    epochs: int = 20
+    epochs: int = 100
     batch_size: int = 32
     learning_rate: float = 1e-3
     latent_dim: int = 64

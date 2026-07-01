@@ -12,11 +12,11 @@ def test_default_sample_and_train_values_match_recommended_run():
     train_args = parser.parse_args(["train"])
     split_counts = split_counts_from_args(sample_args)
 
-    assert split_counts.training == 2000
-    assert split_counts.validation == 256
-    assert split_counts.test == 256
+    assert split_counts.training == 4000
+    assert split_counts.validation == 512
+    assert split_counts.test == 512
     assert sample_args.traces_per_sample == 16
-    assert train_args.epochs == 20
+    assert train_args.epochs == 100
     assert train_args.batch_size == 32
     assert train_args.dropout == 0.15
     assert train_args.weight_decay == 1e-4

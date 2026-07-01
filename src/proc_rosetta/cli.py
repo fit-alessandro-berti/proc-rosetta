@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     train = subparsers.add_parser("train", help="train the first-stage multimodal model")
     train.add_argument("--data-dir", default="data")
     train.add_argument("--checkpoint", default="checkpoints/proc_rosetta.pt")
-    train.add_argument("--epochs", type=int, default=20)
+    train.add_argument("--epochs", type=int, default=100)
     train.add_argument("--batch-size", type=int, default=32)
     train.add_argument("--learning-rate", type=float, default=1e-3)
     train.add_argument("--latent-dim", type=int, default=64)
@@ -161,9 +161,9 @@ def main(argv: list[str] | None = None) -> int:
 def split_counts_from_args(args: argparse.Namespace) -> SplitCounts:
     train_count = args.train_count if args.train_count is not None else args.count
     return SplitCounts(
-        training=_positive(train_count, default=2000, name="train-count"),
-        validation=_positive(args.validation_count, default=256, name="validation-count"),
-        test=_positive(args.test_count, default=256, name="test-count"),
+        training=_positive(train_count, default=4000, name="train-count"),
+        validation=_positive(args.validation_count, default=512, name="validation-count"),
+        test=_positive(args.test_count, default=512, name="test-count"),
     )
 
 

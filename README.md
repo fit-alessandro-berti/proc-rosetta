@@ -78,6 +78,10 @@ epoch, and saves a checkpoint to `checkpoints/proc_rosetta.pt`. `test.py` loads
 that checkpoint and evaluates `data/test` with a human-readable benchmark
 report.
 
+By default, `sample.py` creates 4000 training samples, 512 validation samples,
+and 512 test samples. `train.py` uses a 100-epoch cap, subject to validation
+early stopping.
+
 Training progress bars and debug messages are printed to stderr, while per-epoch
 metrics stay as JSON lines on stdout. Use `./train.py --quiet` to suppress the
 debug/progress output.
@@ -111,8 +115,8 @@ learning rate, epoch duration, best-validation state, and patience counters.
 You can control the generated data and training run:
 
 ```bash
-./sample.py --train-count 4000 --validation-count 512 --test-count 512 --traces-per-sample 24
-./train.py --epochs 30 --batch-size 64 --checkpoint checkpoints/proc_rosetta.pt
+./sample.py --train-count 8000 --validation-count 1024 --test-count 1024 --traces-per-sample 24
+./train.py --epochs 150 --batch-size 64 --checkpoint checkpoints/proc_rosetta.pt
 ./test.py --checkpoint checkpoints/proc_rosetta.pt
 ```
 
