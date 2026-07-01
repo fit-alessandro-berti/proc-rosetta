@@ -88,6 +88,9 @@ You can control the generated data and training run:
 The `test.py` report includes:
 
 - neural loss metrics on the test split;
+- decode-quality metrics for each learned latent source: greedy process-tree
+  validity, exact tree match, Petri conversion success, token edit distance, and
+  behavior distance after simulating traces from the decoded tree;
 - behavioral distance summaries across test logs;
 - cross-modal retrieval for the learned tree, trace, and Petri latent vectors;
 - nearest-neighbor and distance-correlation statistics for each embedding;

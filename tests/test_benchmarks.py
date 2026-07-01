@@ -4,8 +4,11 @@ from proc_rosetta.benchmarks import (
     activity_count_features,
     evaluate_embedding_method,
     format_human_test_report,
+    levenshtein_distance,
     retrieval_metrics,
+    trim_tree_token_sequence,
 )
+from proc_rosetta.tokenizers import TreeTokenizer
 
 
 def test_embedding_method_report_contains_behavior_alignment():
@@ -36,6 +39,20 @@ def test_retrieval_metrics_and_trace_features():
     assert metrics["top1_accuracy"] == 1.0
     assert metrics["mrr"] == 1.0
     assert features[("activity", "A0")] == 0.5
+
+
+def test_decode_token_edit_helpers():
+    tokenizer = TreeTokenizer(max_activities=4)
+    tokens = [
+        tokenizer.bos_id,
+        tokenizer.token_to_id["A0"],
+        tokenizer.eos_id,
+        tokenizer.pad_id,
+        tokenizer.token_to_id["A1"],
+    ]
+
+    assert trim_tree_token_sequence(tokens, tokenizer) == tokens[:3]
+    assert levenshtein_distance([1, 2, 3], [1, 4, 3, 5]) == 2
 
 
 def test_human_report_mentions_method_comparison():
@@ -83,10 +100,31 @@ def test_human_report_mentions_method_comparison():
         "cross_modal_retrieval": {
             "tree_to_trace": {"top1_accuracy": 1.0, "mrr": 1.0, "mean_rank": 1.0}
         },
+        "decode_quality": {
+            "methods": {
+                "proc_rosetta_tree_mu": {
+                    "terminated_rate": 1.0,
+                    "valid_tree_rate": 1.0,
+                    "exact_tree_match_rate": 0.5,
+                    "petri_conversion_rate": 1.0,
+                    "mean_behavior_l1": 0.2,
+                    "mean_normalized_token_edit_distance": 0.1,
+                },
+                "proc_rosetta_fused_mu": {
+                    "terminated_rate": 1.0,
+                    "valid_tree_rate": 1.0,
+                    "exact_tree_match_rate": 0.5,
+                    "petri_conversion_rate": 1.0,
+                    "mean_behavior_l1": 0.2,
+                    "mean_normalized_token_edit_distance": 0.1,
+                },
+            }
+        },
     }
 
     text = format_human_test_report(report)
 
     assert "ProcRosetta Test Report" in text
+    assert "Decode quality" in text
     assert "pm4py Petri Node2Vec vs ProcRosetta fused" in text
     assert "behavior rho" in text

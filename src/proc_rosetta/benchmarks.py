@@ -11,7 +11,7 @@ import torch
 
 from proc_rosetta.behavior import behavioral_distance
 from proc_rosetta.data import ProcessBatchCollator
-from proc_rosetta.pm4py_bridge import tree_to_petri_net
+from proc_rosetta.pm4py_bridge import simulate_traces, tree_to_petri_net
 from proc_rosetta.synthetic import ProcessSample
 from proc_rosetta.training import evaluate_split_from_checkpoint, load_checkpoint
 
@@ -59,6 +59,12 @@ def rich_test_report(
     )
     model, _ = load_checkpoint(checkpoint_path, torch.device(device))
     neural_embeddings = proc_rosetta_embeddings(model, samples, batch_size=batch_size, device=device)
+    decode_quality = decode_quality_report(
+        model,
+        samples,
+        batch_size=batch_size,
+        device=device,
+    )
 
     behavior = behavior_matrices(samples)
     methods: dict[str, dict[str, object]] = {}
@@ -113,6 +119,7 @@ def rich_test_report(
             for key, value in behavior.items()
             if key != "mean_l1"
         },
+        "decode_quality": decode_quality,
         "cross_modal_retrieval": cross_modal_retrieval(neural_embeddings),
         "embedding_methods": methods,
         "method_ranking": rank_embedding_methods(methods),
@@ -170,6 +177,183 @@ def proc_rosetta_embeddings(
         axis=0,
     )
     return embeddings
+
+
+@torch.no_grad()
+def decode_quality_report(
+    model,
+    samples: Sequence[ProcessSample],
+    batch_size: int = 16,
+    device: str = "cpu",
+    max_decode_length: int = 128,
+    behavior_traces_per_sample: int = 16,
+) -> dict[str, object]:
+    model.eval()
+    model.to(device)
+    torch_device = torch.device(device)
+    collator = ProcessBatchCollator(model.tree_tokenizer, model.activity_tokenizer)
+    rows: dict[str, list[dict[str, object]]] = {
+        "proc_rosetta_tree_mu": [],
+        "proc_rosetta_trace_mu": [],
+        "proc_rosetta_petri_mu": [],
+        "proc_rosetta_fused_mu": [],
+    }
+
+    for start in range(0, len(samples), batch_size):
+        batch_samples = samples[start : start + batch_size]
+        batch = _move_batch_to_device(collator(batch_samples), torch_device)
+        tree_dist = model.encode_tree(batch["tree_tokens"])
+        trace_dist = model.encode_traces(batch["traces"])
+        petri_dist = model.encode_petri(batch["petri"])
+        latents = {
+            "proc_rosetta_tree_mu": tree_dist.mu,
+            "proc_rosetta_trace_mu": trace_dist.mu,
+            "proc_rosetta_petri_mu": petri_dist.mu,
+        }
+        latents["proc_rosetta_fused_mu"] = torch.stack(tuple(latents.values()), dim=0).mean(dim=0)
+
+        for name, latent in latents.items():
+            decoded = model.tree_decoder.decode_greedy(
+                latent,
+                max_length=max_decode_length,
+                apply_grammar_mask=True,
+            )
+            for sample, token_ids in zip(batch_samples, decoded.detach().cpu().tolist()):
+                rows[name].append(
+                    evaluate_single_decode(
+                        model,
+                        sample,
+                        token_ids,
+                        behavior_traces_per_sample=behavior_traces_per_sample,
+                    )
+                )
+
+    return {
+        "description": (
+            "Greedy decodes from each ProcRosetta latent into the grammar-masked "
+            "process-tree decoder. Petri validity is measured by converting the "
+            "decoded process tree to a Petri net."
+        ),
+        "max_decode_length": int(max_decode_length),
+        "behavior_traces_per_sample": int(behavior_traces_per_sample),
+        "methods": {name: summarize_decode_quality(values) for name, values in rows.items()},
+    }
+
+
+def evaluate_single_decode(
+    model,
+    sample: ProcessSample,
+    token_ids: Sequence[int],
+    behavior_traces_per_sample: int = 16,
+) -> dict[str, object]:
+    tokenizer = model.tree_tokenizer
+    decoded_tokens = trim_tree_token_sequence(token_ids, tokenizer)
+    target_tokens = tokenizer.encode_tree(sample.tree)
+    normalized_denominator = max(len(target_tokens), len(decoded_tokens), 1)
+    token_edit_distance = levenshtein_distance(target_tokens, decoded_tokens)
+    row: dict[str, object] = {
+        "terminated": tokenizer.eos_id in [int(token_id) for token_id in token_ids],
+        "valid_tree": False,
+        "exact_tree_match": False,
+        "petri_convertible": False,
+        "behavior_evaluable": False,
+        "token_edit_distance": token_edit_distance,
+        "normalized_token_edit_distance": token_edit_distance / normalized_denominator,
+        "behavior_l1": None,
+        "error": None,
+    }
+
+    try:
+        decoded_tree = tokenizer.decode_tree(token_ids)
+        row["valid_tree"] = True
+    except Exception as exc:
+        row["error"] = f"decode:{type(exc).__name__}: {exc}"
+        return row
+
+    target_tree = tokenizer.decode_tree(target_tokens)
+    row["exact_tree_match"] = decoded_tree.to_dict() == target_tree.to_dict()
+
+    try:
+        tree_to_petri_net(decoded_tree)
+        row["petri_convertible"] = True
+    except Exception as exc:
+        row["error"] = f"petri:{type(exc).__name__}: {exc}"
+
+    try:
+        trace_count = max(1, min(len(sample.traces), behavior_traces_per_sample))
+        decoded_traces = simulate_traces(decoded_tree, num_traces=trace_count)
+        row["behavior_l1"] = behavioral_distance(sample.traces, decoded_traces)["mean_l1"]
+        row["behavior_evaluable"] = True
+    except Exception as exc:
+        if row["error"] is None:
+            row["error"] = f"behavior:{type(exc).__name__}: {exc}"
+
+    return row
+
+
+def summarize_decode_quality(rows: Sequence[dict[str, object]]) -> dict[str, object]:
+    count = len(rows)
+    behavior_values = [
+        float(row["behavior_l1"]) for row in rows if isinstance(row.get("behavior_l1"), (int, float))
+    ]
+    first_error = next((str(row["error"]) for row in rows if row.get("error")), None)
+    return {
+        "count": int(count),
+        "terminated_rate": rate(rows, "terminated"),
+        "valid_tree_rate": rate(rows, "valid_tree"),
+        "exact_tree_match_rate": rate(rows, "exact_tree_match"),
+        "petri_conversion_rate": rate(rows, "petri_convertible"),
+        "behavior_eval_success_rate": rate(rows, "behavior_evaluable"),
+        "mean_token_edit_distance": round_float(mean(row["token_edit_distance"] for row in rows)),
+        "mean_normalized_token_edit_distance": round_float(
+            mean(row["normalized_token_edit_distance"] for row in rows)
+        ),
+        "mean_behavior_l1": round_float(mean(behavior_values)),
+        "median_behavior_l1": round_float(float(np.median(behavior_values))) if behavior_values else 0.0,
+        "invalid_decode_count": count_false(rows, "valid_tree"),
+        "petri_conversion_error_count": count_false(rows, "petri_convertible"),
+        "behavior_error_count": count_false(rows, "behavior_evaluable"),
+        "first_error": first_error,
+    }
+
+
+def trim_tree_token_sequence(token_ids: Sequence[int], tokenizer) -> list[int]:
+    trimmed = [int(token_id) for token_id in token_ids if int(token_id) != tokenizer.pad_id]
+    if tokenizer.eos_id in trimmed:
+        return trimmed[: trimmed.index(tokenizer.eos_id) + 1]
+    return trimmed
+
+
+def levenshtein_distance(left: Sequence[int], right: Sequence[int]) -> int:
+    if len(left) < len(right):
+        left, right = right, left
+    previous = list(range(len(right) + 1))
+    for left_idx, left_value in enumerate(left, start=1):
+        current = [left_idx]
+        for right_idx, right_value in enumerate(right, start=1):
+            insert_cost = current[right_idx - 1] + 1
+            delete_cost = previous[right_idx] + 1
+            replace_cost = previous[right_idx - 1] + (left_value != right_value)
+            current.append(min(insert_cost, delete_cost, replace_cost))
+        previous = current
+    return previous[-1]
+
+
+def rate(rows: Sequence[dict[str, object]], key: str) -> float:
+    if not rows:
+        return 0.0
+    return round_float(sum(1 for row in rows if row.get(key)) / len(rows))
+
+
+def count_false(rows: Sequence[dict[str, object]], key: str) -> int:
+    return sum(1 for row in rows if not row.get(key))
+
+
+def mean(values: Iterable[object]) -> float:
+    numeric = [float(value) for value in values]
+    if not numeric:
+        return 0.0
+    return float(np.mean(numeric))
 
 
 def behavior_matrices(samples: Sequence[ProcessSample]) -> dict[str, np.ndarray]:
@@ -377,6 +561,32 @@ def format_human_test_report(report: dict[str, object]) -> str:
     )
     lines.append("")
 
+    decode_quality = report.get("decode_quality", {})
+    if isinstance(decode_quality, dict):
+        decode_methods = decode_quality.get("methods", {})
+        if isinstance(decode_methods, dict):
+            lines.append("Decode quality")
+            lines.append("--------------")
+            lines.append(
+                "Greedy decodes use the process-tree decoder; Petri ok means the decoded tree "
+                "converted to a Petri net."
+            )
+            lines.append(
+                format_table(
+                    [
+                        "source latent",
+                        "ended",
+                        "valid tree",
+                        "exact tree",
+                        "Petri ok",
+                        "behavior L1",
+                        "norm edit",
+                    ],
+                    decode_quality_rows(decode_methods),
+                )
+            )
+            lines.append("")
+
     behavior = report["behavioral_distance_summary"]
     assert isinstance(behavior, dict)
     lines.append("Behavioral distance scale")
@@ -481,7 +691,34 @@ def format_human_test_report(report: dict[str, object]) -> str:
     lines.append("- behavior rho: Spearman correlation between embedding distance and behavior distance.")
     lines.append("- NN behavior: behavior L1 distance to the nearest neighbor under that embedding.")
     lines.append("- NN behavior delta: method NN behavior minus ProcRosetta fused NN behavior; negative is better.")
+    lines.append("- decode behavior L1: original traces vs traces simulated from the decoded tree; lower is better.")
     return "\n".join(lines)
+
+
+def decode_quality_rows(methods: dict[str, object]) -> list[list[str]]:
+    rows: list[list[str]] = []
+    order = [
+        "proc_rosetta_tree_mu",
+        "proc_rosetta_trace_mu",
+        "proc_rosetta_petri_mu",
+        "proc_rosetta_fused_mu",
+    ]
+    for name in order:
+        method = methods.get(name)
+        if not isinstance(method, dict):
+            continue
+        rows.append(
+            [
+                human_method_name(name),
+                format_rate(method.get("terminated_rate", 0.0)),
+                format_rate(method.get("valid_tree_rate", 0.0)),
+                format_rate(method.get("exact_tree_match_rate", 0.0)),
+                format_rate(method.get("petri_conversion_rate", 0.0)),
+                format_metric(method.get("mean_behavior_l1", 0.0)),
+                format_metric(method.get("mean_normalized_token_edit_distance", 0.0)),
+            ]
+        )
+    return rows
 
 
 def method_comparison_rows(comparisons: dict[str, object]) -> list[list[str]]:
@@ -587,6 +824,13 @@ def format_metric(value: object) -> str:
 def signed_metric(value: object) -> str:
     try:
         return f"{float(value):+.3f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def format_rate(value: object) -> str:
+    try:
+        return f"{100.0 * float(value):.1f}%"
     except (TypeError, ValueError):
         return str(value)
 

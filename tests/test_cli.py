@@ -156,6 +156,9 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert "trace_directly_follows" in test_row["embedding_methods"]
     assert "pm4py_colonna_petri_node2vec" in test_row["embedding_methods"]
     assert "method_comparisons_against_proc_rosetta_fused_mu" in test_row
+    assert "decode_quality" in test_row
+    assert "proc_rosetta_fused_mu" in test_row["decode_quality"]["methods"]
+    assert "valid_tree_rate" in test_row["decode_quality"]["methods"]["proc_rosetta_fused_mu"]
 
     assert main(
         [
@@ -178,5 +181,6 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     ) == 0
     captured = capsys.readouterr()
     assert "ProcRosetta Test Report" in captured.out
+    assert "Decode quality" in captured.out
     assert "pm4py Petri Node2Vec vs ProcRosetta fused" in captured.out
     assert "Agreement against ProcRosetta fused encoding" in captured.out
