@@ -1,0 +1,84 @@
+ProcRosetta Test Report
+=======================
+
+Split: test  |  samples: 512
+
+Neural test losses
+------------------
+loss=2.6250  tree=0.6948  trace->tree=0.9172  petri->tree=0.8403  contrastive=1.1242  kl=47.7580
+
+Decode quality
+--------------
+Greedy decodes use the process-tree decoder; Petri ok means the decoded tree converted to a Petri net.
+source latent      ended   valid tree  exact tree  Petri ok  behavior L1  norm edit
+-----------------  ------  ----------  ----------  --------  -----------  ---------
+ProcRosetta tree   100.0%  100.0%      47.7%       100.0%    0.679        0.183    
+ProcRosetta trace  100.0%  100.0%      39.8%       100.0%    0.744        0.287    
+ProcRosetta Petri  100.0%  100.0%      35.9%       100.0%    0.832        0.283    
+ProcRosetta fused  100.0%  100.0%      43.6%       100.0%    0.719        0.231    
+
+Process discovery quality
+-------------------------
+Alignment-based quality compares the trace-decoded ProcRosetta model with PM4Py Inductive Miner on each test log.
+method             model ok  align ok  fitness  precision  F1   
+-----------------  --------  --------  -------  ---------  -----
+ProcRosetta trace  100.0%    100.0%    0.837    0.760      0.782
+Inductive Miner    100.0%    100.0%    1.000    0.797      0.857
+
+Behavioral distance scale
+-------------------------
+Mean pairwise behavior L1 among test logs is 1.5657 (min=0.0000, max=2.0000, pairs=130816).
+For nearest-neighbor behavior L1 below, lower is better; improvement over random is higher better.
+
+Embedding quality ranking
+-------------------------
+method                   behavior rho  NN behavior  impr. vs random  dim 
+-----------------------  ------------  -----------  ---------------  ----
+directly-follows         0.736         0.784        0.782            332 
+trace activity counts    0.635         0.946        0.620            20  
+ProcRosetta trace        0.630         0.792        0.774            64  
+ProcRosetta fused        0.628         0.801        0.764            64  
+pm4py log features       0.619         0.821        0.745            40  
+trace variants           0.614         0.781        0.785            2548
+ProcRosetta tree         0.611         0.838        0.728            64  
+ProcRosetta Petri        0.574         0.920        0.646            64  
+Petri structural counts  0.439         0.925        0.640            9   
+eventually-follows       0.412         0.881        0.685            347 
+
+Agreement against ProcRosetta fused encoding
+-------------------------------------------
+Pairwise agreement compares the whole geometry of each method against our fused latent (1.0 means the methods order all test-pair distances the same way).
+method                   pairwise rho  top1 NN overlap  behavior rho delta  NN behavior delta
+-----------------------  ------------  ---------------  ------------------  -----------------
+ProcRosetta tree         0.960         0.438            -0.017              +0.037           
+ProcRosetta Petri        0.950         0.498            -0.055              +0.119           
+ProcRosetta trace        0.892         0.230            +0.001              -0.010           
+Petri structural counts  0.620         0.244            -0.189              +0.124           
+pm4py log features       0.542         0.055            -0.009              +0.020           
+trace variants           0.502         0.043            -0.015              -0.021           
+directly-follows         0.486         0.119            +0.108              -0.017           
+trace activity counts    0.414         0.084            +0.007              +0.145           
+eventually-follows       0.336         0.105            -0.216              +0.080           
+
+ProcRosetta cross-modal retrieval
+---------------------------------
+query -> target  top1   MRR    mean rank
+---------------  -----  -----  ---------
+petri -> trace   0.154  0.236  49.395   
+petri -> tree    0.330  0.435  38.027   
+trace -> petri   0.150  0.241  48.896   
+trace -> tree    0.242  0.346  33.197   
+tree -> petri    0.445  0.525  37.414   
+tree -> trace    0.293  0.384  32.631   
+
+Unavailable methods
+-------------------
+- pm4py Petri Node2Vec: ModuleNotFoundError: No module named 'gensim'
+
+Legend
+------
+- behavior rho: Spearman correlation between embedding distance and behavior distance.
+- NN behavior: behavior L1 distance to the nearest neighbor under that embedding.
+- NN behavior delta: method NN behavior minus ProcRosetta fused NN behavior; negative is better.
+- decode behavior L1: original traces vs traces simulated from the decoded tree; lower is better.
+- discovery F1: harmonic mean of alignment fitness and alignment precision; higher is better.
