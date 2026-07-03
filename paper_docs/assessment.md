@@ -309,7 +309,51 @@ first_error
 
 The validity, exact-match, Petri-conversion, and behavior-evaluation metrics are introduced in this project as task-specific decode-quality measures. They are necessary because a low token loss does not by itself guarantee that the generated sequence is a valid process tree, that it can be converted into a Petri net, or that it yields similar simulated behavior.
 
-### 2.3 Behavioral distance metrics
+### 2.3 Process-discovery quality metrics
+
+The `discovery_quality` block evaluates the log-to-model use case directly. For each test sample, the event log \(L_i\) is used in two discovery pathways:
+
+```text
+proc_rosetta_trace_mu
+inductive_miner
+```
+
+For `proc_rosetta_trace_mu`, the trace encoder maps \(L_i\) to its deterministic latent mean, the grammar-masked decoder greedily decodes a process tree, and PM4Py converts the decoded tree to a Petri net. For `inductive_miner`, PM4Py's Inductive Miner discovers a process tree from the same log, and that tree is also converted to a Petri net. Both Petri nets are then evaluated against the original log using PM4Py's alignment-based conformance functions.
+
+The per-sample fields are:
+
+```text
+model_discovered
+alignment_evaluable
+fitness
+precision
+f1
+error
+```
+
+`fitness` is the alignment fitness reported by `pm4py.fitness_alignments`. It measures how much of the observed log behavior can be replayed by the discovered model. `precision` is the alignment precision reported by `pm4py.precision_alignments`. It penalizes models that allow too much behavior beyond what is observed in the log. The F1 score combines them as the harmonic mean:
+
+\[
+F1 = \frac{2 \cdot fitness \cdot precision}{fitness + precision},
+\]
+
+with \(F1 = 0\) when the denominator is zero. The report aggregates these rows by method:
+
+```text
+count
+model_discovered_rate
+alignment_evaluable_rate
+mean_fitness
+mean_precision
+mean_f1
+median_f1
+alignment_error_count
+first_error
+```
+
+This block is the classical process-discovery comparison in the test report. It differs from `decode_quality`: decode quality checks whether neural outputs are valid and behaviorally close under sampled-log simulation, whereas discovery quality asks how well the log-derived model scores under alignment fitness and precision against the source log.
+
+### 2.4 Behavioral distance metrics
 
 The test suite uses a lightweight behavioral distance between two event logs. It is not a classical alignment-based conformance measure; rather, it is a project-introduced distributional proxy that combines three standard log abstractions: trace variants, directly-follows relations, and trace lengths. Directly-follows relations are a common abstraction in process mining, although their limitations as a complete behavioral representation are well known [vanDerAalst2019DFG].
 
@@ -384,7 +428,7 @@ max
 
 These summaries appear in `behavioral_distance_summary` and `behavioral_component_summaries`.
 
-### 2.4 Embedding-method metrics
+### 2.5 Embedding-method metrics
 
 The `embedding_methods` block evaluates each learned or baseline vector representation against the behavioral distance matrix. For any method producing vectors \(e_1,\ldots,e_N\), the embedding distance is cosine distance:
 
@@ -394,7 +438,7 @@ D_E(i,j) = 1 - \frac{e_i^\top e_j}{\|e_i\|_2\,\|e_j\|_2}.
 
 Cosine similarity and cosine distance are standard in vector-space information retrieval [Manning2008].
 
-#### 2.4.1 Vector statistics
+#### 2.5.1 Vector statistics
 
 The `vector_statistics` field reports basic properties of the embedding matrix:
 
@@ -408,7 +452,7 @@ feature_variance_mean
 
 These statistics are descriptive. They indicate whether a method produced a vector for each test sample, the dimensionality of the representation, the scale of vector norms, and the average variance across vector dimensions.
 
-#### 2.4.2 Pairwise distance statistics
+#### 2.5.2 Pairwise distance statistics
 
 The `pairwise_statistics` field summarizes the upper triangle of the cosine-distance matrix:
 
@@ -422,7 +466,7 @@ max
 
 These values describe the spread of the embedding geometry. For example, if all vectors are nearly identical, the mean and variance of pairwise distances will be small.
 
-#### 2.4.3 Behavior alignment through correlation
+#### 2.5.3 Behavior alignment through correlation
 
 The `behavior_alignment` field compares embedding distances with behavioral distances over all unordered test-sample pairs. It reports:
 
@@ -433,7 +477,7 @@ pearson_embedding_distance_vs_behavior_l1
 
 The Spearman coefficient compares the rank ordering of distances and is therefore insensitive to monotone transformations [Spearman1904]. The Pearson coefficient compares linear association [Pearson1896]. In this setting, a high positive correlation means that pairs of samples that are far apart in the embedding space also tend to be behaviorally far apart according to `mean_l1`.
 
-#### 2.4.4 Nearest-neighbor behavior
+#### 2.5.4 Nearest-neighbor behavior
 
 For each sample \(i\), the report identifies its nearest neighbor under the embedding distance:
 
@@ -474,7 +518,7 @@ improvement_over_random
 
 Higher improvement means that the embedding retrieves behaviorally closer samples than a random pair would, on average. This nearest-neighbor behavioral evaluation is introduced in the project.
 
-#### 2.4.5 Method ranking
+#### 2.5.5 Method ranking
 
 The `method_ranking` block sorts available embedding methods by descending Spearman behavior alignment and then by ascending nearest-neighbor behavioral distance. The ranking fields are:
 
@@ -487,7 +531,7 @@ improvement_over_random
 
 This ranking is project-specific. It is intended as an empirical summary of how well each vector representation preserves the behavior proxy, not as a universal ranking of process-mining representations.
 
-### 2.5 Cross-modal retrieval metrics
+### 2.6 Cross-modal retrieval metrics
 
 The `cross_modal_retrieval` block evaluates whether embeddings from one modality retrieve the matching embeddings from another modality. The six query-target directions are:
 
@@ -523,7 +567,7 @@ mrr
 
 Mean reciprocal rank is a standard retrieval evaluation metric [VoorheesTice2000]. Its use here for paired process-mining artifacts is introduced in the project.
 
-### 2.6 Agreement with the fused ProcRosetta geometry
+### 2.7 Agreement with the fused ProcRosetta geometry
 
 The report contains a direct comparison between each available embedding method and the fused ProcRosetta latent representation. The reference method is
 
@@ -553,11 +597,11 @@ and then average over all test samples. The delta metrics compare behavior align
 
 These geometry-agreement and delta metrics are introduced in the project. They are particularly useful for comparing the learned multimodal latent space with deterministic baselines and the PM4Py Petri-net embedding baseline.
 
-### 2.7 Baseline representations evaluated in the test report
+### 2.8 Baseline representations evaluated in the test report
 
 The report evaluates both learned and deterministic vector representations.
 
-#### 2.7.1 Learned ProcRosetta representations
+#### 2.8.1 Learned ProcRosetta representations
 
 The learned representations are:
 
@@ -570,7 +614,7 @@ proc_rosetta_fused_mu
 
 The first three are the latent means from the tree, trace, and Petri encoders. The fused representation is the arithmetic mean of the three means. The fused representation is introduced in the project as a simple multimodal aggregate.
 
-#### 2.7.2 Deterministic event-log baselines
+#### 2.8.2 Deterministic event-log baselines
 
 The deterministic event-log baselines map each log to a sparse count or frequency vector and then use the same embedding-method evaluation metrics described above.
 
@@ -588,7 +632,7 @@ f_L(a) = \frac{\#\text{ occurrences of activity }a\text{ in }L}{\#\text{ events 
 
 `pm4py_log_case_features_mean_std` converts the traces to a temporary event table and calls `pm4py.extract_features_dataframe`. Numeric case-level features are aggregated per log by mean and standard deviation. This baseline relies on PM4Py’s feature extraction functionality [Berti2019, Berti2023].
 
-#### 2.7.3 Deterministic Petri-net structural baseline
+#### 2.8.3 Deterministic Petri-net structural baseline
 
 `petri_structural_counts` maps each Petri graph to the following structural counts:
 
@@ -606,7 +650,7 @@ number of duplicate visible transitions
 
 This baseline is introduced in the project. It is intentionally simple and tests whether coarse structural Petri-net size and label information can approximate behavioral similarity.
 
-#### 2.7.4 PM4Py Petri-net embedding baseline
+#### 2.8.4 PM4Py Petri-net embedding baseline
 
 `pm4py_colonna_petri_node2vec` uses the PM4Py helper `pm4py.objects.petri_net.utils.embeddings_similarity.petri_net_embedding`, when available. The report describes this baseline as the Petri-net Node2Vec/Word2Vec-style embedding associated with Colonna et al.’s PetriNet2Vec work [Colonna2024]. PetriNet2Vec is an unsupervised method for learning vector representations of Petri nets, inspired by document embeddings such as Doc2Vec/Paragraph Vector [LeMikolov2014] and graph random-walk embeddings such as Node2Vec [Grover2016].
 
@@ -642,6 +686,8 @@ The following components are standard or directly derived from published work:
 | Cosine similarity/distance | Used for embedding distances and retrieval. | [Manning2008] |
 | Spearman and Pearson correlations | Used for behavior-alignment and method-agreement statistics. | [Spearman1904, Pearson1896] |
 | Mean reciprocal rank | Used for cross-modal retrieval evaluation. | [VoorheesTice2000] |
+| Alignment fitness and precision | Used to evaluate discovered Petri nets against the source test logs. | [Adriansyah2011] |
+| Inductive Miner | Used as the process-discovery baseline for log-to-process-tree discovery quality. | [Leemans2013] |
 | Node2Vec/Doc2Vec-style Petri-net embeddings | Used through the PM4Py Petri embedding baseline. | [Colonna2024, Grover2016, LeMikolov2014] |
 | Directly-follows abstraction | Used in behavioral distance and deterministic log features. | [vanDerAalst2019DFG] |
 
@@ -654,6 +700,7 @@ The following metrics or metric combinations are introduced by the project for t
 | `mean_l1` behavioral distance | Average of L1 distances over trace-variant, directly-follows, and trace-length distributions. It provides a fast behavioral proxy for comparing two sampled logs. |
 | Decode validity package | `terminated_rate`, `valid_tree_rate`, `exact_tree_match_rate`, `petri_conversion_rate`, and `behavior_eval_success_rate` jointly evaluate whether a latent decodes into a syntactically valid, semantically usable process-tree/Petri-net artifact. |
 | Decode behavioral distance | Behavioral L1 between the original log and traces simulated from the decoded tree. It measures behavioral preservation after neural decoding and deterministic Petri conversion. |
+| ProcRosetta-vs-Inductive-Miner discovery summary | Per-log comparison of the trace-decoded ProcRosetta process model and the Inductive Miner process model using alignment fitness, alignment precision, and F1. |
 | Cross-modal retrieval over paired process artifacts | Top-1 accuracy, mean rank, and MRR for retrieving the matching tree, trace, or Petri representation of the same synthetic process. |
 | Nearest-neighbor behavioral distance | Mean behavioral distance from each sample to its nearest embedding neighbor. It evaluates whether local neighborhoods in the embedding space correspond to behaviorally similar logs. |
 | Improvement over random | Difference between random-pair behavioral distance and nearest-neighbor behavioral distance. It quantifies the behavioral advantage of embedding-based retrieval. |
@@ -662,13 +709,13 @@ The following metrics or metric combinations are introduced by the project for t
 | Behavior deltas against fused reference | Differences in behavior Spearman and nearest-neighbor behavioral L1 relative to the fused ProcRosetta representation. |
 | Petri structural-count baseline | Coarse Petri graph statistics used as a deterministic process-model baseline. |
 
-These introduced metrics are not intended to replace classical process-discovery and conformance metrics. Rather, they evaluate the specific claims of the project: cross-modal representation learning, grammar-valid process-tree decoding, deterministic conversion of decoded trees to Petri nets, and behavioral preservation in a synthetic paired-triple setting.
+These introduced summaries complement classical process-discovery and conformance metrics. The report now includes alignment fitness and precision for the log-to-model discovery setting, while the other metrics evaluate the specific claims of the project: cross-modal representation learning, grammar-valid process-tree decoding, deterministic conversion of decoded trees to Petri nets, and behavioral preservation in a synthetic paired-triple setting.
 
 ## 4. Relation to classical process-discovery quality metrics
 
-Classical process-discovery evaluation often discusses four quality dimensions: fitness, precision, generalization, and simplicity [Buijs2012]. These dimensions are important when a discovered model is compared with an event log through replay or alignment-based conformance checking. The current test suite does not compute replay fitness, precision, generalization, simplicity, token-based replay scores, or alignment-based conformance scores. This is a deliberate scope choice. The present implementation focuses on whether heterogeneous artifacts can be embedded in a shared latent space and whether latent vectors can decode to valid block-structured process trees that can be converted to Petri nets.
+Classical process-discovery evaluation often discusses four quality dimensions: fitness, precision, generalization, and simplicity [Buijs2012]. These dimensions are important when a discovered model is compared with an event log through replay or alignment-based conformance checking. The current test suite computes alignment-based fitness and precision, plus their F1 score, for the specific log-to-model discovery comparison between ProcRosetta and PM4Py's Inductive Miner. It does not yet compute generalization, simplicity, token-based replay scores, or broader real-life benchmark suites.
 
-Consequently, the reported `behavior_l1`, `mean_l1`, nearest-neighbor behavioral distance, and cross-modal retrieval scores should be interpreted as representation-learning and sampled-behavior metrics, not as replacements for classical conformance-checking measures. A future evaluation could add alignment-based fitness and precision once decoded models are systematically evaluated against larger and more diverse logs.
+Consequently, `discovery_quality` should be interpreted as the classical conformance-oriented discovery comparison in the report, while `behavior_l1`, `mean_l1`, nearest-neighbor behavioral distance, and cross-modal retrieval remain representation-learning and sampled-behavior metrics. A broader evaluation should still add generalization, simplicity, runtime, and real-life log benchmarks before making strong process-discovery performance claims.
 
 ## 5. Complete list of test-report fields
 
@@ -681,6 +728,7 @@ loss_metrics
 behavioral_distance_summary
 behavioral_component_summaries
 decode_quality
+discovery_quality
 cross_modal_retrieval
 embedding_methods
 method_ranking
@@ -725,6 +773,27 @@ median_behavior_l1
 invalid_decode_count
 petri_conversion_error_count
 behavior_error_count
+first_error
+```
+
+The `discovery_quality.methods` field contains one summary for each of:
+
+```text
+proc_rosetta_trace_mu
+inductive_miner
+```
+
+Each discovery-quality summary contains:
+
+```text
+count
+model_discovered_rate
+alignment_evaluable_rate
+mean_fitness
+mean_precision
+mean_f1
+median_f1
+alignment_error_count
 first_error
 ```
 
@@ -787,6 +856,8 @@ nearest_neighbor_behavior_l1_delta_vs_reference
 ```
 
 ## BIBLIOGRAPHY
+
+[Adriansyah2011] A. Adriansyah, B. F. van Dongen, and W. M. P. van der Aalst. "Conformance Checking Using Cost-Based Fitness Analysis." In *Proceedings of the 2011 IEEE International Enterprise Distributed Object Computing Conference Workshops*, pp. 55--64. IEEE, 2011. DOI: 10.1109/EDOCW.2011.12.
 
 [Berti2019] A. Berti, S. J. van Zelst, and W. M. P. van der Aalst. "Process Mining for Python (PM4Py): Bridging the Gap Between Process- and Data Science." *CEUR Workshop Proceedings*, Vol. 2374, 2019. Also available as arXiv:1905.06169.
 

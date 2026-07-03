@@ -65,6 +65,12 @@ def rich_test_report(
         batch_size=batch_size,
         device=device,
     )
+    discovery_quality = discovery_quality_report(
+        model,
+        samples,
+        batch_size=batch_size,
+        device=device,
+    )
 
     behavior = behavior_matrices(samples)
     methods: dict[str, dict[str, object]] = {}
@@ -120,6 +126,7 @@ def rich_test_report(
             if key != "mean_l1"
         },
         "decode_quality": decode_quality,
+        "discovery_quality": discovery_quality,
         "cross_modal_retrieval": cross_modal_retrieval(neural_embeddings),
         "embedding_methods": methods,
         "method_ranking": rank_embedding_methods(methods),
@@ -139,6 +146,234 @@ def rich_test_report(
         },
     }
     return report
+
+
+@torch.no_grad()
+def discovery_quality_report(
+    model,
+    samples: Sequence[ProcessSample],
+    batch_size: int = 16,
+    device: str = "cpu",
+    max_decode_length: int = 128,
+) -> dict[str, object]:
+    model.eval()
+    model.to(device)
+    torch_device = torch.device(device)
+    collator = ProcessBatchCollator(model.tree_tokenizer, model.activity_tokenizer)
+    rows: dict[str, list[dict[str, object]]] = {
+        "proc_rosetta_trace_mu": [],
+        "inductive_miner": [],
+    }
+
+    for start in range(0, len(samples), batch_size):
+        batch_samples = samples[start : start + batch_size]
+        batch = _move_batch_to_device(collator(batch_samples), torch_device)
+        trace_dist = model.encode_traces(batch["traces"])
+        decoded = model.tree_decoder.decode_greedy(
+            trace_dist.mu,
+            max_length=max_decode_length,
+            apply_grammar_mask=True,
+        )
+        for sample, token_ids in zip(batch_samples, decoded.detach().cpu().tolist()):
+            rows["proc_rosetta_trace_mu"].append(
+                evaluate_proc_rosetta_discovery(
+                    model,
+                    sample,
+                    token_ids,
+                )
+            )
+            rows["inductive_miner"].append(evaluate_inductive_miner_discovery(sample))
+
+    return {
+        "description": (
+            "Alignment-based discovery quality on each test log. ProcRosetta uses "
+            "the trace encoder and grammar-masked process-tree decoder; the "
+            "baseline uses PM4Py Inductive Miner. Each discovered process tree is "
+            "converted to a Petri net and scored by alignment fitness, alignment "
+            "precision, and their harmonic-mean F1."
+        ),
+        "max_decode_length": int(max_decode_length),
+        "methods": {name: summarize_discovery_quality(values) for name, values in rows.items()},
+    }
+
+
+def evaluate_proc_rosetta_discovery(
+    model,
+    sample: ProcessSample,
+    token_ids: Sequence[int],
+) -> dict[str, object]:
+    row = discovery_quality_row()
+    try:
+        if model.tree_tokenizer.eos_id not in [int(token_id) for token_id in token_ids]:
+            raise ValueError("decoder did not emit <eos>")
+        tree = model.tree_tokenizer.decode_tree(token_ids)
+        bundle = tree_to_petri_net(tree)
+        row["model_discovered"] = True
+    except Exception as exc:
+        row["error"] = f"decode:{type(exc).__name__}: {exc}"
+        return row
+
+    return score_discovered_petri_net(
+        sample,
+        bundle.net,
+        bundle.initial_marking,
+        bundle.final_marking,
+        row=row,
+    )
+
+
+def evaluate_inductive_miner_discovery(sample: ProcessSample) -> dict[str, object]:
+    row = discovery_quality_row()
+    try:
+        import pm4py
+
+        log = traces_to_event_dataframe(sample.traces)
+        tree = pm4py.discover_process_tree_inductive(
+            log,
+            activity_key="concept:name",
+            timestamp_key="time:timestamp",
+            case_id_key="case:concept:name",
+        )
+        net, initial_marking, final_marking = pm4py.convert_to_petri_net(tree)
+        row["model_discovered"] = True
+    except Exception as exc:
+        row["error"] = f"discover:{type(exc).__name__}: {exc}"
+        return row
+
+    return score_discovered_petri_net(
+        sample,
+        net,
+        initial_marking,
+        final_marking,
+        row=row,
+    )
+
+
+def discovery_quality_row() -> dict[str, object]:
+    return {
+        "model_discovered": False,
+        "alignment_evaluable": False,
+        "fitness": None,
+        "precision": None,
+        "f1": None,
+        "error": None,
+    }
+
+
+def score_discovered_petri_net(
+    sample: ProcessSample,
+    net,
+    initial_marking,
+    final_marking,
+    row: dict[str, object] | None = None,
+) -> dict[str, object]:
+    row = row or discovery_quality_row()
+    try:
+        fitness, precision = alignment_fitness_precision(
+            sample.traces,
+            net,
+            initial_marking,
+            final_marking,
+        )
+        row["fitness"] = round_float(fitness)
+        row["precision"] = round_float(precision)
+        row["f1"] = alignment_f1_score(fitness, precision)
+        row["alignment_evaluable"] = True
+    except Exception as exc:
+        row["error"] = f"alignment:{type(exc).__name__}: {exc}"
+    return row
+
+
+def alignment_fitness_precision(
+    traces: Sequence[Trace],
+    net,
+    initial_marking,
+    final_marking,
+) -> tuple[float, float]:
+    import pm4py
+
+    log = traces_to_event_dataframe(traces)
+    fitness = extract_alignment_fitness(
+        pm4py.fitness_alignments(
+            log,
+            net,
+            initial_marking,
+            final_marking,
+            multi_processing=False,
+            activity_key="concept:name",
+            timestamp_key="time:timestamp",
+            case_id_key="case:concept:name",
+        )
+    )
+    precision = float(
+        pm4py.precision_alignments(
+            log,
+            net,
+            initial_marking,
+            final_marking,
+            multi_processing=False,
+            activity_key="concept:name",
+            timestamp_key="time:timestamp",
+            case_id_key="case:concept:name",
+        )
+    )
+    return fitness, precision
+
+
+def traces_to_event_dataframe(traces: Sequence[Trace]) -> pd.DataFrame:
+    rows = []
+    for case_idx, trace in enumerate(traces):
+        for event_idx, activity in enumerate(trace):
+            rows.append(
+                {
+                    "case:concept:name": f"case-{case_idx}",
+                    "concept:name": str(activity),
+                    "time:timestamp": pd.Timestamp("2024-01-01")
+                    + pd.Timedelta(seconds=case_idx * 1000 + event_idx),
+                }
+            )
+    if not rows:
+        raise ValueError("alignment-based discovery quality requires at least one event")
+    return pd.DataFrame(rows)
+
+
+def extract_alignment_fitness(value: object) -> float:
+    if isinstance(value, dict):
+        for key in ("log_fitness", "averageFitness", "average_trace_fitness"):
+            if key in value:
+                return float(value[key])
+    if isinstance(value, (int, float)):
+        return float(value)
+    raise ValueError(f"unsupported alignment fitness result: {value!r}")
+
+
+def alignment_f1_score(fitness: float, precision: float) -> float:
+    denominator = fitness + precision
+    if denominator <= 0.0:
+        return 0.0
+    return round_float(2.0 * fitness * precision / denominator)
+
+
+def summarize_discovery_quality(rows: Sequence[dict[str, object]]) -> dict[str, object]:
+    fitness_values = numeric_row_values(rows, "fitness")
+    precision_values = numeric_row_values(rows, "precision")
+    f1_values = numeric_row_values(rows, "f1")
+    first_error = next((str(row["error"]) for row in rows if row.get("error")), None)
+    return {
+        "count": int(len(rows)),
+        "model_discovered_rate": rate(rows, "model_discovered"),
+        "alignment_evaluable_rate": rate(rows, "alignment_evaluable"),
+        "mean_fitness": round_float(mean(fitness_values)),
+        "mean_precision": round_float(mean(precision_values)),
+        "mean_f1": round_float(mean(f1_values)),
+        "median_f1": round_float(float(np.median(f1_values))) if f1_values else 0.0,
+        "alignment_error_count": count_false(rows, "alignment_evaluable"),
+        "first_error": first_error,
+    }
+
+
+def numeric_row_values(rows: Sequence[dict[str, object]], key: str) -> list[float]:
+    return [float(row[key]) for row in rows if isinstance(row.get(key), (int, float))]
 
 
 @torch.no_grad()
@@ -587,6 +822,24 @@ def format_human_test_report(report: dict[str, object]) -> str:
             )
             lines.append("")
 
+    discovery_quality = report.get("discovery_quality", {})
+    if isinstance(discovery_quality, dict):
+        discovery_methods = discovery_quality.get("methods", {})
+        if isinstance(discovery_methods, dict):
+            lines.append("Process discovery quality")
+            lines.append("-------------------------")
+            lines.append(
+                "Alignment-based quality compares the trace-decoded ProcRosetta model "
+                "with PM4Py Inductive Miner on each test log."
+            )
+            lines.append(
+                format_table(
+                    ["method", "model ok", "align ok", "fitness", "precision", "F1"],
+                    discovery_quality_rows(discovery_methods),
+                )
+            )
+            lines.append("")
+
     behavior = report["behavioral_distance_summary"]
     assert isinstance(behavior, dict)
     lines.append("Behavioral distance scale")
@@ -692,6 +945,10 @@ def format_human_test_report(report: dict[str, object]) -> str:
     lines.append("- NN behavior: behavior L1 distance to the nearest neighbor under that embedding.")
     lines.append("- NN behavior delta: method NN behavior minus ProcRosetta fused NN behavior; negative is better.")
     lines.append("- decode behavior L1: original traces vs traces simulated from the decoded tree; lower is better.")
+    lines.append(
+        "- discovery F1: harmonic mean of alignment fitness and alignment precision; "
+        "higher is better."
+    )
     return "\n".join(lines)
 
 
@@ -716,6 +973,25 @@ def decode_quality_rows(methods: dict[str, object]) -> list[list[str]]:
                 format_rate(method.get("petri_conversion_rate", 0.0)),
                 format_metric(method.get("mean_behavior_l1", 0.0)),
                 format_metric(method.get("mean_normalized_token_edit_distance", 0.0)),
+            ]
+        )
+    return rows
+
+
+def discovery_quality_rows(methods: dict[str, object]) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for name in ("proc_rosetta_trace_mu", "inductive_miner"):
+        method = methods.get(name)
+        if not isinstance(method, dict):
+            continue
+        rows.append(
+            [
+                human_method_name(name),
+                format_rate(method.get("model_discovered_rate", 0.0)),
+                format_rate(method.get("alignment_evaluable_rate", 0.0)),
+                format_metric(method.get("mean_fitness", 0.0)),
+                format_metric(method.get("mean_precision", 0.0)),
+                format_metric(method.get("mean_f1", 0.0)),
             ]
         )
     return rows
@@ -794,6 +1070,7 @@ def human_method_name(name: object) -> str:
         "trace_directly_follows": "directly-follows",
         "trace_eventually_follows": "eventually-follows",
         "petri_structural_counts": "Petri structural counts",
+        "inductive_miner": "Inductive Miner",
     }
     return labels.get(str(name), str(name))
 

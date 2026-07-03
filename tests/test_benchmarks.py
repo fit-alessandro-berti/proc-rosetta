@@ -2,10 +2,12 @@ import numpy as np
 
 from proc_rosetta.benchmarks import (
     activity_count_features,
+    alignment_f1_score,
     evaluate_embedding_method,
     format_human_test_report,
     levenshtein_distance,
     retrieval_metrics,
+    summarize_discovery_quality,
     trim_tree_token_sequence,
 )
 from proc_rosetta.tokenizers import TreeTokenizer
@@ -53,6 +55,38 @@ def test_decode_token_edit_helpers():
 
     assert trim_tree_token_sequence(tokens, tokenizer) == tokens[:3]
     assert levenshtein_distance([1, 2, 3], [1, 4, 3, 5]) == 2
+
+
+def test_discovery_quality_summary_helpers():
+    rows = [
+        {
+            "model_discovered": True,
+            "alignment_evaluable": True,
+            "fitness": 1.0,
+            "precision": 0.5,
+            "f1": alignment_f1_score(1.0, 0.5),
+            "error": None,
+        },
+        {
+            "model_discovered": False,
+            "alignment_evaluable": False,
+            "fitness": None,
+            "precision": None,
+            "f1": None,
+            "error": "decode:ValueError: invalid",
+        },
+    ]
+
+    summary = summarize_discovery_quality(rows)
+
+    assert alignment_f1_score(1.0, 0.5) == 0.666667
+    assert summary["count"] == 2
+    assert summary["model_discovered_rate"] == 0.5
+    assert summary["alignment_evaluable_rate"] == 0.5
+    assert summary["mean_fitness"] == 1.0
+    assert summary["mean_precision"] == 0.5
+    assert summary["mean_f1"] == 0.666667
+    assert summary["alignment_error_count"] == 1
 
 
 def test_human_report_mentions_method_comparison():
@@ -120,11 +154,31 @@ def test_human_report_mentions_method_comparison():
                 },
             }
         },
+        "discovery_quality": {
+            "methods": {
+                "proc_rosetta_trace_mu": {
+                    "model_discovered_rate": 1.0,
+                    "alignment_evaluable_rate": 1.0,
+                    "mean_fitness": 0.8,
+                    "mean_precision": 0.6,
+                    "mean_f1": 0.685714,
+                },
+                "inductive_miner": {
+                    "model_discovered_rate": 1.0,
+                    "alignment_evaluable_rate": 1.0,
+                    "mean_fitness": 1.0,
+                    "mean_precision": 0.9,
+                    "mean_f1": 0.947368,
+                },
+            }
+        },
     }
 
     text = format_human_test_report(report)
 
     assert "ProcRosetta Test Report" in text
     assert "Decode quality" in text
+    assert "Process discovery quality" in text
+    assert "Inductive Miner" in text
     assert "pm4py Petri Node2Vec vs ProcRosetta fused" in text
     assert "behavior rho" in text

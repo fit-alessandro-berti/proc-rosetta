@@ -946,9 +946,10 @@ The test report includes several groups of metrics:
 
 1. **Neural test losses.** The same loss components used during validation are computed on the test split.
 2. **Decode quality.** The decoder greedily decodes process trees from four latent sources: `tree_mu`, `trace_mu`, `petri_mu`, and the mean-fused latent vector. The decoded tree is checked for termination, grammar-valid decoding, exact tree match, Petri-net convertibility, token edit distance, and behavioral distance after simulating traces from the decoded tree.
-3. **Behavioral distance scale.** Test logs are compared pairwise using trace-variant L1, directly-follows L1, trace-length L1, and their mean.
-4. **Cross-modal retrieval.** The system measures whether a latent vector from one modality retrieves the corresponding sample in another modality.
-5. **Embedding comparisons.** Learned ProcRosetta embeddings are compared against deterministic event-log features, deterministic Petri structural features, and, when available, a `pm4py` Petri-net Node2Vec/Word2Vec embedding baseline.
+3. **Process-discovery quality.** For each test log, the trace encoder and shared decoder produce a ProcRosetta process tree, which is converted to a Petri net. The same log is also given to PM4Py's Inductive Miner baseline. Both resulting models are scored against the log with alignment-based fitness, alignment-based precision, and their harmonic-mean F1 score.
+4. **Behavioral distance scale.** Test logs are compared pairwise using trace-variant L1, directly-follows L1, trace-length L1, and their mean.
+5. **Cross-modal retrieval.** The system measures whether a latent vector from one modality retrieves the corresponding sample in another modality.
+6. **Embedding comparisons.** Learned ProcRosetta embeddings are compared against deterministic event-log features, deterministic Petri structural features, and, when available, a `pm4py` Petri-net Node2Vec/Word2Vec embedding baseline.
 
 The learned fused embedding used in benchmark comparisons is:
 
@@ -1041,4 +1042,4 @@ Synthetic paired process-mining samples are generated from randomly sampled bloc
 
 The model contains three modality-specific encoders: a GRU tree encoder, a hierarchical GRU-plus-attention trace encoder, and a message-passing Petri graph encoder. Each encoder outputs a diagonal Gaussian latent distribution in a shared latent space. A shared GRU decoder, initialized from a sampled or deterministic latent vector, predicts prefix-encoded process-tree tokens under a hand-coded grammar mask.
 
-Training uses teacher forcing and optimizes three grammar-masked sequence losses: tree-to-tree reconstruction, trace-to-tree translation, and Petri-to-tree translation. These are augmented with latent mean alignment, a symmetric cross-modal contrastive objective, and weak KL regularization. Optimization uses AdamW, dropout, label smoothing, gradient clipping, validation-based learning-rate reduction, best-checkpoint retention, and early stopping. The validation split controls learning-rate scheduling and stopping; the test split is reserved for final loss, decoding, retrieval, and embedding-quality evaluation.
+Training uses teacher forcing and optimizes three grammar-masked sequence losses: tree-to-tree reconstruction, trace-to-tree translation, and Petri-to-tree translation. These are augmented with latent mean alignment, a symmetric cross-modal contrastive objective, and weak KL regularization. Optimization uses AdamW, dropout, label smoothing, gradient clipping, validation-based learning-rate reduction, best-checkpoint retention, and early stopping. The validation split controls learning-rate scheduling and stopping; the test split is reserved for final loss, decoding, discovery-quality comparison against Inductive Miner, retrieval, and embedding-quality evaluation.

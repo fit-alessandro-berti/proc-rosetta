@@ -160,6 +160,10 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert "decode_quality" in test_row
     assert "proc_rosetta_fused_mu" in test_row["decode_quality"]["methods"]
     assert "valid_tree_rate" in test_row["decode_quality"]["methods"]["proc_rosetta_fused_mu"]
+    assert "discovery_quality" in test_row
+    assert "proc_rosetta_trace_mu" in test_row["discovery_quality"]["methods"]
+    assert "inductive_miner" in test_row["discovery_quality"]["methods"]
+    assert "mean_f1" in test_row["discovery_quality"]["methods"]["inductive_miner"]
 
     assert main(
         [
@@ -183,5 +187,6 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "ProcRosetta Test Report" in captured.out
     assert "Decode quality" in captured.out
+    assert "Process discovery quality" in captured.out
     assert "pm4py Petri Node2Vec vs ProcRosetta fused" in captured.out
     assert "Agreement against ProcRosetta fused encoding" in captured.out
