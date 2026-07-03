@@ -10,7 +10,7 @@ from proc_rosetta.benchmarks import (
 )
 from proc_rosetta.data import SplitCounts, recreate_data_splits
 from proc_rosetta.data import read_samples_jsonl, split_samples_path
-from proc_rosetta.synthetic import SyntheticConfig
+from proc_rosetta.synthetic import DEFAULT_MAX_ACTIVITIES, SyntheticConfig
 from proc_rosetta.training import TrainConfig, train_from_data_dir
 
 
@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     sample.add_argument("--test-count", type=int, default=None)
     sample.add_argument("--seed", type=int, default=13)
     sample.add_argument("--max-depth", type=int, default=3)
-    sample.add_argument("--max-activities", type=int, default=6)
+    sample.add_argument("--max-activities", type=int, default=DEFAULT_MAX_ACTIVITIES)
     sample.add_argument("--max-arity", type=int, default=3)
     sample.add_argument("--traces-per-sample", type=int, default=16)
     sample.add_argument("--curriculum-phase", type=int, default=2)

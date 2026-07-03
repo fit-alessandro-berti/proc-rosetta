@@ -7,10 +7,13 @@ from proc_rosetta.pm4py_bridge import PetriGraph, simulate_traces, tree_to_petri
 from proc_rosetta.tree import NodeKind, ProcessTreeNode
 
 
+DEFAULT_MAX_ACTIVITIES = 30
+
+
 @dataclass(frozen=True)
 class SyntheticConfig:
     max_depth: int = 3
-    max_activities: int = 6
+    max_activities: int = DEFAULT_MAX_ACTIVITIES
     max_arity: int = 3
     traces_per_sample: int = 16
     curriculum_phase: int = 2
@@ -32,7 +35,7 @@ class SyntheticConfig:
     def from_dict(data: dict[str, object]) -> "SyntheticConfig":
         return SyntheticConfig(
             max_depth=int(data.get("max_depth", 3)),
-            max_activities=int(data.get("max_activities", 6)),
+            max_activities=int(data.get("max_activities", DEFAULT_MAX_ACTIVITIES)),
             max_arity=int(data.get("max_arity", 3)),
             traces_per_sample=int(data.get("traces_per_sample", 16)),
             curriculum_phase=int(data.get("curriculum_phase", 2)),

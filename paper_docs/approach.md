@@ -73,7 +73,7 @@ The process tree is the central generative object. The default synthetic configu
 | Parameter | Default | Meaning |
 |---|---:|---|
 | `max_depth` | 3 | Maximum recursion depth for generated trees. |
-| `max_activities` | 6 | Maximum number of distinct activity labels before canonicalization. |
+| `max_activities` | 30 | Maximum number of distinct activity labels before canonicalization. |
 | `max_arity` | 3 | Maximum arity for non-loop operators. |
 | `traces_per_sample` | 16 | Number of simulated traces generated from each process tree. |
 | `curriculum_phase` | 2 | Operator set used during generation. Phase 2 enables `SEQ`, `XOR`, and `AND`; phase 3 additionally enables `LOOP`. |
@@ -292,19 +292,19 @@ The default architectural hyperparameters used by `train.py` are:
 | dropout probability | 0.15 |
 | Petri message-passing steps | 3 |
 
-With the default synthetic data configuration, the tree vocabulary has 16 tokens:
+With the default synthetic data configuration, the tree vocabulary has 40 tokens:
 
 ```text
 <pad>, <bos>, <eos>, TAU,
 SEQ, XOR, AND, LOOP,
 ARITY_2, ARITY_3,
-A0, A1, A2, A3, A4, A5
+A0, A1, ..., A29
 ```
 
-The activity vocabulary for traces has 7 tokens:
+The activity vocabulary for traces has 31 tokens:
 
 ```text
-<pad>, A0, A1, A2, A3, A4, A5
+<pad>, A0, A1, ..., A29
 ```
 
 If `max_activities` or `max_arity` are changed, these vocabularies expand accordingly.

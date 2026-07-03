@@ -15,6 +15,7 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert split_counts.training == 4000
     assert split_counts.validation == 512
     assert split_counts.test == 512
+    assert sample_args.max_activities == 30
     assert sample_args.traces_per_sample == 16
     assert train_args.epochs == 100
     assert train_args.batch_size == 32

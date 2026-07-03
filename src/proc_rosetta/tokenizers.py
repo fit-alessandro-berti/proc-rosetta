@@ -6,6 +6,7 @@ from typing import Sequence
 
 import torch
 
+from proc_rosetta.synthetic import DEFAULT_MAX_ACTIVITIES
 from proc_rosetta.tree import NodeKind, ProcessTreeNode
 
 
@@ -18,7 +19,7 @@ class GrammarState(str, Enum):
 
 @dataclass(frozen=True)
 class TreeTokenizer:
-    max_activities: int = 16
+    max_activities: int = DEFAULT_MAX_ACTIVITIES
     max_arity: int = 4
 
     def __post_init__(self) -> None:
@@ -196,7 +197,7 @@ class TreeTokenizer:
 
 @dataclass(frozen=True)
 class ActivityTokenizer:
-    max_activities: int = 16
+    max_activities: int = DEFAULT_MAX_ACTIVITIES
 
     def __post_init__(self) -> None:
         tokens = ["<pad>", *[f"A{idx}" for idx in range(self.max_activities)]]
