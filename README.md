@@ -1,69 +1,110 @@
 # proc-rosetta
 
-`proc-rosetta` is a first-stage implementation of a multimodal process-mining
-embedding model. It uses PyTorch for neural encoders/decoders and pm4py for
-process-tree conversion, Petri-net handling, and trace simulation.
+`proc-rosetta` is a research prototype for multimodal process-mining
+representation learning. It learns encoders for event logs, process trees, and
+Petri nets, aligns them in one latent process-behavior space, and decodes latent
+vectors back into grammar-valid process trees. Decoded trees can then be
+converted to Petri nets with PM4Py.
 
-The implemented scope follows the recommended staged design from the project
-brief:
+The current implementation is intentionally conservative: process trees are the
+output language, and arbitrary Petri-net decoding is not implemented. This keeps
+generated models block-structured and easier to validate.
 
-- process trees are the central generative object;
-- traces/logs, process trees, and Petri nets have separate structural encoders;
-- all encoders project into a shared process-behavior latent space;
-- a grammar-masked process-tree decoder reconstructs or translates back to a
-  valid process-tree token grammar;
-- decoded process trees can be deterministically converted to Petri nets with
-  pm4py;
-- synthetic paired triples provide the initial training data.
+## Research Questions
 
-This is intentionally block-structured first. Direct arbitrary Petri-net
-decoding is left for a later stage because validity, soundness, and graph
-matching are materially harder.
+The code is organized around three practical research questions.
 
-## Research questions
+1. Can heterogeneous process-mining artifacts be embedded into a shared latent
+   space?
+   The project trains separate tree, trace, and Petri-net encoders whose latent
+   means should agree for artifacts representing the same process behavior.
 
-The current implementation addresses three paper-level research questions:
+2. Can a learned model translate logs or Petri nets into valid process trees?
+   The shared decoder is grammar-masked, so it can only generate syntactically
+   valid process-tree token sequences. The resulting trees are checked for
+   PM4Py Petri-net convertibility.
 
-1. Can heterogeneous process-mining artifacts, namely event logs, process trees,
-   and Petri nets, be encoded into a shared latent space that preserves
-   process-behavior similarity?
-2. Can neural cross-modal translation recover a valid block-structured process
-   tree from either an event log or a Petri net, and can the decoded tree be
-   converted back into a valid Petri net?
-3. Do learned ProcRosetta embeddings and decoded models capture behavioral
-   similarity better than deterministic log features, Petri structural features,
-   and a pm4py Petri-net Node2Vec baseline?
+3. How do learned models compare with classical process-mining baselines?
+   `test.py` reports embedding-quality metrics, decode-quality metrics, and a
+   process-discovery comparison against PM4Py Inductive Miner using
+   alignment-based fitness, alignment-based precision, and F1.
 
-## Preliminary answers
+The implementation should be read as a first-stage feasibility study, not as a
+claim that the neural model replaces mature discovery algorithms on real logs.
 
-1. The shared latent-space objective is feasible in the current synthetic
-   setting. `test.py` measures this through cross-modal retrieval, pairwise
-   distance agreement, nearest-neighbor behavioral distance, and Spearman
-   correlation between latent distance and behavioral distance.
-2. ProcRosetta can translate event logs and Petri nets into process trees when
-   the inputs resemble the block-structured training distribution. The
-   decode-quality report measures whether each latent source terminates as a
-   valid process tree, whether the tree exactly matches the synthetic ground
-   truth, and whether it can be converted into a Petri net with pm4py.
-3. The learned representation is competitive but not uniformly dominant. The
-   benchmark compares ProcRosetta against deterministic log features, Petri
-   structural counts, and pm4py Petri Node2Vec; the strongest method can vary by
-   metric, so the reported ranking should be interpreted as empirical evidence
-   rather than a universal claim.
+## What Is Implemented
 
-## Quick start
+The synthetic training pipeline creates paired triples:
 
-Run the root command scripts directly from a checkout. No editable install is
-required as long as the Python dependencies are already available in the active
-environment.
-
-```bash
-./sample.py
-./train.py
-./test.py
+```text
+process tree -> PM4Py conversion -> Petri net -> typed PetriGraph
+process tree -> PM4Py playout    -> event log / traces
 ```
 
-`sample.py` recreates a local split dataset:
+Each sample contains:
+
+```text
+tree:        canonical process tree
+traces:      tuple of activity-label traces
+petri_graph: typed Petri-net graph with markings
+```
+
+The model contains:
+
+```text
+process tree tokens -> TreeEncoder ------.
+event-log traces    -> TraceEncoder -----+-> shared latent z -> GrammarTreeDecoder
+Petri graph         -> PetriGraphEncoder-'
+```
+
+The training objective combines:
+
+- tree-to-tree reconstruction;
+- trace-to-tree translation;
+- Petri-to-tree translation;
+- latent mean alignment between modalities;
+- symmetric cross-modal contrastive alignment;
+- weak KL regularization.
+
+The default activity vocabulary supports `A0` through `A29`. If an old
+checkpoint was trained with fewer activity labels, retrain it before using logs
+with more activities.
+
+## Installation
+
+From a checkout:
+
+```bash
+python -m pip install -e .
+```
+
+The root scripts also work without installation as long as dependencies are
+available in the active environment:
+
+```bash
+./sample.py --help
+./train.py --help
+./test.py --help
+```
+
+PM4Py is used for process-tree conversion, Petri-net handling, event-log IO,
+Inductive Miner, and alignment-based conformance metrics.
+
+## Retraining A Checkpoint
+
+Start by recreating synthetic training, validation, and test splits:
+
+```bash
+./sample.py \
+  --data-dir data \
+  --train-count 4000 \
+  --validation-count 512 \
+  --test-count 512 \
+  --max-activities 30 \
+  --traces-per-sample 16
+```
+
+This creates:
 
 ```text
 data/
@@ -73,138 +114,175 @@ data/
   test/samples.jsonl
 ```
 
-`train.py` reads `data/training`, prints training and validation metrics each
-epoch, and saves a checkpoint to `checkpoints/proc_rosetta.pt`. `test.py` loads
-that checkpoint and evaluates `data/test` with a human-readable benchmark
-report.
+Train the model:
 
-By default, `sample.py` creates 4000 training samples, 512 validation samples,
-and 512 test samples. `train.py` uses a 100-epoch cap, subject to validation
-early stopping.
+```bash
+./train.py \
+  --data-dir data \
+  --checkpoint checkpoints/proc_rosetta.pt \
+  --epochs 100 \
+  --batch-size 32
+```
 
-Training progress bars and debug messages are printed to stderr, while per-epoch
-metrics stay as JSON lines on stdout. Use `./train.py --quiet` to suppress the
-debug/progress output.
-
-The training script includes several overfitting controls by default:
-
-- dropout in all encoders and the tree decoder (`--dropout`, default `0.15`);
-- AdamW weight decay (`--weight-decay`, default `1e-4`);
-- grammar-decoder label smoothing (`--label-smoothing`, default `0.05`);
-- validation-loss learning-rate reduction (`--lr-patience`, `--lr-factor`);
-- early stopping on validation loss (`--early-stopping-patience`);
-- separate latest and best checkpoints.
-
-For the default checkpoint path, training writes:
+Training writes:
 
 ```text
 checkpoints/proc_rosetta.pt       # latest completed epoch
 checkpoints/proc_rosetta.best.pt  # best validation-loss epoch
+checkpoints/training_metrics.csv  # per-epoch metrics
 ```
 
-Per-epoch training statistics are recreated at the start of every run and then
-appended after each completed epoch:
-
-```text
-checkpoints/training_metrics.csv
-```
-
-The CSV includes training metrics, validation metrics, generalization gaps,
-learning rate, epoch duration, best-validation state, and patience counters.
-
-You can control the generated data and training run:
+Useful training controls:
 
 ```bash
-./sample.py --train-count 8000 --validation-count 1024 --test-count 1024 --traces-per-sample 24
-./train.py --epochs 150 --batch-size 64 --checkpoint checkpoints/proc_rosetta.pt
-./test.py --checkpoint checkpoints/proc_rosetta.pt
+./train.py --quiet
+./train.py --device cuda
+./train.py --latent-dim 128 --hidden-dim 256
+./train.py --dropout 0.2 --weight-decay 1e-4
 ```
 
-The `test.py` report includes:
+The tokenizer size is fixed by the data metadata stored when `sample.py` runs.
+For logs with many activities, generate data with a sufficiently large
+`--max-activities` and retrain the checkpoint.
 
-- neural loss metrics on the test split;
-- decode-quality metrics for each learned latent source: greedy process-tree
-  validity, exact tree match, Petri conversion success, token edit distance, and
-  behavior distance after simulating traces from the decoded tree;
-- behavioral distance summaries across test logs;
-- cross-modal retrieval for the learned tree, trace, and Petri latent vectors;
-- nearest-neighbor and distance-correlation statistics for each embedding;
-- deterministic event-log baselines: activity counts, trace variants,
-  directly-follows, eventually-follows, and pm4py case features;
-- deterministic Petri structural-count baselines;
-- pm4py's Petri-net Node2Vec/Word2Vec embedding from Colonna et al.,
-  "Process mining embeddings: Learning vector representations for Petri nets".
-- direct agreement between pm4py's Petri embedding geometry and ProcRosetta's
-  fused latent geometry, including pairwise distance Spearman correlation and
-  nearest-neighbor overlap.
+## Evaluating A Checkpoint
 
-The pm4py Petri embedding baseline uses `gensim`. Its runtime can be tuned:
+Evaluate the held-out synthetic test split:
 
 ```bash
-./test.py --petri-embedding-dim 32 --petri-num-walks 3 --petri-walk-length 12 --petri-epochs 3
+./test.py \
+  --data-dir data \
+  --checkpoint checkpoints/proc_rosetta.best.pt
 ```
 
 For machine-readable output:
 
 ```bash
-./test.py --json
+./test.py \
+  --data-dir data \
+  --checkpoint checkpoints/proc_rosetta.best.pt \
+  --json > report.json
 ```
 
-For package-style installation, the `proc-rosetta sample`, `proc-rosetta train`,
-and `proc-rosetta test` console commands remain available after
-`python -m pip install -e .`.
+The test report includes:
 
-## Architecture
+- neural test losses;
+- greedy decode quality from tree, trace, Petri, and fused latent vectors;
+- process-discovery quality comparing `proc_rosetta_trace_mu` with PM4Py
+  Inductive Miner using alignment fitness, precision, and F1;
+- behavioral distance summaries over the test logs;
+- cross-modal retrieval metrics;
+- learned embedding quality versus deterministic log and Petri baselines;
+- PM4Py Petri-net Node2Vec/Word2Vec baseline when available.
 
-```text
-traces/logs  -> TraceEncoder ----.
-process tree -> TreeEncoder -----+-> shared latent z -> GrammarTreeDecoder
-Petri net    -> PetriGraphEncoder'
-                                      |
-                                      v
-                              pm4py tree-to-net
+The PM4Py Petri embedding baseline can be slow. Disable it when iterating:
+
+```bash
+./test.py --skip-pm4py-petri-embedding
 ```
 
-The model optimizes tree reconstruction and cross-modal tree translation:
+## Using A Checkpoint On External Files
 
-```text
-tree  -> z -> tree
-trace -> z -> tree
-net   -> z -> tree
+The `scripts/` directory contains direct utilities for external artifacts:
+
+```bash
+scripts/print_embeddings.py input.xes --checkpoint checkpoints/proc_rosetta.best.pt
+scripts/print_embeddings.py input.pnml --checkpoint checkpoints/proc_rosetta.best.pt
+scripts/print_embeddings.py input.ptml --checkpoint checkpoints/proc_rosetta.best.pt
 ```
 
-It also adds latent alignment between equivalent modalities. The first version
-uses deterministic conversion from process tree to Petri net rather than a
-direct Petri-net decoder, which keeps generated models valid for
-block-structured behavior.
+Supported input formats:
 
-## Project layout
+- `.xes`: event log;
+- `.pnml`: Petri net;
+- `.ptml`: process tree.
 
-- `src/proc_rosetta/tree.py`: process-tree data model and canonicalization.
-- `src/proc_rosetta/pm4py_bridge.py`: pm4py conversion, simulation, Petri graph
+By default, XES logs use `concept:name` as the activity key and
+`case:concept:name` as the case id key. Override these if needed:
+
+```bash
+scripts/print_embeddings.py log.xes \
+  --checkpoint checkpoints/proc_rosetta.best.pt \
+  --activity-key activity \
+  --case-id-key case_id
+```
+
+Convert an event log to a decoded process tree:
+
+```bash
+scripts/xes_to_ptml.py \
+  log.xes \
+  decoded.ptml \
+  --checkpoint checkpoints/proc_rosetta.best.pt
+```
+
+Convert a Petri net to a decoded process tree:
+
+```bash
+scripts/pnml_to_ptml.py \
+  model.pnml \
+  decoded.ptml \
+  --checkpoint checkpoints/proc_rosetta.best.pt
+```
+
+Encode and decode an existing process tree:
+
+```bash
+scripts/decode_ptml.py \
+  input.ptml \
+  decoded.ptml \
+  --checkpoint checkpoints/proc_rosetta.best.pt
+```
+
+External logs are canonicalized internally to `A0`, `A1`, ... in first-seen
+order. The XES and PTML decoding scripts restore original activity labels by
+default; pass `--keep-canonical-labels` to keep the canonical labels. The Petri
+graph encoder currently uses graph structure, node types, and markings; decoded
+PNML outputs therefore use the model's canonical activity labels.
+
+If a decoded model is invalid or the decoder does not emit `<eos>` within the
+decode limit, the conversion script exits with a clear error instead of writing
+an unusable `.ptml` file.
+
+## Practical Limits
+
+- The model is trained on synthetic block-structured process trees. It can be
+  run on real XES logs, but out-of-distribution logs may produce poor or invalid
+  decodes.
+- The default script limits are `--max-traces 32` and `--max-trace-length 64`.
+  Increase them for larger logs if memory allows.
+- A checkpoint can only encode activity labels covered by its tokenizer. The
+  current default is 30 activities, but older checkpoints may support fewer.
+- The model decodes process trees, not arbitrary Petri nets. Petri nets are
+  produced through deterministic PM4Py tree-to-net conversion.
+- PM4Py alignment metrics can be computationally expensive on larger logs and
+  models.
+
+## Project Layout
+
+- `src/proc_rosetta/tree.py`: immutable process-tree representation.
+- `src/proc_rosetta/pm4py_bridge.py`: PM4Py conversion, playout, and Petri graph
   extraction.
-- `src/proc_rosetta/synthetic.py`: synthetic paired triples.
-- `src/proc_rosetta/tokenizers.py`: activity/tree tokenization and grammar masks.
-- `src/proc_rosetta/data.py`: dataset and batch collation.
+- `src/proc_rosetta/synthetic.py`: synthetic paired sample generation.
+- `src/proc_rosetta/tokenizers.py`: process-tree and activity tokenizers plus
+  grammar masks.
+- `src/proc_rosetta/data.py`: JSONL datasets and batch collation.
 - `src/proc_rosetta/models.py`: PyTorch encoders, latent projections, decoder,
   and multimodal model.
-- `src/proc_rosetta/losses.py`: reconstruction, cross-modal, KL, and alignment
-  losses, including cross-modal contrastive alignment.
-- `src/proc_rosetta/behavior.py`: trace-variant, directly-follows, and
-  trace-length behavioral distances.
-- `src/proc_rosetta/benchmarks.py`: rich test-set embedding comparisons and
-  event-log/Petri-net baseline reports.
-- `src/proc_rosetta/training.py`: training loop utilities.
-- `src/proc_rosetta/cli.py`: sample and train commands.
-- `sample.py`: root command for generating synthetic process triples without
-  installation.
-- `train.py`: root command for training without installation.
-- `test.py`: root command for checkpoint evaluation on the test split without
-  installation.
+- `src/proc_rosetta/losses.py`: reconstruction, translation, KL, latent
+  alignment, and contrastive losses.
+- `src/proc_rosetta/training.py`: training, validation, checkpointing, and
+  loading utilities.
+- `src/proc_rosetta/benchmarks.py`: test report, embedding baselines,
+  decode-quality metrics, discovery-quality metrics, and report formatting.
+- `src/proc_rosetta/cli.py`: `sample`, `train`, and `test` command
+  implementations.
+- `scripts/`: external-file utilities for embeddings and `.xes`/`.pnml`/`.ptml`
+  process-tree decoding.
 
-## Notes
+## Reproducibility Notes
 
-The embedding is label-name invariant by default for synthetic data: activity
-names are canonicalized to `A0`, `A1`, ... while preserving repeated activity
-identity. Commutative process-tree operators (`XOR`, `AND`) canonicalize child
-order, so equivalent child permutations map to the same structural form.
+`sample.py` uses a Python random seed for synthetic tree generation. PM4Py
+playout behavior can still depend on the installed PM4Py version. The training
+checkpoint stores the model weights, training configuration, and synthetic data
+configuration needed to reconstruct the tokenizers and model dimensions.
