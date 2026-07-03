@@ -221,3 +221,9 @@ nohup.out
 # proc-rosetta generated artifacts
 /data/
 /checkpoints/
+
+*.bbl
+*.aux
+*.blg
+*.out
+*.pdf
