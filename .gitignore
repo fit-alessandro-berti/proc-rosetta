@@ -227,3 +227,5 @@ nohup.out
 *.blg
 *.out
 *.pdf
+*.vrb
+
