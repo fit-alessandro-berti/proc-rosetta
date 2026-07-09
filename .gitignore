@@ -229,3 +229,4 @@ nohup.out
 *.pdf
 *.vrb
 
+!presentation/*.pdf
