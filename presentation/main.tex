@@ -7,6 +7,8 @@
 \usepackage{tikz}
 \usetikzlibrary{positioning,fit,backgrounds,arrows.meta,calc,shapes.geometric}
 \usepackage{booktabs}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.16}
 
 \definecolor{procblue}{HTML}{2A78D6}
 \definecolor{procgreen}{HTML}{1BAF7A}
@@ -370,6 +372,174 @@
   \vspace{4mm}
   \centering\small Code, data generator, and evaluation suite:\\
   \url{https://github.com/fit-alessandro-berti/proc-rosetta}
+\end{frame}
+
+% ================================================================ appendix
+\appendix
+
+\begin{frame}
+  \centering
+  {\LARGE \textbf{\textcolor{procblue}{Appendix}}}\\[3mm]
+  {\large Detailed Evaluation Results}\\[5mm]
+  \small All numbers on the held-out test split (512 triples).
+\end{frame}
+
+% ---------------------------------------------------------------- A2
+\begin{frame}{Appendix: Decode Quality}
+  Greedy decoding from each latent source (512 samples each):
+  \vspace{2mm}
+  \begin{center}
+  \small
+  \begin{tabular}{lcccc}
+    \toprule
+    Latent source & Valid tree & Exact tree & Norm.\ edit $\downarrow$ & Behavior $L_1$ $\downarrow$ \\
+    \midrule
+    $\mu_{\mathit{tree}}$ (tree encoder)   & \keyg{100\%} & \keyc{48.4\%} & \keyc{0.178} & \keyc{0.675} \\
+    $\mu_{\mathit{trace}}$ (log encoder)   & \keyg{100\%} & 40.0\% & 0.287 & 0.755 \\
+    $\mu_{\mathit{petri}}$ (Petri encoder) & \keyg{100\%} & 35.9\% & 0.282 & 0.839 \\
+    $\mu_{\mathit{fused}}$ (mean of three) & \keyg{100\%} & 44.3\% & 0.230 & 0.713 \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+  \vspace{3mm}
+  \begin{itemize}\setlength{\itemsep}{5pt}
+    \item \keyc{Behavior $L_1$}: distance between the original log and traces
+      simulated from the decoded model, range $[0,2]$;
+      two \keya{unrelated} test logs average \keya{1.566}
+    \item Ordering is intuitive: the tree embedding keeps the most information,
+      then the log, then the \keya{label-free} Petri net structure
+  \end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------- A3
+\begin{frame}{Appendix: Discovery Quality vs.\ Inductive Miner}
+  \begin{columns}[T]
+  \begin{column}{0.5\textwidth}
+    \vspace{4mm}
+    \begin{itemize}\setlength{\itemsep}{7pt}
+      \item Each of the 512 test logs: encode, decode a tree, convert to a
+        Petri net; scored by \keyc{alignment-based} fitness and precision
+      \item Test logs are noise-free playouts of block-structured trees:
+        the Inductive Miner's \keya{best case} (rediscovery guarantee,
+        fitness 1.0)
+      \item ProcRosetta compresses the whole log into \keyc{one 64-dim vector},
+        no search or replay, and still reaches \keyc{92\%} of the IM's F1
+    \end{itemize}
+  \end{column}
+  \begin{column}{0.46\textwidth}
+    \begin{center}
+    \begin{tikzpicture}
+    \begin{axis}[
+      ybar, bar width=11pt,
+      width=0.98\linewidth, height=5.2cm,
+      ymin=0, ymax=1.19,
+      symbolic x coords={fitness, precision, F1},
+      xtick=data,
+      ytick={0,0.25,0.5,0.75,1.0},
+      axis lines=left, axis line style={black!45},
+      enlarge x limits=0.3,
+      ticklabel style={font=\footnotesize},
+      legend style={draw=none, fill=none, font=\footnotesize, at={(0.5,1.02)},
+        anchor=south, legend columns=2},
+      nodes near coords,
+      every node near coord/.append style={font=\tiny, color=black!70},
+    ]
+    \addplot[fill=procblue!75, draw=procblue!60!black]
+      coordinates {(fitness,0.841)(precision,0.763)(F1,0.787)};
+    \addlegendentry{ProcRosetta}
+    \addplot[fill=procamber!70, draw=procamber!70!black]
+      coordinates {(fitness,1.000)(precision,0.797)(F1,0.857)};
+    \addlegendentry{Inductive Miner}
+    \end{axis}
+    \end{tikzpicture}
+    \end{center}
+  \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------- A4
+\begin{frame}{Appendix: Embedding Quality}
+  Spearman $\rho$ vs.\ behavioral distance over all 130{,}816 log pairs;
+  NN $=$ mean behavioral distance to the nearest embedding neighbor
+  (random pair: 1.566):
+  \vspace{2mm}
+  \begin{center}
+  \footnotesize
+  \begin{tabular}{llrrr}
+    \toprule
+    Method & Type & Dim. & $\rho$ $\uparrow$ & NN $\downarrow$ \\
+    \midrule
+    Directly-follows distribution$^\dagger$ & log features & 332 & \keya{0.736} & 0.784 \\
+    PetriNet2Vec & learned (net) & 64 & 0.643 & 1.115 \\
+    Activity counts & log features & 20 & 0.635 & 0.946 \\
+    \keyc{ProcRosetta} $\mu_{\mathit{trace}}$ & learned (log) & \keyc{64} & 0.630 & \keyc{0.794} \\
+    \keyc{ProcRosetta} $\mu_{\mathit{fused}}$ & learned (all) & \keyc{64} & 0.628 & 0.804 \\
+    Trace-variant distribution$^\dagger$ & log features & 2{,}548 & 0.614 & \keya{0.781} \\
+    \keyc{ProcRosetta} $\mu_{\mathit{tree}}$ & learned (tree) & \keyc{64} & 0.611 & 0.836 \\
+    \keyc{ProcRosetta} $\mu_{\mathit{petri}}$ & learned (net) & \keyc{64} & 0.574 & 0.913 \\
+    Eventually-follows distribution & log features & 347 & 0.412 & 0.881 \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+  \vspace{2mm}
+  \small $^\dagger$ shares components with the behavioral-distance definition:
+  a \keya{skyline}, not a fair competitor. Among the rest, ProcRosetta's log
+  embedding is the \keyc{strongest all-round performer} at only 64 dimensions.
+\end{frame}
+
+% ---------------------------------------------------------------- A5
+\begin{frame}[fragile]{Appendix: Cross-Modal Retrieval}
+  \begin{columns}[T]
+  \begin{column}{0.46\textwidth}
+    \vspace{2mm}
+    \begin{center}
+    \small
+    \begin{tabular}{lccc}
+      \toprule
+      Query $\to$ target & Top-1 & MRR & Rank \\
+      \midrule
+      tree $\to$ Petri net & \keyc{44.3\%} & 0.523 & 36.2 \\
+      Petri net $\to$ tree & 34.2\% & 0.442 & 38.0 \\
+      tree $\to$ log & 29.3\% & 0.383 & 32.4 \\
+      log $\to$ tree & 25.6\% & 0.354 & 33.2 \\
+      Petri net $\to$ log  & 15.4\% & 0.236 & 49.4 \\
+      log $\to$ Petri net  & 14.1\% & 0.236 & 48.2 \\
+      \bottomrule
+    \end{tabular}
+    \end{center}
+    \vspace{2mm}
+    \small
+    \keyc{MRR} $=$ mean reciprocal rank: the average of $1 / \mathrm{rank}$
+    of the true counterpart; \keyc{1.0} means it is always ranked
+    \keyg{first}, \keyc{0.5} means it is typically \keyg{second}.\\[2mm]
+    Chance level: top-1 $=$ \keya{0.2\%}, mean rank $\approx$ \keya{256}.
+  \end{column}
+  \begin{column}{0.5\textwidth}
+    \begin{center}
+    \begin{tikzpicture}
+    \begin{axis}[
+      ybar, bar width=10pt,
+      width=\linewidth, height=5.0cm,
+      ymin=0, ymax=52, ylabel={top-1 accuracy (\%)},
+      xtick={1,2,3,4,5,6},
+      xticklabels={{tree\,\textrightarrow\,Petri net},{Petri net\,\textrightarrow\,tree},
+        {tree\,\textrightarrow\,log},{log\,\textrightarrow\,tree},
+        {Petri net\,\textrightarrow\,log},{log\,\textrightarrow\,Petri net}},
+      x tick label style={rotate=35, anchor=east, font=\scriptsize},
+      ylabel style={font=\footnotesize},
+      axis lines=left, axis line style={black!45},
+      enlarge x limits=0.12,
+      ticklabel style={font=\footnotesize},
+    ]
+    \addplot[fill=procblue!75, draw=procblue!60!black]
+      coordinates {(1,44.3)(2,34.2)(3,29.3)(4,25.6)(5,15.4)(6,14.1)};
+    \end{axis}
+    \end{tikzpicture}
+    \end{center}
+    \small Instance-level matching: the correct counterpart among
+    \keyc{512 candidates}, \keyg{70 to 220$\times$} above chance.
+  \end{column}
+  \end{columns}
 \end{frame}
 
 \end{document}
