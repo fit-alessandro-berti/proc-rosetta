@@ -230,3 +230,8 @@ nohup.out
 *.vrb
 
 !presentation/*.pdf
+
+*.nav
+*.snm
+*.toc
+

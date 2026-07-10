@@ -317,6 +317,44 @@
 \end{frame}
 
 % ---------------------------------------------------------------- 10
+\begin{frame}{Why Consider ProcRosetta in Process Mining?}
+  \begin{block}{A shared behavioral space can become a reusable interface
+    between event data and process models.}
+    \centering
+    \keyc{encode once} $\longrightarrow$ \keyg{compare, retrieve, or translate}
+    $\longrightarrow$ \keyg{decode a valid model}
+  \end{block}
+  \vspace{1mm}
+  \begin{columns}[T]
+  \begin{column}{0.31\textwidth}
+    \centering \keyc{Compare unlike artifacts}\par
+    \vspace{1mm}\footnotesize
+    Put logs, process trees, and Petri nets in one geometry, so similarity
+    search and retrieval no longer require a different handcrafted feature
+    space for every pair of artifact types.
+  \end{column}
+  \begin{column}{0.31\textwidth}
+    \centering \keyg{Reuse one representation}\par
+    \vspace{1mm}\footnotesize
+    The same compact vector supports discovery, model translation,
+    clustering, nearest-neighbor exploration, and cross-modal retrieval
+    instead of a separate learned model for each task.
+  \end{column}
+  \begin{column}{0.31\textwidth}
+    \centering \keya{Keep outputs process-aware}\par
+    \vspace{1mm}\footnotesize
+    Grammar masking rules out malformed trees during generation; deterministic
+    conversion then yields a sound Petri net, so downstream process-mining
+    tools receive a model rather than unconstrained text.
+  \end{column}
+  \end{columns}
+  \vspace{2mm}
+  \centering
+  \textbf{Why now:} the results establish the \keyc{representation principle};
+  the next question is transfer beyond synthetic, in-distribution data.
+\end{frame}
+
+% ---------------------------------------------------------------- 11
 \begin{frame}{What Can Be Improved: Data}
   \begin{itemize}\setlength{\itemsep}{10pt}
     \item \keya{Only synthetic} data: all triples come from small random
