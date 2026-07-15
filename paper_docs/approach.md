@@ -87,6 +87,8 @@ The process tree is the decoder target and canonical behavior description. The d
 | `variants_per_behavior` | 2 | Number of representation rows per behavior family. |
 | `motif_context_size` | 2 | Shared sequence context wrapped around controlled equivalence motifs. |
 
+The current generated split uses `curriculum_phase = 2`, so it does not include `LOOP` nodes. This is an experimental-control choice rather than a model limitation: loop trees can repeat behavior arbitrarily many times, and a finite sampled log then depends heavily on the simulator's repeat and exit choices. The code supports `curriculum_phase = 3` for loop generation, but loop-heavy data should be evaluated as a separate setting.
+
 The ordinary-tree motif and legacy isolated generator first sample the number of activities uniformly from the range `[2, max_activities]`, then recursively construct a process tree. At each recursive call, the generator either creates a leaf or creates an operator node:
 
 ```text
