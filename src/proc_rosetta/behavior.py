@@ -23,6 +23,18 @@ def trace_length_distribution(traces: Iterable[Trace]) -> Distribution:
     return _normalize(Counter(len(trace) for trace in traces))
 
 
+def activity_frequency_distribution(traces: Iterable[Trace]) -> Distribution:
+    return _normalize(Counter(activity for trace in traces for activity in trace))
+
+
+def start_activity_distribution(traces: Iterable[Trace]) -> Distribution:
+    return _normalize(Counter(trace[0] for trace in traces if trace))
+
+
+def end_activity_distribution(traces: Iterable[Trace]) -> Distribution:
+    return _normalize(Counter(trace[-1] for trace in traces if trace))
+
+
 def directly_follows_distribution(
     traces: Iterable[Trace],
     include_boundaries: bool = True,
@@ -62,11 +74,36 @@ def behavioral_distance(reference: Iterable[Trace], candidate: Iterable[Trace]) 
         trace_length_distribution(reference),
         trace_length_distribution(candidate),
     )
+    activity_l1 = l1_distribution_distance(
+        activity_frequency_distribution(reference),
+        activity_frequency_distribution(candidate),
+    )
+    start_activity_l1 = l1_distribution_distance(
+        start_activity_distribution(reference),
+        start_activity_distribution(candidate),
+    )
+    end_activity_l1 = l1_distribution_distance(
+        end_activity_distribution(reference),
+        end_activity_distribution(candidate),
+    )
+    reference_mean_length = sum(map(len, reference)) / max(len(reference), 1)
+    candidate_mean_length = sum(map(len, candidate)) / max(len(candidate), 1)
+    mean_trace_length_difference = abs(reference_mean_length - candidate_mean_length)
     return {
         "variant_l1": variant_l1,
         "directly_follows_l1": directly_follows_l1,
         "length_l1": length_l1,
+        "activity_frequency_l1": activity_l1,
+        "start_activity_l1": start_activity_l1,
+        "end_activity_l1": end_activity_l1,
+        "mean_trace_length_difference": mean_trace_length_difference,
+        # Preserve the established aggregate used by benchmark reports while
+        # exposing the newly added activity component separately.
         "mean_l1": (variant_l1 + directly_follows_l1 + length_l1) / 3.0,
+        "aggregate_distribution_l1": (
+            variant_l1 + directly_follows_l1 + length_l1 + activity_l1
+        )
+        / 4.0,
     }
 
 

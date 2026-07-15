@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 
 from _common import (
     default_device,
@@ -48,6 +49,11 @@ def main(argv: list[str] | None = None) -> int:
         require_petri_convertible=True,
     )
     save_ptml_tree(tree, args.output)
+    print(
+        "warning: visible PNML transition labels were not passed to the external encoder; "
+        "decoded canonical labels do not preserve source activity semantics",
+        file=sys.stderr,
+    )
     print(f"saved decoded process tree to {Path(args.output)}")
     return 0
 

@@ -707,6 +707,32 @@ def evaluate_embedding_method(embeddings: np.ndarray, behavior_distance: np.ndar
             "pearson_embedding_distance_vs_behavior_l1": pearson_upper(distance, behavior_distance),
         },
         "nearest_neighbor_behavior": nearest_neighbor_behavior(distance, behavior_distance),
+        "neighbor_agreement": neighbor_agreement(distance, behavior_distance),
+    }
+
+
+def neighbor_agreement(
+    embedding_distance: np.ndarray,
+    behavior_distance: np.ndarray,
+) -> dict[str, float | int]:
+    count = int(embedding_distance.shape[0])
+    if count < 2:
+        return {"count": count, "top1_agreement": 0.0, "top3_agreement": 0.0}
+    top1_hits = 0
+    top3_hits = 0
+    for index in range(count):
+        behavior_row = behavior_distance[index].copy()
+        embedding_row = embedding_distance[index].copy()
+        behavior_row[index] = math.inf
+        embedding_row[index] = math.inf
+        behavior_neighbor = int(np.argmin(behavior_row))
+        embedding_order = np.argsort(embedding_row)
+        top1_hits += int(int(embedding_order[0]) == behavior_neighbor)
+        top3_hits += int(behavior_neighbor in embedding_order[: min(3, count - 1)])
+    return {
+        "count": count,
+        "top1_agreement": round_float(top1_hits / count),
+        "top3_agreement": round_float(top3_hits / count),
     }
 
 

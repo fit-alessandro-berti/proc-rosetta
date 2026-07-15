@@ -106,6 +106,45 @@ available in the active environment:
 PM4Py is used for process-tree conversion, Petri-net handling, event-log IO,
 Inductive Miner, and alignment-based conformance metrics.
 
+## Multimodal Process Studio
+
+The repository includes a five-view Streamlit application for interactive
+artifact inspection, shared-latent analysis, translation, evaluation, and
+checkpoint-history review:
+
+```bash
+streamlit run streamlit_app.py
+```
+
+The application reads trusted server-side checkpoints from `checkpoints/` by
+default. Set `PROC_ROSETTA_CHECKPOINT_DIR` to use another configured directory.
+Checkpoint upload is intentionally disabled: PyTorch checkpoint files are
+treated as trusted executable content, so browser users may select only files
+already installed by the server operator.
+
+The studio provides:
+
+- pre-inference XES, PTML, and PNML previews;
+- explicit canonical-label maps, sampling, clipping, vocabulary, arity, and
+  node-limit diagnostics;
+- a process-group workspace with individually progressive artifact encoding;
+- cosine similarity, PCA, same-group connections, agreement, and nearest-neighbor views;
+- checkpoint-specific synthetic reference galleries, fused group means, and exploratory latent interpolation;
+- token-by-token grammar-masked decoding with separate EOS, syntax, arity,
+  vocabulary, and Petri-conversion validation;
+- experimental weighted fusion and reproducible VAE latent-sampling galleries;
+- PTML, derived PNML, embedding, validation-report, and complete-workspace exports;
+- progressive neural-loss, retrieval, decode/behavior, Inductive Miner, and embedding-baseline evaluation; and
+- checkpoint configuration and training-history inspection.
+
+The current external PNML inference path intentionally matches the direct
+scripts: it passes graph structure, node types, and markings, but not visible
+transition-label tensors. The studio therefore displays a structural-only
+warning during PNML upload, encoding, translation, comparison, and reporting,
+and never offers original-label restoration for a PNML-derived decode. The
+training model has label-aware capacity for newly trained internal batches;
+that does not make the established external PNML path label-preserving.
+
 ## Retraining A Checkpoint
 
 Start by recreating synthetic training, validation, and test splits:
@@ -311,9 +350,11 @@ scripts/decode_ptml.py \
 
 External logs are canonicalized internally to `A0`, `A1`, ... in first-seen
 order. The XES and PTML decoding scripts restore original activity labels by
-default; pass `--keep-canonical-labels` to keep the canonical labels. The Petri
-graph encoder uses graph structure, node types, markings, and visible transition
-labels; decoded PNML outputs use the model's canonical activity labels.
+default; pass `--keep-canonical-labels` to keep the canonical labels. The
+external PNML tensor construction currently uses graph structure, node types,
+and markings but omits visible transition-label IDs; decoded PNML outputs
+therefore retain the model's canonical activity labels and are not presented as
+label-preserving.
 
 If a decoded model is invalid or the decoder does not emit `<eos>` within the
 decode limit, the conversion script exits with a clear error instead of writing

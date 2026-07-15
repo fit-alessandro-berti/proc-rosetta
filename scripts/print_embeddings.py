@@ -97,6 +97,11 @@ def main(argv: list[str] | None = None) -> int:
         source = "proc_rosetta_petri_mu"
         metadata["petri_nodes"] = graph.num_nodes
         metadata["petri_edges"] = graph.num_edges
+        metadata["visible_transition_labels_used_by_encoder"] = False
+        metadata["warning"] = (
+            "The external PNML encoder path omits visible transition-label IDs; "
+            "the embedding is structure- and marking-based."
+        )
 
     output: dict[str, object] = {
         "modality": modality,

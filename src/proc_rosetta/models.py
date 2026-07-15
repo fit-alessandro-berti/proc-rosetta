@@ -75,6 +75,21 @@ class TraceEncoder(nn.Module):
         lengths: torch.Tensor,
         trace_mask: torch.Tensor,
     ) -> LatentDistribution:
+        distribution, _ = self.forward_with_attention(tokens, lengths, trace_mask)
+        return distribution
+
+    def forward_with_attention(
+        self,
+        tokens: torch.Tensor,
+        lengths: torch.Tensor,
+        trace_mask: torch.Tensor,
+    ) -> tuple[LatentDistribution, torch.Tensor]:
+        """Encode a trace collection and expose trace-level attention weights.
+
+        The returned weights are over trace representations, not individual
+        events. Keeping this as a separate method preserves the encoder's
+        established ``forward`` contract used by training and checkpoints.
+        """
         batch_size, trace_count, trace_length = tokens.shape
         flat_tokens = tokens.reshape(batch_size * trace_count, trace_length)
         flat_lengths = lengths.reshape(batch_size * trace_count).clamp(min=1)
@@ -88,9 +103,9 @@ class TraceEncoder(nn.Module):
         final = final * trace_mask.unsqueeze(-1).to(final.dtype)
 
         scores = self.attention(final).squeeze(-1).masked_fill(~trace_mask, -1e9)
-        weights = torch.softmax(scores, dim=1).unsqueeze(-1)
-        pooled = self.dropout((final * weights).sum(dim=1))
-        return self.projection(pooled)
+        weights = torch.softmax(scores, dim=1)
+        pooled = self.dropout((final * weights.unsqueeze(-1)).sum(dim=1))
+        return self.projection(pooled), weights
 
 
 class PetriGraphEncoder(nn.Module):
