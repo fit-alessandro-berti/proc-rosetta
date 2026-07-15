@@ -341,7 +341,37 @@ The semantic half is also strong. The decoded tree \emph{exactly} equals the can
 
 Table~\ref{tab:discovery} addresses the log-to-model use case: each test log is translated by ProcRosetta (encode the log, decode a tree, convert to a net) and, independently, mined with PM4Py's Inductive Miner; both models are scored against the log with alignment-based fitness~\cite{Adriansyah2012} and precision.
 
-The Inductive Miner achieves perfect fitness (1.000) and an F1 of 0.980. This is expected: the test logs are complete, noise-free sampled views of structured behavior---precisely the setting in which the Inductive Miner enjoys rediscovery guarantees on block-structured logs~\cite{Leemans2013}---so the comparison is intentionally played on its home turf. ProcRosetta reaches a fitness of 0.950, a precision of 0.937, and an F1 of 0.938---about 96\% of the Inductive Miner's F1. Notably, a purely neural translation---the entire log is compressed into a single 48-dimensional vector, with no search, replay, or counting---lands within this range while producing a valid model for every log. The remaining gap is concentrated in fitness: a slightly wrong decoded tree can make some observed traces non-replayable, whereas the Inductive Miner is designed to include them. We interpret this not as a claim that neural translation should replace classical discovery, but as evidence that the shared latent space preserves enough behavioral information to support discovery-grade model generation.
+The Inductive Miner achieves perfect fitness (1.000) and an F1 of 0.980. This is expected: the test logs are complete, noise-free sampled views of structured behavior---precisely the setting in which the Inductive Miner enjoys rediscovery guarantees on block-structured logs~\cite{Leemans2013}---so the comparison is intentionally played on its home turf. ProcRosetta reaches a fitness of 0.950, a precision of 0.937, and an F1 of 0.938---about 96\% of the Inductive Miner's F1. Notably, a purely neural translation---the entire log is compressed into a single 48-dimensional vector, with no search, replay, or counting---lands within this range while producing a valid model for every log. The remaining gap is concentrated in fitness: a slightly wrong decoded tree can make some observed traces non-replayable, whereas the Inductive Miner is designed to include them. We interpret this not as a claim that neural translation should replace classical discovery, but as evidence that the shared latent space preserves enough behavioral information to support discovery-grade model generation. Figure~\ref{fig:real-life-trees} qualitatively compares the two real-life logs used in the assessment: each row is one log, with the Inductive Miner tree on the left and the ProcRosetta tree on the right.
+
+\begin{figure}
+\centering
+\begin{minipage}[t]{0.48\textwidth}
+\centering
+\footnotesize Receipt, Inductive Miner\\[-1pt]
+\includegraphics[width=\linewidth,height=0.16\textheight,keepaspectratio]{figures/real_life_trees/receipt_inductive_tree.png}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\textwidth}
+\centering
+\footnotesize Receipt, ProcRosetta\\[-1pt]
+\includegraphics[width=\linewidth,height=0.16\textheight,keepaspectratio]{figures/real_life_trees/receipt_rosetta_tree.png}
+\end{minipage}
+
+\vspace{2mm}
+
+\begin{minipage}[t]{0.48\textwidth}
+\centering
+\footnotesize Road traffic, Inductive Miner\\[-1pt]
+\includegraphics[width=\linewidth,height=0.16\textheight,keepaspectratio]{figures/real_life_trees/roadtraffic_inductive_tree.png}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\textwidth}
+\centering
+\footnotesize Road traffic, ProcRosetta\\[-1pt]
+\includegraphics[width=\linewidth,height=0.16\textheight,keepaspectratio]{figures/real_life_trees/roadtraffic_rosetta_tree.png}
+\end{minipage}
+\caption{Process-tree visualizations for the two real-life event logs. Rows correspond to logs; columns compare PM4Py's Inductive Miner with ProcRosetta. The Inductive Miner trees are discovered from the imported XES logs, and the ProcRosetta trees are imported from PTML files produced by the decoder; all panels are exported with PM4Py.}
+\Description{Four process-tree diagrams arranged in a two-by-two grid. Rows correspond to the receipt and road-traffic event logs; columns compare the Inductive Miner and ProcRosetta process trees.}
+\label{fig:real-life-trees}
+\end{figure}
 
 \subsection{Embedding Quality (RQ1, RQ3)}
 \label{sec:embeddingresults}

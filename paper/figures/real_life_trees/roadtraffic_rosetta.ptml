@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<ptml>
+  <processTree name="872f481e-52ef-46d1-861f-b654650e9499" root="42b81323-a561-4c45-8bbd-0b57e86ab570" id="e6504532-9188-4a91-af73-d99ac6d0811e">
+    <sequence name="" id="42b81323-a561-4c45-8bbd-0b57e86ab570"/>
+    <manualTask name="Create Fine" id="c70201de-6a4c-4d7c-99a0-a187f98e902c"/>
+    <sequence name="" id="bb379b4f-bfe2-4ff7-bad6-6a7d7dd13c44"/>
+    <and name="" id="0df66e48-5bc8-4a8f-a08f-0b87f141c489"/>
+    <manualTask name="Add penalty" id="14731c7e-d9c3-4b92-b6c9-dd71665953ba"/>
+    <manualTask name="Send for Credit Collection" id="6058af2d-6789-4718-a7c5-f3125665cb9e"/>
+    <manualTask name="Insert Fine Notification" id="6869f987-4b67-478e-9819-ab7489debdea"/>
+    <manualTask name="Send Fine" id="5c9ac5ee-00ba-465f-8f23-08771e26055f"/>
+    <parentsNode id="e28fe851-06bf-49cd-a6a1-fff38bc4507a" sourceId="42b81323-a561-4c45-8bbd-0b57e86ab570" targetId="c70201de-6a4c-4d7c-99a0-a187f98e902c"/>
+    <parentsNode id="e4b0e668-2d37-4182-8493-39eec114206b" sourceId="42b81323-a561-4c45-8bbd-0b57e86ab570" targetId="bb379b4f-bfe2-4ff7-bad6-6a7d7dd13c44"/>
+    <parentsNode id="1ee95556-373c-4a91-a2d6-94635f33bca1" sourceId="bb379b4f-bfe2-4ff7-bad6-6a7d7dd13c44" targetId="0df66e48-5bc8-4a8f-a08f-0b87f141c489"/>
+    <parentsNode id="639e83cf-f3d1-4a2d-92cb-6f04356104ce" sourceId="bb379b4f-bfe2-4ff7-bad6-6a7d7dd13c44" targetId="14731c7e-d9c3-4b92-b6c9-dd71665953ba"/>
+    <parentsNode id="cf02a0dc-89dc-46f7-ab50-974a537db3e4" sourceId="bb379b4f-bfe2-4ff7-bad6-6a7d7dd13c44" targetId="6058af2d-6789-4718-a7c5-f3125665cb9e"/>
+    <parentsNode id="d5c7b630-16db-4fe8-8803-5f4aa0f4fee1" sourceId="0df66e48-5bc8-4a8f-a08f-0b87f141c489" targetId="6869f987-4b67-478e-9819-ab7489debdea"/>
+    <parentsNode id="7a1d3cba-a844-474c-8a39-1d312599efe2" sourceId="0df66e48-5bc8-4a8f-a08f-0b87f141c489" targetId="5c9ac5ee-00ba-465f-8f23-08771e26055f"/>
+  </processTree>
+</ptml>
