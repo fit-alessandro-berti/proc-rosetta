@@ -396,17 +396,18 @@ def prepare_artifact_for_model(
     if parsed.modality is ArtifactModality.PROCESS_TREE:
         assert parsed.tree is not None
         canonical_tree = parsed.tree.relabel(mapping)
-        prefix_length = len(canonical_tree.to_prefix_tokens()) + 2
         unsupported_nodes = [
             f"node-{index}:{node.kind.value}/arity-{len(node.children)}"
             for index, node in enumerate(walk_tree(parsed.tree))
             if node.children and len(node.children) > max_arity
         ]
         if unsupported_nodes:
-            errors.append(
-                f"Operators exceed checkpoint maximum arity {max_arity}: "
-                + ", ".join(unsupported_nodes)
+            canonical_tree = canonical_tree.reassociate_operators(max_arity)
+            warnings.append(
+                f"Re-associated {len(unsupported_nodes)} operator node(s) to checkpoint maximum "
+                f"arity {max_arity}; no activities or branches were dropped."
             )
+        prefix_length = len(canonical_tree.to_prefix_tokens()) + 2
         if prefix_length > settings.max_tree_tokens:
             errors.append(
                 f"Tree requires {prefix_length} tokens, exceeding configured limit "
@@ -420,11 +421,15 @@ def prepare_artifact_for_model(
             model_input_summary={
                 "prefix_tokens": ["<bos>", *canonical_tree.to_prefix_tokens(), "<eos>"],
                 "token_count": prefix_length,
-                "maximum_operator_arity": parsed.source_metadata["maximum_operator_arity"],
+                "source_maximum_operator_arity": parsed.source_metadata["maximum_operator_arity"],
+                "model_input_maximum_operator_arity": min(
+                    parsed.source_metadata["maximum_operator_arity"], max_arity
+                ),
             },
             preprocessing_metadata={
                 "maximum_tree_tokens": settings.max_tree_tokens,
                 "checkpoint_maximum_arity": max_arity,
+                "operator_arity_reassociated": bool(unsupported_nodes),
             },
             warnings=warnings,
             errors=errors,

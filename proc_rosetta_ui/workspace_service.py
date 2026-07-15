@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import asdict
 from hashlib import sha256
+from pathlib import Path
 from typing import MutableMapping
 
 from proc_rosetta.artifact_io import ArtifactParseSettings, ParsedArtifact, parse_artifact
@@ -10,6 +11,30 @@ from proc_rosetta.inference import ArtifactEncodingResult
 from proc_rosetta.visualization_data import cosine_similarity_matrix
 from proc_rosetta_ui.ui_types import WorkspaceArtifact
 from proc_rosetta_ui.cache_service import cache_key, cache_put
+
+
+BUNDLED_ARTIFACT_DIRECTORY = Path(__file__).resolve().parents[1] / "scripts" / "files"
+SUPPORTED_ARTIFACT_SUFFIXES = {".xes", ".ptml", ".pnml"}
+
+
+def bundled_artifact_paths(
+    directory: Path = BUNDLED_ARTIFACT_DIRECTORY,
+) -> tuple[Path, ...]:
+    """Return the repository's importable example artifacts in display order."""
+
+    if not directory.is_dir():
+        return ()
+    suffix_order = {".xes": 0, ".ptml": 1, ".pnml": 2}
+    return tuple(
+        sorted(
+            (
+                path
+                for path in directory.iterdir()
+                if path.is_file() and path.suffix.casefold() in SUPPORTED_ARTIFACT_SUFFIXES
+            ),
+            key=lambda path: (path.stem.casefold(), suffix_order[path.suffix.casefold()]),
+        )
+    )
 
 
 def add_uploaded_artifact(

@@ -138,6 +138,29 @@ class ProcessTreeNode:
             return ProcessTreeNode.activity(mapping.get(self.label, self.label))
         return ProcessTreeNode(self.kind, children=tuple(child.relabel(mapping) for child in self.children))
 
+    def reassociate_operators(self, maximum_arity: int) -> "ProcessTreeNode":
+        """Nest associative operators without dropping or reordering their behavior."""
+
+        if maximum_arity < 2:
+            raise ValueError("maximum operator arity must be at least two")
+        if not self.children:
+            return self
+        children = tuple(
+            child.reassociate_operators(maximum_arity) for child in self.children
+        )
+        if len(children) <= maximum_arity:
+            return ProcessTreeNode(self.kind, children=children)
+        if self.kind is NodeKind.LOOP:
+            raise ValueError("loop operator arity cannot be reassociated safely")
+        nested_tail = ProcessTreeNode(
+            self.kind,
+            children=children[maximum_arity - 1 :],
+        ).reassociate_operators(maximum_arity)
+        return ProcessTreeNode(
+            self.kind,
+            children=(*children[: maximum_arity - 1], nested_tail),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {"kind": self.kind.value}
         if self.label is not None:

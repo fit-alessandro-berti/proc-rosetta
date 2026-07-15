@@ -122,7 +122,7 @@ def checkpoint_sidebar(*, required: bool = True) -> LoadedCheckpoint | None:
                 }
             )
         st.divider()
-        st.caption("Five views · one shared workspace")
+        st.caption("Four views · one shared workspace")
     return checkpoint
 
 
@@ -156,6 +156,7 @@ APP_CSS = """
 [data-testid="stHeader"] { background: rgba(247, 249, 252, .94); }
 [data-testid="stSidebar"] { background: #ffffff; border-right: 1px solid var(--pr-border); }
 [data-testid="stSidebarContent"] { color: var(--pr-ink); }
+[data-testid="stSidebarNav"] li:has(a[href*="04_evaluation"]) { display:none; }
 .block-container { max-width: 1480px; padding-top: 2.25rem; padding-bottom: 4rem; }
 .pr-hero { padding: .4rem 0 1.8rem; border-bottom: 1px solid var(--pr-border); margin-bottom: 1.5rem; }
 .pr-eyebrow { color: var(--pr-teal); font: 700 .74rem/1.3 sans-serif; letter-spacing: .16em; text-transform: uppercase; }

@@ -20,7 +20,7 @@ from proc_rosetta.training import load_checkpoint
 configure_page("Checkpoint dashboard", "▥")
 checkpoint = checkpoint_sidebar()
 page_header(
-    "View 05 / checkpoint & training dashboard",
+    "View 04 / checkpoint & training dashboard",
     "Inspect the run behind the latent space.",
     "Review immutable checkpoint facts, training history, component losses, the generalization gap, "
     "and the best epoch. This dashboard does not launch training inside Streamlit.",

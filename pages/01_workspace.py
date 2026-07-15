@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from hashlib import sha256
 import json
 
 import pandas as pd
@@ -28,28 +29,68 @@ from proc_rosetta_ui.export_service import complete_workspace_zip
 from proc_rosetta_ui.visualizations.event_log import render_event_log
 from proc_rosetta_ui.visualizations.petri_net import render_petri_net
 from proc_rosetta_ui.visualizations.process_tree import render_process_tree
-from proc_rosetta_ui.workspace_service import add_uploaded_artifact, set_process_group, workspace_rows
+from proc_rosetta_ui.workspace_service import (
+    add_uploaded_artifact,
+    bundled_artifact_paths,
+    set_process_group,
+    workspace_rows,
+)
 
 
 configure_page("Artifact workspace", "◫")
 checkpoint = checkpoint_sidebar()
 page_header(
     "View 01 / artifact workspace",
-    "Read first. Encode second.",
-    "Upload XES, PTML, and PNML artifacts, inspect exactly what was parsed, make limits visible, "
-    "and assign equivalent modalities to a common process group.",
+    "Import once. Explore immediately.",
+    "Upload XES, PTML, and PNML artifacts or choose a bundled example. Every imported artifact "
+    "is parsed, canonicalized, and embedded automatically with the active checkpoint.",
 )
 items = workspace(st.session_state)
 
-with st.expander("Upload and preprocessing controls", expanded=not items):
-    parse_left, parse_right = st.columns(2)
-    with parse_left:
+notice = st.session_state.pop("workspace_import_notice", None)
+if notice:
+    if notice["errors"]:
+        st.warning(
+            f"Embedded {notice['embedded']} of {notice['requested']} selected artifacts. "
+            + " · ".join(notice["errors"])
+        )
+    else:
+        st.success(
+            f"{notice['embedded']} artifact{'s' if notice['embedded'] != 1 else ''} imported "
+            "and embedded successfully."
+        )
+
+bundled_paths = bundled_artifact_paths()
+all_bundled = f"All {len(bundled_paths)} artifacts"
+with st.expander("Import artifacts", expanded=not items):
+    upload_column, bundled_column = st.columns(2)
+    with upload_column:
+        upload_generation = int(st.session_state.get("artifact_upload_generation", 0))
         uploaded = st.file_uploader(
-            "Artifacts",
+            "Upload your artifacts",
             type=["xes", "ptml", "pnml"],
             accept_multiple_files=True,
-            help="Artifacts are parsed immediately after you confirm. Checkpoints cannot be uploaded.",
+            key=f"artifact-uploads-{upload_generation}",
+            help="Files are parsed and embedded as soon as they are selected. Checkpoints cannot be uploaded.",
         )
+        st.caption("Embedding starts automatically after file selection.")
+    with bundled_column:
+        bundled_options = ["Choose an example…", all_bundled, *[path.name for path in bundled_paths]]
+        bundled_choice = st.selectbox(
+            "Bundled artifacts",
+            bundled_options,
+            help="Import any one of the nine repository artifacts, or all of them together.",
+        )
+        import_bundled = st.button(
+            "Import bundled selection",
+            type="primary",
+            disabled=bundled_choice == bundled_options[0],
+            use_container_width=True,
+        )
+
+with st.expander("Advanced preprocessing", expanded=False):
+    parse_left, parse_right = st.columns(2)
+    with parse_left:
         activity_key = st.text_input("Activity attribute", "concept:name")
         case_id_key = st.text_input("Case identifier attribute", "case:concept:name")
         lifecycle = st.checkbox("Append lifecycle transition to activity labels", False)
@@ -74,45 +115,93 @@ with st.expander("Upload and preprocessing controls", expanded=not items):
         max_nodes = st.number_input("Maximum Petri-net nodes", 1, 100_000, 512)
         max_tree_tokens = st.number_input("Maximum process-tree tokens", 2, 100_000, 512)
 
-    parse_settings = ArtifactParseSettings(
-        activity_key=activity_key,
-        case_id_key=case_id_key,
-        add_lifecycle_to_labels=lifecycle,
-        remove_empty_traces=remove_empty,
-        auto_guess_final_marking=auto_final,
+parse_settings = ArtifactParseSettings(
+    activity_key=activity_key,
+    case_id_key=case_id_key,
+    add_lifecycle_to_labels=lifecycle,
+    remove_empty_traces=remove_empty,
+    auto_guess_final_marking=auto_final,
+)
+preprocessing = PreprocessingSettings(
+    max_events=int(max_events),
+    max_traces=int(max_traces),
+    max_trace_length=int(max_trace_length),
+    trace_selection_strategy=selection,
+    random_seed=int(seed),
+    variant_coverage=float(coverage),
+    compress_duplicate_variants=compress_variants,
+    max_petri_nodes=int(max_nodes),
+    max_tree_tokens=int(max_tree_tokens),
+)
+
+import_sources = [
+    (file.name, file.getvalue(), "")
+    for file in uploaded or []
+]
+if import_bundled:
+    selected_paths = (
+        bundled_paths
+        if bundled_choice == all_bundled
+        else tuple(path for path in bundled_paths if path.name == bundled_choice)
     )
-    preprocessing = PreprocessingSettings(
-        max_events=int(max_events),
-        max_traces=int(max_traces),
-        max_trace_length=int(max_trace_length),
-        trace_selection_strategy=selection,
-        random_seed=int(seed),
-        variant_coverage=float(coverage),
-        compress_duplicate_variants=compress_variants,
-        max_petri_nodes=int(max_nodes),
-        max_tree_tokens=int(max_tree_tokens),
-    )
-    if st.button("Parse and inspect artifacts", type="primary", disabled=not uploaded):
-        for file in uploaded or []:
-            try:
-                if len(items) >= 25:
-                    raise ValueError("workspace limit reached: at most 25 artifacts")
-                if len(file.getvalue()) > 50 * 1024 * 1024:
-                    raise ValueError("upload exceeds the configured 50 MiB artifact limit")
-                item = add_uploaded_artifact(
-                    items,
-                    file.getvalue(),
-                    file.name,
-                    parse_settings,
-                    parsed_cache=stage_cache(st.session_state, "parsed_artifact"),
+    import_sources.extend((path.name, path.read_bytes(), path.stem) for path in selected_paths)
+
+if import_sources:
+    progress = st.progress(0.0, text="Importing and embedding artifacts…")
+    errors = []
+    embedded = 0
+    last_artifact_id = None
+    for index, (filename, data, suggested_group) in enumerate(import_sources, 1):
+        try:
+            content_hash = sha256(data).hexdigest()
+            already_present = any(
+                existing.parsed.content_hash == content_hash
+                and existing.parsed.display_name == filename
+                for existing in items.values()
+            )
+            if not already_present and len(items) >= 25:
+                raise ValueError("workspace limit reached: at most 25 artifacts")
+            if len(data) > 50 * 1024 * 1024:
+                raise ValueError("upload exceeds the configured 50 MiB artifact limit")
+            imported_item = add_uploaded_artifact(
+                items,
+                data,
+                filename,
+                parse_settings,
+                parsed_cache=stage_cache(st.session_state, "parsed_artifact"),
+            )
+            if suggested_group and not imported_item.process_group:
+                set_process_group(imported_item, suggested_group)
+            completed = next(
+                encode_workspace_items(
+                    [imported_item],
+                    checkpoint,
+                    preprocessing,
+                    preprocessed_cache=stage_cache(st.session_state, "preprocessed_input"),
+                    embedding_cache=stage_cache(st.session_state, "embedding"),
                 )
-                item.prepared = prepare_artifact_for_model(item.parsed, checkpoint.model, preprocessing)
-                item.warnings = list(item.prepared.warnings)
-                item.errors = list(item.prepared.errors)
-                item.state = "ready to encode" if item.prepared.ready else "input limitation"
-            except Exception as exc:
-                st.error(f"{file.name}: {type(exc).__name__}: {exc}")
-        st.rerun()
+            )
+            last_artifact_id = completed.artifact_id
+            if completed.encoding is not None and completed.encoding.mu and not completed.errors:
+                embedded += 1
+            else:
+                errors.append(f"{filename}: {completed.state}")
+        except Exception as exc:
+            errors.append(f"{filename}: {type(exc).__name__}: {exc}")
+        progress.progress(
+            index / len(import_sources),
+            text=f"Processed {index} of {len(import_sources)} artifacts",
+        )
+    if uploaded:
+        st.session_state["artifact_upload_generation"] = upload_generation + 1
+    if last_artifact_id is not None:
+        st.session_state["workspace_selected_artifact"] = last_artifact_id
+    st.session_state["workspace_import_notice"] = {
+        "requested": len(import_sources),
+        "embedded": embedded,
+        "errors": errors,
+    }
+    st.rerun()
 
 st.markdown("### Workspace register")
 if not items:
@@ -213,31 +302,6 @@ with diagnostics_tab:
         st.error(error)
     if not item.warnings and not item.errors:
         st.success("No parsing or preprocessing limitations detected.")
-
-st.markdown("### Encode into the shared space")
-selection_ids = st.multiselect(
-    "Artifacts to encode",
-    list(items),
-    default=[selected_id],
-    format_func=lambda artifact_id: items[artifact_id].parsed.display_name,
-)
-if st.button("Encode selected artifacts", type="primary", disabled=not selection_ids):
-    progress = st.progress(0.0, text="Preparing artifacts…")
-    status = st.empty()
-    selected_items = [items[artifact_id] for artifact_id in selection_ids]
-    for index, completed in enumerate(
-        encode_workspace_items(
-            selected_items,
-            checkpoint,
-            preprocessing,
-            preprocessed_cache=stage_cache(st.session_state, "preprocessed_input"),
-            embedding_cache=stage_cache(st.session_state, "embedding"),
-        ),
-        1,
-    ):
-        status.write(f"**{completed.parsed.display_name}** → {completed.state}")
-        progress.progress(index / len(selected_items), text=f"Completed {index} of {len(selected_items)}")
-    st.rerun()
 
 if item.encoding is not None and item.encoding.mu:
     st.success(

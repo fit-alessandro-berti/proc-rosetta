@@ -35,6 +35,7 @@ from proc_rosetta.reference_gallery import build_reference_gallery_iter
 from proc_rosetta_ui.ui_types import WorkspaceArtifact
 from proc_rosetta_ui.cache_service import CACHE_STAGES, cache_key, cache_put, stage_cache
 from proc_rosetta_ui.export_service import petri_net_pnml, process_tree_ptml
+from proc_rosetta_ui.workspace_service import bundled_artifact_paths
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,14 +64,21 @@ def test_trace_selection_is_reproducible_and_bounded():
 
 def test_all_external_modalities_parse_prepare_and_encode():
     checkpoint = studio_checkpoint()
-    expected = {
-        "running-example.xes": ArtifactModality.EVENT_LOG,
-        "running-example.ptml": ArtifactModality.PROCESS_TREE,
-        "running-example.pnml": ArtifactModality.PETRI_NET,
+    expected_suffixes = {
+        ".xes": ArtifactModality.EVENT_LOG,
+        ".ptml": ArtifactModality.PROCESS_TREE,
+        ".pnml": ArtifactModality.PETRI_NET,
     }
+    paths = bundled_artifact_paths()
 
-    for filename, modality in expected.items():
-        parsed = parse_artifact(FILES / filename)
+    assert len(paths) == 9
+    assert {path.parent for path in paths} == {FILES}
+    assert {suffix: sum(path.suffix == suffix for path in paths) for suffix in expected_suffixes} == {
+        suffix: 3 for suffix in expected_suffixes
+    }
+    for path in paths:
+        modality = expected_suffixes[path.suffix]
+        parsed = parse_artifact(path)
         prepared = prepare_artifact_for_model(parsed, checkpoint.model)
         encoded = encode_artifact(prepared, checkpoint)
 
@@ -330,3 +338,43 @@ def test_analytical_pages_render_with_a_populated_multimodal_workspace():
     translation.session_state["latest_decode_source_ids"] = [log_item.artifact_id]
     translation.run()
     assert not translation.exception, [exception.value for exception in translation.exception]
+
+
+def test_workspace_upload_automatically_builds_an_embedding():
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_file(str(ROOT / "pages/01_workspace.py"), default_timeout=30).run()
+    app.get("file_uploader")[0].upload(
+        "uploaded-example.xes",
+        (FILES / "running-example.xes").read_bytes(),
+        "text/xml",
+    ).run()
+
+    assert not app.exception, [exception.value for exception in app.exception]
+    imported = list(app.session_state["workspace"].values())
+    assert len(imported) == 1
+    assert imported[0].state == "embedding ready"
+    assert imported[0].encoding is not None
+    assert imported[0].encoding.mu
+    assert any("imported and embedded successfully" in message.value for message in app.success)
+
+
+def test_workspace_imports_and_groups_all_nine_bundled_artifacts():
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_file(str(ROOT / "pages/01_workspace.py"), default_timeout=30).run()
+    next(widget for widget in app.selectbox if widget.label == "Bundled artifacts").select(
+        "All 9 artifacts"
+    ).run()
+    next(widget for widget in app.button if widget.label == "Import bundled selection").click().run()
+
+    assert not app.exception, [exception.value for exception in app.exception]
+    imported = list(app.session_state["workspace"].values())
+    assert len(imported) == 9
+    assert all(item.state == "embedding ready" for item in imported)
+    assert all(item.encoding is not None and item.encoding.mu for item in imported)
+    assert {item.process_group for item in imported} == {
+        "receipt",
+        "roadtraffic100traces",
+        "running-example",
+    }
