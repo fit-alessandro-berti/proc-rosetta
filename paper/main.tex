@@ -289,21 +289,41 @@ Figure~\ref{fig:training} shows the training run. Training converged smoothly: t
 
 Table~\ref{tab:decode} evaluates greedy decoding from all four latent sources. The structural guarantees hold without exception: \emph{every} one of the $4{,}096$ decodes ($4 \times 1{,}024$) terminates, parses into a valid process tree, and converts to a Petri net---the direct payoff of grammar masking, answering the syntactic half of RQ2 fully in the affirmative.
 
-\begin{table}
-\caption{Decode quality on the test split (1{,}024 rows), greedy decoding from each latent source. \emph{Norm.\ edit}: length-normalized token edit distance; \emph{behavior $L_1$}: original log vs.\ traces simulated from the decoded tree (range $[0,2]$; unrelated test logs average 1.209). Lower is better for both.}
+\begin{table*}
+\centering
+\begin{minipage}[t]{0.58\textwidth}
+\centering
+\caption{Decode quality on the test split (1{,}024 rows), greedy decoding from each latent source. \emph{Norm.\ edit}: length-normalized token edit distance; \emph{behavior $L_1$}: original log vs.\ traces simulated from the decoded tree. Lower is better for both.}
 \label{tab:decode}
-\small
+\scriptsize
+\resizebox{\linewidth}{!}{%
 \begin{tabular}{lcccccc}
 \toprule
-Latent source & Terminated & Valid tree & Exact tree & Petri conv. & Norm.\ edit $\downarrow$ & Behavior $L_1$ $\downarrow$ \\
+Latent source & Term. & Valid & Exact & Petri & Norm.\ edit $\downarrow$ & Behavior $L_1$ $\downarrow$ \\
 \midrule
 $\mu_{\mathit{tree}}$ (tree encoder)   & 100\% & 100\% & \textbf{85.9\%} & 100\% & \textbf{0.063} & 0.322 \\
 $\mu_{\mathit{trace}}$ (log encoder)   & 100\% & 100\% & 85.2\% & 100\% & 0.083 & 0.336 \\
 $\mu_{\mathit{petri}}$ (Petri encoder) & 100\% & 100\% & 85.7\% & 100\% & 0.065 & \textbf{0.310} \\
 $\mu_{\mathit{fused}}$ (mean of the three) & 100\% & 100\% & \textbf{85.9\%} & 100\% & 0.066 & 0.320 \\
 \bottomrule
-\end{tabular}
-\end{table}
+\end{tabular}}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.39\textwidth}
+\centering
+\caption{Process-discovery quality on the 1{,}024 test logs: ProcRosetta and the Inductive Miner are evaluated with alignment-based fitness and precision; F1 is their harmonic mean.}
+\label{tab:discovery}
+\scriptsize
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lccccc}
+\toprule
+Method & Model & Align. & Fitness & Precision & F1 \\
+\midrule
+ProcRosetta (log $\to$ tree $\to$ net) & 100\% & 100\% & 0.950 & 0.937 & 0.938 \\
+Inductive Miner & 100\% & 100\% & \textbf{1.000} & \textbf{0.969} & \textbf{0.980} \\
+\bottomrule
+\end{tabular}}
+\end{minipage}
+\end{table*}
 
 The semantic half is also strong. The decoded tree \emph{exactly} equals the canonical target in 85.9\% of the cases when decoding from the tree's own embedding, 85.2\% from the log, and 85.7\% from the Petri-net structure. Exact match is demanding (a single differing leaf counts as failure); the error-tolerant metrics are more informative: the normalized token edit distance is low (0.063--0.083), and the \emph{behavioral} distance between the original log and traces simulated from the decoded model ranges from 0.310 to 0.336, whereas the same distance between two \emph{unrelated} test logs averages 1.209 (Section~\ref{sec:embeddingresults})---decoded models are behaviorally much closer to their source than a random model of the same distribution. The ordering of sources is now nearly tied, indicating that tree, log, and Petri encoders all retain enough information for high-quality tree decoding.
 
@@ -313,20 +333,6 @@ The semantic half is also strong. The decoded tree \emph{exactly} equals the can
 
 
 Table~\ref{tab:discovery} addresses the log-to-model use case: each test log is translated by ProcRosetta (encode the log, decode a tree, convert to a net) and, independently, mined with PM4Py's Inductive Miner; both models are scored against the log with alignment-based fitness~\cite{Adriansyah2012} and precision.
-
-\begin{table}
-\caption{Process-discovery quality on the 1{,}024 test logs: the model decoded from the log embedding (ProcRosetta) and the Inductive Miner model are evaluated against each log with alignment-based fitness and precision; F1 is their harmonic mean.}
-\label{tab:discovery}
-\small
-\begin{tabular}{lccccc}
-\toprule
-Method & Model obtained & Alignments computable & Fitness & Precision & F1 \\
-\midrule
-ProcRosetta (log $\to$ tree $\to$ net) & 100\% & 100\% & 0.950 & 0.937 & 0.938 \\
-Inductive Miner & 100\% & 100\% & \textbf{1.000} & \textbf{0.969} & \textbf{0.980} \\
-\bottomrule
-\end{tabular}
-\end{table}
 
 The Inductive Miner achieves perfect fitness (1.000) and an F1 of 0.980. This is expected: the test logs are complete, noise-free sampled views of structured behavior---precisely the setting in which the Inductive Miner enjoys rediscovery guarantees on block-structured logs~\cite{Leemans2013}---so the comparison is intentionally played on its home turf. ProcRosetta reaches a fitness of 0.950, a precision of 0.937, and an F1 of 0.938---about 96\% of the Inductive Miner's F1. Notably, a purely neural translation---the entire log is compressed into a single 48-dimensional vector, with no search, replay, or counting---lands within this range while producing a valid model for every log. The remaining gap is concentrated in fitness: a slightly wrong decoded tree can make some observed traces non-replayable, whereas the Inductive Miner is designed to include them. We interpret this not as a claim that neural translation should replace classical discovery, but as evidence that the shared latent space preserves enough behavioral information to support discovery-grade model generation.
 
@@ -364,13 +370,17 @@ Second, ProcRosetta's learned log embedding is competitive with those determinis
 
 Third, the comparison on the Petri-net side favors ProcRosetta on neighborhoods: PetriNet2Vec attains a good global correlation ($\rho = 0.722$) but weaker nearest neighbors (NN behavior 0.531), whereas ProcRosetta's net embedding ($\rho = 0.686$) and fused embedding ($\rho = 0.757$) retrieve exact-equivalent nearest neighbors on average.
 
-\begin{table}
-\caption{Geometry agreement with the fused ProcRosetta embedding: Spearman correlation of pairwise-distance matrices, top-1 nearest-neighbor overlap, and deltas versus the fused reference (negative $\Delta$ NN behavior = better neighborhoods).}
+\begin{table*}
+\centering
+\begin{minipage}[t]{0.62\textwidth}
+\centering
+\caption{Geometry agreement with the fused ProcRosetta embedding: pairwise-distance correlation, top-1 nearest-neighbor overlap, and deltas versus the fused reference. Negative $\Delta$ NN behavior means better neighborhoods.}
 \label{tab:agreement}
-\small
+\scriptsize
+\resizebox{\linewidth}{!}{%
 \begin{tabular}{lrrrr}
 \toprule
-Method & Pairwise $\rho$ & Top-1 NN overlap & $\Delta$ behavior $\rho$ & $\Delta$ NN behavior \\
+Method & Pairwise $\rho$ & Top-1 overlap & $\Delta$ behavior $\rho$ & $\Delta$ NN behavior \\
 \midrule
 ProcRosetta $\mu_{\mathit{petri}}$  & 0.969 & 0.164 & $-0.070$ & $+0.000$ \\
 ProcRosetta $\mu_{\mathit{tree}}$   & 0.927 & 0.156 & $-0.084$ & $+0.000$ \\
@@ -383,8 +393,28 @@ Trace-variant distribution          & 0.682 & 0.143 & $-0.065$ & $+0.000$ \\
 PetriNet2Vec (PM4Py)                & 0.487 & 0.031 & $-0.035$ & $+0.531$ \\
 Petri structural counts             & 0.404 & 0.159 & $-0.228$ & $+0.000$ \\
 \bottomrule
-\end{tabular}
-\end{table}
+\end{tabular}}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.35\textwidth}
+\centering
+\caption{Cross-modal retrieval on the test split: the 1{,}024 target candidates are ranked by cosine similarity to the query embedding. Chance level: top-1 $= 0.1\%$, mean rank $\approx 512$.}
+\label{tab:retrieval}
+\scriptsize
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lccc}
+\toprule
+Query $\to$ target & Top-1 & MRR & Mean rank \\
+\midrule
+tree $\to$ net    & \textbf{6.3\%} & \textbf{0.121} & 101.0 \\
+net $\to$ tree    & 6.2\% & \textbf{0.121} & \textbf{100.9} \\
+net $\to$ log     & 2.9\% & 0.076 & 102.4 \\
+log $\to$ net     & 2.8\% & 0.075 & 102.3 \\
+tree $\to$ log    & 2.5\% & 0.070 & 102.5 \\
+log $\to$ tree    & 2.0\% & 0.066 & 102.3 \\
+\bottomrule
+\end{tabular}}
+\end{minipage}
+\end{table*}
 
 Table~\ref{tab:agreement} adds a geometry-level view, comparing the full pairwise-distance structure of every method against the fused ProcRosetta embedding. The three modality-specific ProcRosetta embeddings agree strongly with each other's geometry (pairwise $\rho$ of 0.886--0.969 with the fused space) even though they are computed from entirely different inputs---direct evidence for RQ1: the three encoders have converged to \emph{one} shared geometry of process behavior. External log baselines have moderate agreement ($\rho = 0.682$--$0.793$), while PetriNet2Vec and Petri structural counts induce substantially different geometries, confirming that the learned space is not simply a rediscovery of any single baseline.
 
@@ -394,24 +424,6 @@ Table~\ref{tab:agreement} adds a geometry-level view, comparing the full pairwis
 
 
 The most direct test of cross-modal alignment is retrieval: given, e.g., a Petri net, does its embedding find the matching event log row among all 1{,}024 test rows? Table~\ref{tab:retrieval} reports top-1 accuracy, mean reciprocal rank (MRR), and the mean rank of the true counterpart, for all six directions. All directions perform above chance: top-1 accuracies of 2.0--6.3\% against a 0.1\% chance level (factors of about 20--65), and mean ranks of about 101--102 against an expected 512 for random ranking. These exact-row scores are deliberately strict in the behavior-family setting: each query has one indexed target row, but equivalent alternate rows may be behaviorally just as correct. The separate family-equivalence check in the test report confirms very high within-family cosine similarity (0.995--1.000), with especially strong alternate-representation retrieval for logs. The results establish that the shared space aligns modalities above chance at instance level, while leaving clear headroom for exact cross-modal retrieval.
-
-\begin{table}
-\caption{Cross-modal retrieval on the test split: the 1{,}024 candidates of the target modality are ranked by cosine similarity to the query embedding. Chance level: top-1 $= 0.1\%$, mean rank $\approx 512$.}
-\label{tab:retrieval}
-\small
-\begin{tabular}{lccc}
-\toprule
-Query $\to$ target & Top-1 accuracy & MRR & Mean rank \\
-\midrule
-tree $\to$ net    & \textbf{6.3\%} & \textbf{0.121} & 101.0 \\
-net $\to$ tree    & 6.2\% & \textbf{0.121} & \textbf{100.9} \\
-net $\to$ log     & 2.9\% & 0.076 & 102.4 \\
-log $\to$ net     & 2.8\% & 0.075 & 102.3 \\
-tree $\to$ log    & 2.5\% & 0.070 & 102.5 \\
-log $\to$ tree    & 2.0\% & 0.066 & 102.3 \\
-\bottomrule
-\end{tabular}
-\end{table}
 
 \subsection{Reproducibility and Implementation}
 \label{sec:repository}
