@@ -48,7 +48,7 @@ for column, (number, title, copy, path) in zip(cards, views):
         st.markdown(
             f'<div class="pr-card"><div class="pr-kicker">View {number}</div>'
             f'<div class="pr-value" style="font-size:1.18rem;margin:.35rem 0">{title}</div>'
-            f'<div style="color:#9ba8bf;min-height:4.8rem">{copy}</div></div>',
+            f'<div style="color:var(--pr-muted);min-height:4.8rem">{copy}</div></div>',
             unsafe_allow_html=True,
         )
         st.page_link(path, label="Open view →", use_container_width=True)
@@ -64,4 +64,3 @@ if checkpoint is None:
         "No trusted server-side checkpoint is available. Artifact parsing still works after a "
         "checkpoint is installed in the configured directory; checkpoint upload is intentionally disabled."
     )
-

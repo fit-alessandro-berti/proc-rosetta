@@ -237,3 +237,5 @@ nohup.out
 *.toc
 
 *.tar.gz
+
+.streamlit/

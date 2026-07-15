@@ -101,9 +101,9 @@ with controls:
 with explanation:
     st.markdown(
         '<div class="pr-card"><div class="pr-kicker">Latent source</div>'
-        '<div style="color:#e9eefb;margin-top:.4rem">One artifact uses its deterministic μ. '
+        '<div style="color:var(--pr-ink);margin-top:.4rem">One artifact uses its deterministic μ. '
         'Multiple artifacts use their equal-weight arithmetic mean.</div>'
-        '<div style="color:#9ba8bf;margin-top:.5rem">Custom weighted fusion and stochastic sampling '
+        '<div style="color:var(--pr-muted);margin-top:.5rem">Custom weighted fusion and stochastic sampling '
         'remain explicitly experimental.</div></div>',
         unsafe_allow_html=True,
     )
