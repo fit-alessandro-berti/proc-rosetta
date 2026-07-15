@@ -20,10 +20,13 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert sample_args.traces_per_sample == 16
     assert train_args.epochs == 100
     assert train_args.batch_size == 32
-    assert train_args.dropout == 0.15
-    assert train_args.weight_decay == 1e-4
-    assert train_args.label_smoothing == 0.05
-    assert train_args.early_stopping_patience == 5
+    assert train_args.latent_dim == 48
+    assert train_args.hidden_dim == 96
+    assert train_args.dropout == 0.25
+    assert train_args.weight_decay == 1e-3
+    assert train_args.label_smoothing == 0.08
+    assert train_args.early_stopping_patience == 4
+    assert train_args.activity_remap_probability == 0.5
 
 
 def test_sample_cli_recreates_data_splits(tmp_path, capsys):

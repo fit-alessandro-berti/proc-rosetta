@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,14 +78,20 @@ class ProcessBatchCollator:
         tree_tokenizer: TreeTokenizer,
         activity_tokenizer: ActivityTokenizer,
         config: BatchConfig | None = None,
+        activity_remap_probability: float = 0.0,
+        seed: int = 13,
     ) -> None:
+        if not 0.0 <= activity_remap_probability <= 1.0:
+            raise ValueError("activity_remap_probability must be in [0, 1]")
         self.tree_tokenizer = tree_tokenizer
         self.activity_tokenizer = activity_tokenizer
         self.config = config or BatchConfig()
+        self.activity_remap_probability = activity_remap_probability
+        self.rng = random.Random(seed)
 
     def __call__(self, samples: Sequence[ProcessSample]) -> dict[str, Any]:
         equivalence_ids = [sample.equivalence_id for sample in samples]
-        return {
+        batch = {
             "tree_tokens": self._tree_tokens(samples),
             "traces": self._trace_tokens(samples),
             "petri": self._petri_graphs([sample.petri_graph for sample in samples]),
@@ -98,6 +105,58 @@ class ProcessBatchCollator:
             ),
             "samples": list(samples),
         }
+        self._remap_activity_ids(batch, equivalence_ids)
+        return batch
+
+    def _remap_activity_ids(
+        self,
+        batch: dict[str, Any],
+        equivalence_ids: Sequence[str],
+    ) -> None:
+        if self.activity_remap_probability <= 0:
+            return
+        tree_tokens = batch["tree_tokens"]
+        traces = batch["traces"]
+        petri = batch["petri"]
+        assert isinstance(tree_tokens, torch.Tensor)
+        assert isinstance(traces, dict)
+        assert isinstance(petri, dict)
+        trace_tokens = traces["tokens"]
+        transition_label_ids = petri["transition_label_ids"]
+        assert isinstance(trace_tokens, torch.Tensor)
+        assert isinstance(transition_label_ids, torch.Tensor)
+
+        family_permutations: dict[str, list[int] | None] = {}
+        activity_count = min(
+            self.tree_tokenizer.max_activities,
+            self.activity_tokenizer.max_activities,
+        )
+        for row, equivalence_id in enumerate(equivalence_ids):
+            if equivalence_id not in family_permutations:
+                family_permutations[equivalence_id] = (
+                    self.rng.sample(range(activity_count), activity_count)
+                    if self.rng.random() < self.activity_remap_probability
+                    else None
+                )
+            permutation = family_permutations[equivalence_id]
+            if permutation is None:
+                continue
+
+            original_tree = tree_tokens[row].clone()
+            original_traces = trace_tokens[row].clone()
+            original_petri = transition_label_ids[row].clone()
+            for source_index, target_index in enumerate(permutation):
+                source_name = f"A{source_index}"
+                target_name = f"A{target_index}"
+                source_tree_id = self.tree_tokenizer.token_to_id[source_name]
+                target_tree_id = self.tree_tokenizer.token_to_id[target_name]
+                source_activity_id = self.activity_tokenizer.token_to_id[source_name]
+                target_activity_id = self.activity_tokenizer.token_to_id[target_name]
+                tree_tokens[row][original_tree == source_tree_id] = target_tree_id
+                trace_tokens[row][original_traces == source_activity_id] = target_activity_id
+                transition_label_ids[row][
+                    original_petri == source_activity_id
+                ] = target_activity_id
 
     def _tree_tokens(self, samples: Sequence[ProcessSample]) -> torch.Tensor:
         encoded = [self.tree_tokenizer.encode_tree(sample.tree) for sample in samples]

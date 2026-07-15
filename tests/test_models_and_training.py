@@ -78,3 +78,39 @@ def test_petri_batch_contains_visible_transition_label_ids():
 
     assert batch["petri"]["transition_label_ids"].gt(0).any()
     assert batch["positive_mask"].all()
+
+
+def test_activity_remapping_is_semantics_preserving_and_family_consistent():
+    synthetic_config = SyntheticConfig(
+        max_activities=6,
+        traces_per_sample=2,
+        motif_weights={"duplicate_vs_silent": 1.0},
+    )
+    tree_tokenizer = TreeTokenizer(max_activities=6, max_arity=3)
+    activity_tokenizer = ActivityTokenizer(max_activities=6)
+    dataset = SyntheticProcessDataset(2, config=synthetic_config, seed=3)
+    plain = ProcessBatchCollator(tree_tokenizer, activity_tokenizer)(dataset.samples)
+    augmented = ProcessBatchCollator(
+        tree_tokenizer,
+        activity_tokenizer,
+        activity_remap_probability=1.0,
+        seed=7,
+    )(dataset.samples)
+
+    assert augmented["positive_mask"].all()
+    assert not torch.equal(plain["tree_tokens"], augmented["tree_tokens"])
+    assert torch.equal(augmented["tree_tokens"][0], augmented["tree_tokens"][1])
+    assert torch.equal(
+        augmented["traces"]["tokens"][0], augmented["traces"]["tokens"][1]
+    )
+    for row in range(2):
+        tree_ids = set(augmented["tree_tokens"][row].tolist())
+        visible_activity_ids = set(
+            augmented["traces"]["tokens"][row]
+            [augmented["traces"]["tokens"][row].gt(0)]
+            .tolist()
+        )
+        for activity_id in visible_activity_ids:
+            activity_name = activity_tokenizer.tokens[activity_id]
+            assert tree_tokenizer.token_to_id[activity_name] in tree_ids
+        tree_tokenizer.decode_tree(augmented["tree_tokens"][row].tolist())

@@ -32,20 +32,21 @@ class TrainConfig:
     epochs: int = 100
     batch_size: int = 32
     learning_rate: float = 1e-3
-    latent_dim: int = 64
-    hidden_dim: int = 128
+    latent_dim: int = 48
+    hidden_dim: int = 96
     seed: int = 13
     device: str = "cpu"
-    dropout: float = 0.15
-    weight_decay: float = 1e-4
-    label_smoothing: float = 0.05
-    early_stopping_patience: int = 5
+    dropout: float = 0.25
+    weight_decay: float = 1e-3
+    label_smoothing: float = 0.08
+    early_stopping_patience: int = 4
     min_delta: float = 0.001
     lr_patience: int = 2
     lr_factor: float = 0.5
     min_lr: float = 1e-5
     group_aware_batches: bool = True
     views_per_family: int = 2
+    activity_remap_probability: float = 0.5
 
 
 def move_batch_to_device(batch: dict[str, object], device: torch.device) -> dict[str, object]:
@@ -154,9 +155,16 @@ def build_synthetic_dataloader(
     batch_size: int,
     seed: int,
     batch_config: BatchConfig | None = None,
+    activity_remap_probability: float = 0.0,
 ) -> DataLoader:
     dataset = SyntheticProcessDataset(samples, config=synthetic_config, seed=seed)
-    collator = ProcessBatchCollator(tree_tokenizer, activity_tokenizer, config=batch_config)
+    collator = ProcessBatchCollator(
+        tree_tokenizer,
+        activity_tokenizer,
+        config=batch_config,
+        activity_remap_probability=activity_remap_probability,
+        seed=seed,
+    )
     return DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collator)
 
 
@@ -171,9 +179,16 @@ def build_jsonl_dataloader(
     group_aware: bool = False,
     views_per_family: int = 2,
     seed: int = 13,
+    activity_remap_probability: float = 0.0,
 ) -> DataLoader:
     dataset = JsonlProcessDataset(sample_path, show_progress=show_progress)
-    collator = ProcessBatchCollator(tree_tokenizer, activity_tokenizer, config=batch_config)
+    collator = ProcessBatchCollator(
+        tree_tokenizer,
+        activity_tokenizer,
+        config=batch_config,
+        activity_remap_probability=activity_remap_probability,
+        seed=seed,
+    )
     if group_aware:
         batch_sampler = BehaviorFamilyBatchSampler(
             dataset.samples,
@@ -277,6 +292,7 @@ def train_synthetic(
         activity_tokenizer=model.activity_tokenizer,
         batch_size=train_config.batch_size,
         seed=train_config.seed,
+        activity_remap_probability=train_config.activity_remap_probability,
     )
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -310,6 +326,7 @@ def train_from_data_dir(
         f"lr={train_config.learning_rate}, latent_dim={train_config.latent_dim}, "
         f"hidden_dim={train_config.hidden_dim}, dropout={train_config.dropout}, "
         f"weight_decay={train_config.weight_decay}, label_smoothing={train_config.label_smoothing}, "
+        f"activity_remap_probability={train_config.activity_remap_probability}, "
         f"early_stopping_patience={train_config.early_stopping_patience}, device={device}",
         enabled=show_progress,
     )
@@ -332,6 +349,7 @@ def train_from_data_dir(
         group_aware=train_config.group_aware_batches,
         views_per_family=train_config.views_per_family,
         seed=train_config.seed,
+        activity_remap_probability=train_config.activity_remap_probability,
     )
     debug("Loading validation split", enabled=show_progress)
     validation_loader = build_jsonl_dataloader(

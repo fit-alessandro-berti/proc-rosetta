@@ -99,12 +99,12 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--epochs", type=int, default=100)
     train.add_argument("--batch-size", type=int, default=32)
     train.add_argument("--learning-rate", type=float, default=1e-3)
-    train.add_argument("--latent-dim", type=int, default=64)
-    train.add_argument("--hidden-dim", type=int, default=128)
-    train.add_argument("--dropout", type=float, default=0.15)
-    train.add_argument("--weight-decay", type=float, default=1e-4)
-    train.add_argument("--label-smoothing", type=float, default=0.05)
-    train.add_argument("--early-stopping-patience", type=int, default=5)
+    train.add_argument("--latent-dim", type=int, default=48)
+    train.add_argument("--hidden-dim", type=int, default=96)
+    train.add_argument("--dropout", type=float, default=0.25)
+    train.add_argument("--weight-decay", type=float, default=1e-3)
+    train.add_argument("--label-smoothing", type=float, default=0.08)
+    train.add_argument("--early-stopping-patience", type=int, default=4)
     train.add_argument("--min-delta", type=float, default=0.001)
     train.add_argument("--lr-patience", type=int, default=2)
     train.add_argument("--lr-factor", type=float, default=0.5)
@@ -114,6 +114,15 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--device", default="cpu")
     train.add_argument("--quiet", action="store_true", help="disable stderr debug messages and progress bars")
     train.add_argument("--views-per-family", type=int, default=2)
+    train.add_argument(
+        "--activity-remap-probability",
+        type=float,
+        default=0.5,
+        help=(
+            "Probability of consistently renaming activities within each training "
+            "family; preserves behavior while discouraging label memorization."
+        ),
+    )
     train.add_argument(
         "--no-group-aware-batches",
         action="store_true",
@@ -229,6 +238,7 @@ def run_train(args: argparse.Namespace) -> int:
         device=args.device,
         group_aware_batches=not args.no_group_aware_batches,
         views_per_family=max(1, args.views_per_family),
+        activity_remap_probability=args.activity_remap_probability,
     )
     _, history = train_from_data_dir(
         data_dir=args.data_dir,
