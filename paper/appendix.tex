@@ -1,0 +1,291 @@
+\appendix
+
+\section{How the Training Data Was Generated}
+\label{app:data-generation}
+
+This appendix explains the data-generation pipeline used for the model in the
+main paper. The goal of the generator is simple: create many small process
+behaviors, write each behavior in several forms, and keep an explicit record of
+which forms describe the same behavior. The model can then learn from paired
+examples instead of guessing which log, tree, and Petri net belong together.
+
+\subsection{What One Training Row Contains}
+\label{app:data-row}
+
+Each row in the generated data is a \emph{process sample}. A row contains four
+main fields:
+\begin{enumerate}
+  \item a canonical process tree $T$;
+  \item a generated log view $L$, stored as a finite list of visible activity
+        traces;
+  \item a Petri-net graph $G$, stored as typed nodes, labeled transitions,
+        directed arcs, and initial/final marking vectors;
+  \item an equivalence identifier $e$, shared by all rows that represent the
+        same behavior.
+\end{enumerate}
+The process tree is the decoder target. The generated log is the trace-based
+view of the same behavior. The Petri-net graph is the graph-based view. During
+training, rows with the same equivalence identifier are treated as positive
+matches for the contrastive objective.
+
+The persisted JSONL rows also store bookkeeping fields:
+\texttt{model\_variant\_id}, \texttt{log\_view\_id},
+\texttt{representation\_kind}, \texttt{equivalence\_level}, and
+\texttt{metadata}. These fields make it possible to inspect which Petri-net
+variant was used, which generator motif produced the family, and which
+equivalence checks were passed.
+
+\subsection{Current Split and Generator Settings}
+\label{app:data-settings}
+
+The current data directory was generated with the behavior-family generator,
+fixed seed 13, and two representation rows per behavior family. The split sizes
+are:
+\begin{center}
+\small
+\begin{tabular}{lrr}
+\toprule
+Split & Rows & Behavior families \\
+\midrule
+Training & 8{,}192 & 4{,}096 \\
+Validation & 1{,}024 & 512 \\
+Test & 1{,}024 & 512 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The important generator settings are:
+\begin{itemize}
+  \item maximum tree depth: 3;
+  \item maximum activity labels: 30;
+  \item maximum operator arity: 3;
+  \item traces per generated log view: 16;
+  \item activity-label reuse probability: 0.15;
+  \item early leaf probability during tree recursion: 0.35;
+  \item representation rows per behavior family: 2;
+  \item log views per behavior family: 1;
+  \item enabled process-tree operators: \texttt{SEQ}, \texttt{XOR}, and
+        \texttt{AND}.
+\end{itemize}
+The grammar and tokenizer support \texttt{LOOP}, but loops are not enabled in
+this data run. A loop can repeat an arbitrary number of times. With only
+16 traces per generated log view, the observed traces would depend heavily on
+the simulator's repeat/exit choices. The current experiment therefore keeps the
+main data focused on sequence, choice, and concurrency.
+
+\subsection{Why the Generator Uses Behavior Families}
+\label{app:behavior-families}
+
+The generator does not create isolated triples one by one. Instead, it creates
+\emph{behavior families}. A behavior family is one underlying behavior plus two
+Petri-net representations of that behavior. Both rows in a family share:
+\begin{itemize}
+  \item the same canonical process tree;
+  \item the same generated trace list;
+  \item the same equivalence identifier.
+\end{itemize}
+They differ in their Petri-net graph. Sometimes the second graph is only a
+renamed copy of the first graph. In other cases, the second graph uses a
+different internal structure while keeping the same complete visible traces.
+This is important because the model should learn behavior, not only superficial
+graph shape.
+
+The current data is balanced across four family types. Each split contains the
+same number of behavior families from each type:
+\begin{center}
+\small
+\begin{tabular}{lrrr}
+\toprule
+Family type & Training families & Validation families & Test families \\
+\midrule
+Ordinary tree & 1{,}024 & 128 & 128 \\
+Duplicate label vs. silent routing & 1{,}024 & 128 & 128 \\
+Concurrency vs. explicit interleaving & 1{,}024 & 128 & 128 \\
+Non-free-choice M pattern & 1{,}024 & 128 & 128 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Step 1: Choose the Family Type}
+\label{app:choose-family-type}
+
+For each split, the generator first computes how many behavior families are
+needed. Because the current configuration stores two rows per behavior family,
+8{,}192 training rows become 4{,}096 training families. The same calculation
+turns 1{,}024 validation rows and 1{,}024 test rows into 512 families each.
+
+The four family types have equal weight. The generator allocates a deterministic
+quota to each type and shuffles the order using a seed derived from the global
+seed, the split name, and the phrase \texttt{motif-quota-plan}. This gives a
+mixed order of samples on disk while preserving exact class balance.
+
+\subsection{Step 2: Build the Canonical Process Tree}
+\label{app:build-tree}
+
+The canonical process tree is the target representation used by the decoder.
+There are two cases.
+
+\paragraph{Ordinary-tree families.}
+For ordinary-tree families, the generator samples a random process tree. It
+first samples a pool of activity labels, then recursively builds the tree:
+\begin{enumerate}
+  \item If the maximum depth has been reached, it creates an activity leaf.
+  \item Otherwise, with probability 0.35 it also stops early and creates an
+        activity leaf.
+  \item If it does not stop, it chooses one operator from \texttt{SEQ},
+        \texttt{XOR}, and \texttt{AND}.
+  \item For these operators, it samples an arity between 2 and 3 and recursively
+        generates the children.
+\end{enumerate}
+Activity labels are introduced as \texttt{a0}, \texttt{a1}, and so on. With
+probability 0.15 the generator reuses an earlier label instead of introducing a
+new one. After the tree is built, activity labels are canonicalized to
+\texttt{A0}, \texttt{A1}, and so on in first-seen order. Children of
+\texttt{XOR} and \texttt{AND} nodes are sorted by a canonical structural key, so
+equivalent child permutations do not become different targets.
+
+If a generated ordinary tree has fewer than two unique activity labels, the
+generator tries to make it less trivial by adding another activity in sequence.
+
+\paragraph{Controlled behavior families.}
+The other three family types use small hand-defined canonical trees:
+\begin{itemize}
+  \item duplicate-label vs. silent-routing families use
+        $\operatorname{XOR}(\operatorname{SEQ}(A0,A1),
+        \operatorname{SEQ}(A0,A2))$;
+  \item concurrency vs. explicit-interleaving families use
+        $\operatorname{AND}(A0,A1)$;
+  \item non-free-choice M-pattern families use
+        $\operatorname{XOR}(A0,\operatorname{AND}(A1,A2))$.
+\end{itemize}
+These trees are intentionally small because their purpose is to isolate one
+specific representation issue at a time. To avoid making every controlled case
+too bare, the generator appends up to two fresh activity labels as a shared
+sequential suffix. For example, if a motif already uses \texttt{A0},
+\texttt{A1}, and \texttt{A2}, the suffix can add \texttt{A3} and \texttt{A4}.
+The same suffix is added to both Petri-net variants in the family.
+
+\subsection{Step 3: Build Two Petri-Net Variants}
+\label{app:build-petri-variants}
+
+Each behavior family produces two Petri-net variants. These variants are the
+reason the dataset has two rows per behavior family.
+
+\paragraph{Ordinary-tree families.}
+The first Petri net is obtained by converting the process tree with PM4Py. The
+second Petri net is an isomorphic copy: the places and transitions are renamed,
+but the arcs, labels, initial marking, and final marking preserve the same
+behavior. This teaches the model not to treat arbitrary node names as semantic
+information.
+
+\paragraph{Duplicate-label vs. silent-routing families.}
+Both variants accept the same two visible traces, $A0,A1$ and $A0,A2$ before the
+shared suffix. One variant has two visible \texttt{A0} transitions, one for each
+branch. The other variant has a single visible \texttt{A0} transition followed
+by silent routing to the \texttt{A1} or \texttt{A2} branch. The visible behavior
+is the same, but the graph explains the choice differently.
+
+\paragraph{Concurrency vs. explicit-interleaving families.}
+Both variants accept $A0,A1$ and $A1,A0$ before the shared suffix. The first
+variant is the Petri net obtained from the parallel process tree, so the two
+activities can run concurrently. The second variant lists the two possible
+orders explicitly as two serial paths. The visible traces are the same, but one
+graph contains true concurrency and the other encodes only the allowed
+interleavings.
+
+\paragraph{Non-free-choice M-pattern families.}
+Both variants accept the same visible traces for
+$\operatorname{XOR}(A0,\operatorname{AND}(A1,A2))$ before the shared suffix. The
+first variant is the standard PM4Py conversion of the block-structured tree. The
+second variant is a hand-built Petri net with a non-free-choice M pattern. This
+gives the model examples where behavior is preserved even though the Petri-net
+structure is less block-like.
+
+\subsection{Step 4: Check Behavioral Equivalence}
+\label{app:equivalence-check}
+
+Before a behavior family is accepted, the generator checks that all Petri-net
+variants in that family have the same complete visible trace language. The
+checker explores reachable markings, records complete visible traces that reach
+the final marking, and ignores invisible transitions in the visible trace.
+
+The check has explicit resource limits:
+\begin{itemize}
+  \item at most 5{,}000 explored states;
+  \item at most 10{,}000 complete traces;
+  \item at most 20 visible activities per trace.
+\end{itemize}
+If all variants produce exactly the same language within these limits, the
+family is accepted. If a training family cannot be proven exact under the
+limits, it is skipped and the generator tries another family. The accepted row
+stores the equivalence status and the checked variant names in its metadata.
+
+The generator also checks simple structural health conditions. In particular,
+the final marking must be reachable and there must be no dead transitions. A
+family that fails these checks is rejected.
+
+\subsection{Step 5: Create the Generated Log View}
+\label{app:create-log-view}
+
+After equivalence is checked, the reference visible language is sorted into a
+trace pool. The current run creates one log view per behavior family and stores
+16 traces in that log view.
+
+The default log sampling mode is \texttt{uniform\_variants}. In this mode, the
+generator cycles through the complete trace pool until it has 16 traces, then
+shuffles their order with a deterministic seed. If a behavior has only two trace
+variants, each variant appears several times. If it has more variants, the first
+16 positions of the repeated cycle are used. This keeps the generated logs
+simple and reproducible.
+
+The configuration also defines other sampling modes, such as sparse,
+long-tail, incomplete, resampled, and noisy modes. They are part of the codebase
+for other experiments, but the current persisted split uses one clean
+uniform-variants log view per behavior family.
+
+\subsection{Step 6: Flatten Families into Training Rows}
+\label{app:flatten-rows}
+
+The final step turns each behavior family into rows. With the current
+configuration, each family has one generated log view and two Petri-net
+variants, so it becomes exactly two rows:
+\[
+  (\text{tree}, \text{same log view}, \text{Petri variant 0}, e)
+  \quad\text{and}\quad
+  (\text{tree}, \text{same log view}, \text{Petri variant 1}, e).
+\]
+Both rows have the same equivalence identifier $e$. The process tree and trace
+list are identical in the two rows. The Petri-net graph is different.
+
+Rows are written to:
+\begin{itemize}
+  \item \texttt{data/training/samples.jsonl};
+  \item \texttt{data/validation/samples.jsonl};
+  \item \texttt{data/test/samples.jsonl}.
+\end{itemize}
+The generator also writes \texttt{data/metadata.json}, which records the seed,
+the full synthetic configuration, split sizes, motif counts, representation
+counts, average tree and trace statistics, and maximum Petri graph sizes.
+
+\subsection{How the Row Is Used During Training}
+\label{app:training-use}
+
+At training time, each row is converted into tensors:
+\begin{itemize}
+  \item the process tree becomes a prefix token sequence with explicit arity
+        tokens;
+  \item the generated traces become padded activity-token sequences;
+  \item the Petri net becomes node-type indices, transition-label ids, marking
+        features, and two adjacency matrices.
+\end{itemize}
+The batch collator also creates a positive-pair mask from the equivalence
+identifiers. If two rows have the same equivalence identifier, they are treated
+as matching views of the same behavior. Training batches can also apply a
+consistent random renaming of activity labels within a family. This preserves
+the behavior while reducing dependence on the literal label names.
+
+In short, the data-generation pipeline makes the supervision explicit. The
+model sees a tree, a finite generated log, and a Petri-net graph; it also sees
+which rows describe the same behavior. The generated families therefore train
+the model to align artifact types by behavior rather than by node names,
+transition counts, or one particular Petri-net structure.
