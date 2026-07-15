@@ -1,12 +1,12 @@
 # Process-mining objects and assessment metrics
 
-This section describes the process-mining objects used in the dataset and the metrics used in the test-time assessment. The implementation uses paired synthetic samples composed of an event log, a process tree, and a Petri-net graph. The process tree is the generative object; the event log is obtained by simulation from the tree; and the Petri net is obtained by deterministic conversion of the same tree through PM4Py. Thus, each sample is a cross-modal process triple representing one underlying process behavior:
+This section describes the process-mining objects used in the dataset and the metrics used in the test-time assessment. The implementation uses paired synthetic samples composed of an event log, a canonical process tree, and a Petri-net graph. The process tree is the decoder target and canonical behavior description; the event log is sampled from the behavior; and the Petri graph is either the deterministic PM4Py conversion of the tree or an alternate exact-equivalent representation from the same behavior family. Thus, each sample is a cross-modal process triple representing one underlying process behavior:
 
 \[
 x_i = (T_i, L_i, G_i, \mathrm{id}_i),
 \]
 
-where \(T_i\) is a process tree, \(L_i\) is a finite event log, \(G_i\) is a typed Petri-net graph derived from the Petri net associated with \(T_i\), and \(\mathrm{id}_i\) is an equivalence identifier. This design follows the standard process-mining view in which observed executions are represented as event logs and process behavior can be represented by formal process models such as Petri nets and process trees [vanDerAalst2016]. PM4Py is used for process-tree conversion, Petri-net handling, event-log simulation, and some deterministic baseline features [Berti2019, Berti2023].
+where \(T_i\) is a process tree, \(L_i\) is a finite event log, \(G_i\) is a typed Petri-net graph, and \(\mathrm{id}_i\) is a behavior-family equivalence identifier. This design follows the standard process-mining view in which observed executions are represented as event logs and process behavior can be represented by formal process models such as Petri nets and process trees [vanDerAalst2016]. PM4Py is used for process-tree conversion, Petri-net handling, event-log simulation, and some deterministic baseline features [Berti2019, Berti2023].
 
 ## 1. Process-mining objects considered in the data
 
@@ -233,7 +233,7 @@ The `contrastive` metric is a symmetric cross-modal contrastive loss. For each p
 s_{ij}^{m,n} = \frac{\cos(\mu_i^m, \mu_j^n)}{\tau},
 \]
 
-where \(\tau = 0.2\) is the temperature. The correct pair for query \(i\) is candidate \(i\), because the two embeddings come from different modalities of the same sample. The loss applies cross-entropy in both directions, \(m \rightarrow n\) and \(n \rightarrow m\), and averages over all modality pairs. This objective is closely related to the InfoNCE family of contrastive objectives [Oord2018].
+where \(\tau = 0.2\) is the temperature. The implementation uses a multi-positive InfoNCE variant: every row with the same behavior-family identifier is a valid positive, and rows from different behavior families are negatives. The loss applies this objective in both directions, \(m \rightarrow n\) and \(n \rightarrow m\), and averages over all modality pairs. This objective is closely related to the InfoNCE family of contrastive objectives [Oord2018].
 
 #### 2.1.6 KL divergence loss
 
@@ -854,6 +854,69 @@ top3_neighbor_overlap
 behavior_spearman_delta_vs_reference
 nearest_neighbor_behavior_l1_delta_vs_reference
 ```
+
+## 6. Current base-experiment results
+
+The current `testing_results.txt` report evaluates the final checkpoint on the held-out test split:
+
+```text
+split = test
+rows = 1024
+behavior families = 512
+```
+
+Neural test losses are:
+
+| loss | tree | trace->tree | Petri->tree | contrastive | KL |
+|---:|---:|---:|---:|---:|---:|
+| 1.4158 | 0.4282 | 0.4495 | 0.4362 | 0.7995 | 19.9026 |
+
+Greedy decoding succeeds structurally for every latent source:
+
+| latent source | ended | valid tree | exact tree | Petri ok | behavior L1 | norm edit |
+|---|---:|---:|---:|---:|---:|---:|
+| ProcRosetta tree | 100.0% | 100.0% | 85.9% | 100.0% | 0.322 | 0.063 |
+| ProcRosetta trace | 100.0% | 100.0% | 85.2% | 100.0% | 0.336 | 0.083 |
+| ProcRosetta Petri | 100.0% | 100.0% | 85.7% | 100.0% | 0.310 | 0.065 |
+| ProcRosetta fused | 100.0% | 100.0% | 85.9% | 100.0% | 0.320 | 0.066 |
+
+Process-discovery quality against the source logs is:
+
+| method | model ok | align ok | fitness | precision | F1 |
+|---|---:|---:|---:|---:|---:|
+| ProcRosetta trace | 100.0% | 100.0% | 0.950 | 0.937 | 0.938 |
+| Inductive Miner | 100.0% | 100.0% | 1.000 | 0.969 | 0.980 |
+
+The mean pairwise behavior L1 among test logs is 1.2093 over 523,776 pairs.
+
+The embedding-quality ranking by Spearman behavior correlation is:
+
+| method | behavior rho | NN behavior | improvement | dim |
+|---|---:|---:|---:|---:|
+| eventually-follows | 0.889 | 0.026 | 1.184 | 148 |
+| trace activity counts | 0.848 | 0.023 | 1.186 | 14 |
+| pm4py log features | 0.846 | 0.146 | 1.063 | 28 |
+| ProcRosetta trace | 0.841 | 0.000 | 1.209 | 48 |
+| directly-follows | 0.764 | 0.000 | 1.209 | 146 |
+| ProcRosetta fused | 0.757 | 0.000 | 1.209 | 48 |
+| pm4py Petri Node2Vec | 0.722 | 0.531 | 0.678 | 64 |
+| trace variants | 0.692 | 0.000 | 1.209 | 665 |
+| ProcRosetta Petri | 0.686 | 0.000 | 1.209 | 48 |
+| ProcRosetta tree | 0.673 | 0.000 | 1.209 | 48 |
+| Petri structural counts | 0.528 | 0.000 | 1.209 | 9 |
+
+Exact row-level cross-modal retrieval is above chance but remains the largest source of headroom:
+
+| query -> target | top1 | MRR | mean rank |
+|---|---:|---:|---:|
+| Petri -> trace | 0.029 | 0.076 | 102.382 |
+| Petri -> tree | 0.062 | 0.121 | 100.907 |
+| trace -> Petri | 0.028 | 0.075 | 102.301 |
+| trace -> tree | 0.020 | 0.066 | 102.281 |
+| tree -> Petri | 0.063 | 0.121 | 100.971 |
+| tree -> trace | 0.025 | 0.070 | 102.465 |
+
+The behavior-family equivalence check reports within-family cosine similarities of 0.995--1.000 across the four learned embeddings. Family top-1 retrieval is strongest for the trace encoder (0.881) and lower for fused, Petri, and tree embeddings (0.146, 0.136, and 0.154 respectively).
 
 ## BIBLIOGRAPHY
 

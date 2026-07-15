@@ -230,10 +230,10 @@ nohup.out
 *.vrb
 
 !presentation/*.pdf
+!paper/figures/training_curves.pdf
 
 *.nav
 *.snm
 *.toc
 
 *.tar.gz
-

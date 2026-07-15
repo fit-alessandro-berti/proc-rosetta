@@ -2,13 +2,13 @@
 
 ## 1. Scope of this description
 
-This document describes the implementation in the attached `proc-rosetta` project. The archive contains source code and tests, but no precomputed `data/` directory or trained checkpoint. Therefore, the dataset description below refers to the synthetic split generator implemented in the project, not to a concrete already-generated split file.
+This document describes the implementation in the attached `proc-rosetta` project. The current checkout includes source code, tests, generated `data/` splits, and trained checkpoints. The dataset description below therefore refers both to the synthetic split generator and to the current `data/metadata.json` configuration.
 
 The system is a first-stage multimodal process-mining model. Each training example is a paired triple of mutually corresponding artifacts:
 
-1. a block-structured **process tree**;
-2. an **event log**, represented as a finite collection of simulated traces from that process tree;
-3. a **Petri net**, obtained deterministically by converting the same process tree through `pm4py` and then extracting a typed graph representation.
+1. a canonical block-structured **process tree**;
+2. an **event log**, represented as a finite collection of sampled traces for that behavior;
+3. a **Petri net**, either the deterministic `pm4py` conversion of the tree or an alternate exact-equivalent representation, extracted as a typed graph.
 
 The model learns three encoders, one for each artifact type, that map these modalities into a shared latent process-behavior space. A shared grammar-masked process-tree decoder reconstructs or translates a latent vector back into a valid process-tree token sequence. In the current implementation, generated process trees can then be converted deterministically to Petri nets. The implementation does **not** include a direct arbitrary Petri-net decoder.
 
@@ -36,14 +36,17 @@ The main implementation files used for this description are:
 
 ### 2.1 Dataset object: one synthetic paired process sample
 
-A single sample is stored as a `ProcessSample` with four fields:
+A single sample is stored as a `ProcessSample` with behavior-family metadata:
 
 ```text
 ProcessSample
 ├── tree:         ProcessTreeNode
 ├── traces:       tuple[tuple[str, ...], ...]
 ├── petri_graph:  PetriGraph
-└── equivalence_id: string
+├── equivalence_id: string
+├── model_variant_id / log_view_id
+├── representation_kind / equivalence_level
+└── metadata
 ```
 
 The `tree`, `traces`, and `petri_graph` are different observations of the same underlying process behavior. During training, all three modalities are therefore treated as positive cross-modal pairs.
@@ -62,13 +65,14 @@ A serialized sample in `samples.jsonl` has the following conceptual structure:
     "initial_marking": [...],
     "final_marking": [...]
   },
-  "equivalence_id": "training-0"
+  "equivalence_id": "training-0",
+  "representation_kind": "canonical_block_pm4py"
 }
 ```
 
 ### 2.2 Synthetic process-tree generation
 
-The process tree is the central generative object. The default synthetic configuration is:
+The process tree is the decoder target and canonical behavior description. The default synthetic configuration is:
 
 | Parameter | Default | Meaning |
 |---|---:|---|
@@ -79,8 +83,11 @@ The process tree is the central generative object. The default synthetic configu
 | `curriculum_phase` | 2 | Operator set used during generation. Phase 2 enables `SEQ`, `XOR`, and `AND`; phase 3 additionally enables `LOOP`. |
 | `reuse_activity_probability` | 0.15 | Probability of reusing an activity label instead of introducing a new one. |
 | `leaf_probability` | 0.35 | Probability of stopping recursion early and generating a leaf. |
+| `generator` | `behavior_families` | Generate grouped exact-equivalent behavior rows rather than isolated triples. |
+| `variants_per_behavior` | 2 | Number of representation rows per behavior family. |
+| `motif_context_size` | 2 | Shared sequence context wrapped around controlled equivalence motifs. |
 
-The generator first samples the number of activities uniformly from the range `[2, max_activities]`, then recursively constructs a process tree. At each recursive call, the generator either creates a leaf or creates an operator node:
+The ordinary-tree motif and legacy isolated generator first sample the number of activities uniformly from the range `[2, max_activities]`, then recursively construct a process tree. At each recursive call, the generator either creates a leaf or creates an operator node:
 
 ```text
 make_node(depth)
@@ -101,6 +108,8 @@ make_node(depth)
 
 Activity leaves are initially named `a0`, `a1`, etc. After the tree is generated, activity labels are canonicalized to `A0`, `A1`, ... in order of first occurrence. This makes the synthetic data approximately invariant to arbitrary activity-name choices. If the generated tree contains fewer than two unique activity labels, the code attempts to make the sample less trivial by wrapping the tree in a sequential composition with an additional generated activity leaf. Because the leaf sampler itself can reuse an existing activity label, this is best understood as a heuristic rather than a strict duplicate-label guarantee.
 
+Under the default `behavior_families` generator, controlled families are balanced across four motifs: ordinary tree/isomorphic renaming, duplicate visible prefix versus silent routing, true concurrency versus explicit interleaving, and a non-free-choice M-pattern. Each family has a shared canonical tree target and two representation rows with the same `equivalence_id`.
+
 Two structural canonicalizations are important:
 
 1. **Activity-label canonicalization.** Activity labels become `A0`, `A1`, etc., preserving repeated activity identity but removing dependence on the original random names.
@@ -119,7 +128,7 @@ LOOP(children)      loop composition, with two or three children in the data mod
 
 ### 2.3 Petri-net generation from the process tree
 
-For each generated process tree, the implementation calls `pm4py` to convert the process tree into a Petri net with an initial and final marking. The project then converts the `pm4py` Petri-net object into a fixed typed graph representation.
+For ordinary tree rows, the implementation calls `pm4py` to convert the process tree into a Petri net with an initial and final marking. Controlled behavior-family rows may instead use hand-built exact-equivalent Petri-net variants. In both cases, the project converts the Petri-net object into a fixed typed graph representation.
 
 The extracted Petri graph contains:
 
@@ -138,11 +147,11 @@ PetriGraph
 └── final_marking:       one scalar per node
 ```
 
-Places and transitions are sorted by their string names before graph extraction, which makes the graph tensorization deterministic. The neural Petri encoder uses node type, marking vectors, and connectivity. The stored transition labels are preserved in the data object but are not embedded as label features by the current Petri encoder.
+Places and transitions are sorted by their string names before graph extraction, which makes the graph tensorization deterministic. The neural Petri encoder uses node type, transition-label embeddings, marking vectors, and connectivity.
 
 ### 2.4 Trace/event-log simulation
 
-The event log is simulated from the same generated process tree. The code converts the internal tree to a `pm4py` process tree and uses the `pm4py` process-tree playout algorithm. By default, the playout variant is `topbottom`, and the number of traces is `traces_per_sample`, defaulting to 16.
+The event log is sampled from the same generated behavior. For ordinary tree rows and the legacy isolated generator, the code converts the internal tree to a `pm4py` process tree and uses process-tree playout. For behavior-family rows, the code samples from the family trace pool so alternate Petri representations share the same visible behavior. The number of traces is `traces_per_sample`, defaulting to 16.
 
 The event log is then converted into a pure Python trace representation:
 
@@ -168,15 +177,15 @@ data/
     └── samples.jsonl
 ```
 
-The default split sizes are:
+The default split sizes are flattened rows. With the default two rows per behavior family, they correspond to half as many behavior families:
 
-| Split | Default count | Role |
-|---|---:|---|
-| `training` | 2000 | Used to update neural-network weights. Shuffled during training. |
-| `validation` | 256 | Used after each epoch for model selection, learning-rate scheduling, and early stopping. Not shuffled. |
-| `test` | 256 | Used only after training/checkpoint selection for final evaluation. Not used for optimization or early stopping. |
+| Split | Default rows | Default families | Role |
+|---|---:|---:|---|
+| `training` | 8192 | 4096 | Used to update neural-network weights. Shuffled during training. |
+| `validation` | 1024 | 512 | Used after each epoch for model selection, learning-rate scheduling, and early stopping. Not shuffled. |
+| `test` | 1024 | 512 | Used only after training/checkpoint selection for final evaluation. Not used for optimization or early stopping. |
 
-The split generator removes any existing `data/` directory and then generates fresh samples for all three splits. A single seeded Python random-number generator controls the process-tree sampler; the default seed is 13. The code does not expose a separate seed for the `pm4py` trace playout call, so exact trace-level reproducibility may also depend on the behavior of the installed `pm4py` version and its internal randomness. Each generated sample receives an `equivalence_id` of the form `training-0`, `validation-0`, or `test-0` depending on the split. The code does not explicitly deduplicate process trees across splits; it relies on independent random generation and held-out split files.
+The split generator removes any existing `data/` directory and then generates fresh samples for all three splits. A single seeded Python random-number generator controls the process-tree sampler and behavior-family construction; the default seed is 13. Consecutive rows are alternate representations of one behavior, and a behavior family never crosses split boundaries. The strict class-coverage mode enforces deterministic motif quotas. The code does not explicitly deduplicate visible languages across splits, so near-duplicate behaviors can still occur.
 
 The `metadata.json` file records the random seed, the synthetic generation configuration, the relative path of each split file, and descriptive statistics for each split. These statistics include sample count, average tree size, average tree depth, average trace count, average trace length, maximum Petri-node count, and maximum Petri-edge count.
 
@@ -287,9 +296,9 @@ The default architectural hyperparameters used by `train.py` are:
 
 | Hyperparameter | Default |
 |---|---:|
-| latent dimension `D_z` | 64 |
-| hidden dimension `H` | 128 |
-| dropout probability | 0.15 |
+| latent dimension `D_z` | 48 |
+| hidden dimension `H` | 96 |
+| dropout probability | 0.25 |
 | Petri message-passing steps | 3 |
 
 With the default synthetic data configuration, the tree vocabulary has 40 tokens:
@@ -397,10 +406,12 @@ A = \min(1, A_{place\to transition} + A_{transition\to place}).
 **Initial node representation.** For each node `i`, the initial hidden vector is:
 
 ```math
-h_i^{(0)} = \operatorname{Embedding}(node\_type_i) + W_m \cdot marking_i,
+h_i^{(0)} = \operatorname{Embedding}(node\_type_i)
+ + \operatorname{Embedding}(transition\_label_i)
+ + W_m \cdot marking_i,
 ```
 
-where `marking_i` is a two-dimensional vector containing the initial-marking and final-marking values for that node. Dropout and node masking are applied after this initialization.
+where `marking_i` is a two-dimensional vector containing the initial-marking and final-marking values for that node, and the transition-label id is zero for places and invisible transitions. Dropout and node masking are applied after this initialization.
 
 **Message passing.** The encoder performs three message-passing layers by default. At each layer `s`, it computes incoming, outgoing, and self contributions:
 
@@ -574,10 +585,10 @@ flowchart TB
 
 ### 4.1 What an epoch is
 
-An epoch is one complete pass over the training split. With the default configuration, one epoch processes 2000 training samples in shuffled mini-batches of size 32. Because the final batch is not dropped, the default number of training mini-batches per epoch is:
+An epoch is one complete pass over the training split. With the default configuration, one epoch processes 8192 training rows in shuffled mini-batches of size 32. Because the final batch is not dropped, the default number of training mini-batches per epoch is:
 
 ```math
-\lceil 2000 / 32 \rceil = 63.
+\lceil 8192 / 32 \rceil = 256.
 ```
 
 After this training pass, the model is evaluated once on the full validation split. Validation uses the same loss function but does not update model parameters.
@@ -589,8 +600,8 @@ At each optimization step, the model receives one mini-batch containing all thre
 ```text
 mini-batch step input
 ├── ground-truth tree token sequence
-├── simulated event-log traces from the same tree
-├── Petri graph converted from the same tree
+├── event-log traces from the same behavior
+├── Petri graph for the corresponding representation
 └── original sample objects, used only for bookkeeping/evaluation
 ```
 
@@ -631,7 +642,7 @@ The default optimizer is AdamW with:
 | Optimizer parameter | Default |
 |---|---:|
 | learning rate | `1e-3` |
-| weight decay | `1e-4` |
+| weight decay | `1e-3` |
 
 ### 4.4 Validation step
 
@@ -689,7 +700,7 @@ For modality `m`, the decoder produces logits:
 
 The reconstruction and translation terms use a sequence cross-entropy over non-padding target positions. Before cross-entropy, grammar-invalid next-token logits have already been set to `-1e9`. Therefore, invalid grammar tokens do not receive probability mass in practice.
 
-With label smoothing coefficient `epsilon`, default `0.05`, the per-token loss is:
+With label smoothing coefficient `epsilon`, default `0.08`, the per-token loss is:
 
 ```math
 \mathcal{L}_{CE}(t)
@@ -752,17 +763,17 @@ S_{ij} = \frac{\operatorname{normalize}(\mu_i^{left})^T
 \operatorname{normalize}(\mu_j^{right})}{\tau}.
 ```
 
-The positive example for row `i` is the same process sample in the other modality, i.e., column `i`. Other samples in the same mini-batch serve as negatives. The loss is symmetric:
+The positive examples for row `i` are all rows in the other modality with the same behavior-family `equivalence_id`; other behavior families in the same mini-batch serve as negatives. The implementation uses a multi-positive InfoNCE numerator:
 
 ```math
 \mathcal{L}_{contrastive}^{left,right}
 = \frac{1}{2}
 \left(
-CE(S, labels) + CE(S^T, labels)
+MP(S, positive\_mask) + MP(S^T, positive\_mask^T)
 \right),
 ```
 
-where `labels = [0, 1, ..., B-1]`. The final contrastive term averages this over the three modality pairs: tree-trace, tree-Petri, and trace-Petri.
+where `MP` is the row-wise log-sum-exp denominator minus the log-sum-exp over positives. The final contrastive term averages this over the three modality pairs: tree-trace, tree-Petri, and trace-Petri.
 
 This term improves instance-level cross-modal retrieval pressure: the latent vector of a trace log should be closest to the latent vector of its corresponding tree and Petri net rather than to other processes in the mini-batch.
 
@@ -808,7 +819,7 @@ The default loss-weight table is:
 | latent alignment | 0.1 |
 | contrastive alignment | 0.1 |
 | KL regularization | 0.001 |
-| label smoothing | 0.05 |
+| label smoothing | 0.08 |
 
 Only the weighted sum is backpropagated. The individual components are detached and reported as metrics.
 
@@ -909,7 +920,7 @@ Early stopping also monitors validation loss. A validation improvement is accept
 validation\_loss < best\_validation\_loss - min\_delta.
 ```
 
-The default `min_delta` is `0.001`. If no such improvement occurs for `early_stopping_patience = 5` consecutive epochs, training stops. The latest and best checkpoints have already been saved before the stopping check is applied.
+The default `min_delta` is `0.001`. If no such improvement occurs for `early_stopping_patience = 4` consecutive epochs, training stops. The latest and best checkpoints have already been saved before the stopping check is applied.
 
 ---
 
@@ -921,20 +932,21 @@ The implementation includes several overfitting controls. They act at different 
 |---|---|---|
 | Held-out validation and test splits | Data protocol | Validation is used for model selection and early stopping; test is reserved for final evaluation. |
 | Training-shuffle only | Data loader | The training split is shuffled; validation is kept deterministic. |
-| Dropout, default 0.15 | Tree encoder, trace encoder, Petri encoder, decoder | Reduces co-adaptation of hidden units and makes the stochastic training forward pass noisier. |
-| AdamW weight decay, default `1e-4` | Optimizer | Penalizes large weights independently of the adaptive gradient update. |
-| Label smoothing, default 0.05 | Tree-token cross-entropy | Prevents the decoder from becoming overconfident on the exact target token while still respecting grammar-valid tokens. |
+| Dropout, default 0.25 | Tree encoder, trace encoder, Petri encoder, decoder | Reduces co-adaptation of hidden units and makes the stochastic training forward pass noisier. |
+| AdamW weight decay, default `1e-3` | Optimizer | Penalizes large weights independently of the adaptive gradient update. |
+| Label smoothing, default 0.08 | Tree-token cross-entropy | Prevents the decoder from becoming overconfident on the exact target token while still respecting grammar-valid tokens. |
 | KL regularization, weight 0.001 | Latent distributions | Encourages bounded, approximately normal latent codes. |
 | Stochastic latent sampling | Training forward pass | Adds latent noise during training; validation uses deterministic means. |
 | Latent mean alignment | Shared latent space | Forces equivalent modalities to agree, reducing the chance that one encoder memorizes modality-specific artifacts unrelated to behavior. |
-| Cross-modal contrastive loss | Shared latent space | Uses other mini-batch samples as negatives and encourages paired modalities to be closer than unrelated processes. |
+| Cross-modal contrastive loss | Shared latent space | Uses other behavior families as negatives and all rows with the same behavior ID as positives. |
+| Activity remapping, default probability 0.5 | Training batches | Applies consistent within-family label permutations to discourage memorization of arbitrary labels. |
 | Grammar masking | Decoder output space | Removes invalid process-tree continuations from the hypothesis space. |
 | Validation-loss LR scheduling | Optimizer | Reduces learning rate when validation improvement stalls. |
 | Early stopping | Training loop | Stops training when validation loss no longer improves. |
 | Best-checkpoint retention | Checkpointing | Preserves the model from the best validation epoch even if later epochs overfit. |
 | Canonicalized labels and commutative child order | Data representation | Reduces memorization of arbitrary label names and equivalent XOR/AND child permutations. |
 
-Important limitation: the split generator does not explicitly remove duplicate or behaviorally equivalent process trees across the training, validation, and test files. For a formal experimental study, it would be prudent to quantify duplicate or near-duplicate rates across splits, especially if using small datasets or shallow generation settings.
+Important limitation: the split generator keeps behavior families inside one split, but it does not explicitly remove duplicate or behaviorally equivalent languages across the training, validation, and test files. For a formal experimental study, it would be prudent to quantify duplicate or near-duplicate rates across splits.
 
 ---
 
@@ -1038,8 +1050,8 @@ This figure makes clear that the test split is outside the training loop.
 
 ## 10. Concise methods-style summary
 
-Synthetic paired process-mining samples are generated from randomly sampled block-structured process trees. Each tree is canonicalized, converted to a Petri net using `pm4py`, and simulated to produce a fixed number of traces. The resulting process tree, event log, and Petri graph are serialized as aligned triples and split into training, validation, and test files. The default split sizes are 2000, 256, and 256 samples.
+Synthetic paired process-mining samples are generated as behavior families. Each family has a canonical process tree target, sampled event-log traces, and two Petri-net representations, including controlled exact-equivalent alternatives. The resulting process tree, event log, Petri graph, and behavior-family identifier are serialized as aligned triples and split family-wise into training, validation, and test files. The default split sizes are 8192, 1024, and 1024 rows.
 
 The model contains three modality-specific encoders: a GRU tree encoder, a hierarchical GRU-plus-attention trace encoder, and a message-passing Petri graph encoder. Each encoder outputs a diagonal Gaussian latent distribution in a shared latent space. A shared GRU decoder, initialized from a sampled or deterministic latent vector, predicts prefix-encoded process-tree tokens under a hand-coded grammar mask.
 
-Training uses teacher forcing and optimizes three grammar-masked sequence losses: tree-to-tree reconstruction, trace-to-tree translation, and Petri-to-tree translation. These are augmented with latent mean alignment, a symmetric cross-modal contrastive objective, and weak KL regularization. Optimization uses AdamW, dropout, label smoothing, gradient clipping, validation-based learning-rate reduction, best-checkpoint retention, and early stopping. The validation split controls learning-rate scheduling and stopping; the test split is reserved for final loss, decoding, discovery-quality comparison against Inductive Miner, retrieval, and embedding-quality evaluation.
+Training uses teacher forcing and optimizes three grammar-masked sequence losses: tree-to-tree reconstruction, trace-to-tree translation, and Petri-to-tree translation. These are augmented with latent mean alignment, a symmetric multi-positive cross-modal contrastive objective, and weak KL regularization. Optimization uses AdamW, dropout, label smoothing, activity remapping, gradient clipping, validation-based learning-rate reduction, best-checkpoint retention, and early stopping. The validation split controls learning-rate scheduling and stopping; the test split is reserved for final loss, decoding, discovery-quality comparison against Inductive Miner, retrieval, and embedding-quality evaluation.
