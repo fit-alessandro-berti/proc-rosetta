@@ -108,9 +108,8 @@ Inductive Miner, and alignment-based conformance metrics.
 
 ## Multimodal Process Studio
 
-The repository includes a five-view Streamlit application for interactive
-artifact inspection, shared-latent analysis, translation, evaluation, and
-checkpoint-history review:
+The repository includes a four-view Streamlit application for interactive
+artifact inspection, shared-latent analysis, translation, and checkpoint-history review:
 
 ```bash
 streamlit run streamlit_app.py
@@ -122,19 +121,42 @@ Checkpoint upload is intentionally disabled: PyTorch checkpoint files are
 treated as trusted executable content, so browser users may select only files
 already installed by the server operator.
 
+### Docker with NGINX
+
+The Compose stack builds Streamlit as an unprivileged application container and
+publishes it only through an NGINX reverse proxy. During the image build, a
+local `checkpoints/` directory containing `.pt` files is copied into the image.
+If no local checkpoint is present, the build downloads and safely extracts
+`https://www.alessandroberti.it/checkpoint_rosetta_latest.tar.gz` instead.
+
+```bash
+docker compose up --build --detach
+```
+
+Open `http://localhost:8080`. To publish another host port:
+
+```bash
+PROC_ROSETTA_PORT=80 docker compose up --build --detach
+```
+
+Stop the stack with `docker compose down`. NGINX forwards Streamlit's WebSocket
+connection and accepts artifact uploads up to the application's 50 MiB limit.
+The fallback URL can be replaced with `PROC_ROSETTA_CHECKPOINT_URL`; set
+`PROC_ROSETTA_CHECKPOINT_SHA256` as well to require an exact archive checksum.
+Because checkpoints are baked into the image, rebuild it when they change.
+
 The studio provides:
 
 - pre-inference XES, PTML, and PNML previews;
 - explicit canonical-label maps, sampling, clipping, vocabulary, arity, and
   node-limit diagnostics;
-- a process-group workspace with individually progressive artifact encoding;
+- a process-group workspace with automatic encoding after artifact import;
 - cosine similarity, PCA, same-group connections, agreement, and nearest-neighbor views;
 - checkpoint-specific synthetic reference galleries, fused group means, and exploratory latent interpolation;
 - token-by-token grammar-masked decoding with separate EOS, syntax, arity,
   vocabulary, and Petri-conversion validation;
 - experimental weighted fusion and reproducible VAE latent-sampling galleries;
 - PTML, derived PNML, embedding, validation-report, and complete-workspace exports;
-- progressive neural-loss, retrieval, decode/behavior, Inductive Miner, and embedding-baseline evaluation; and
 - checkpoint configuration and training-history inspection.
 
 The current external PNML inference path intentionally matches the direct
