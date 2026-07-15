@@ -113,9 +113,9 @@ Start by recreating synthetic training, validation, and test splits:
 ```bash
 ./sample.py \
   --data-dir data \
-  --train-count 4000 \
-  --validation-count 512 \
-  --test-count 512 \
+  --train-count 8192 \
+  --validation-count 1024 \
+  --test-count 1024 \
   --max-activities 30 \
   --traces-per-sample 16
 ```
@@ -130,13 +130,20 @@ data/
   test/samples.jsonl
 ```
 
+These defaults correspond to 4,096 independent training behavior families and
+512 families in each evaluation split with the standard two representations
+per family. Under balanced motif weights that gives 1,024 training families and
+128 validation/test families per motif. The larger evaluation splits are
+intentional: they keep per-motif and per-representation estimates meaningful
+for the more heterogeneous family, sampling, and noise strata.
+
 Counts still refer to flattened samples, preserving the earlier command shape.
 Consecutive rows are alternate representations of one behavior and a behavior
 never crosses split boundaries. Useful generator controls include:
 
 ```bash
 ./sample.py --preset smoke --train-count 32 --validation-count 8 --test-count 8
-./sample.py --train-families 2000 --validation-families 256 --test-families 256
+./sample.py --train-families 4096 --validation-families 512 --test-families 512
 ./sample.py --preset equivalence_train --log-views-per-behavior 2
 ./sample.py --preset nonblock_ood
 ./sample.py --preset noise_ood

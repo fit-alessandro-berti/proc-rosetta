@@ -13,9 +13,14 @@ def test_default_sample_and_train_values_match_recommended_run():
     train_args = parser.parse_args(["train"])
     split_counts = split_counts_from_args(sample_args)
 
-    assert split_counts.training == 4000
-    assert split_counts.validation == 512
-    assert split_counts.test == 512
+    assert split_counts.training == 8192
+    assert split_counts.validation == 1024
+    assert split_counts.test == 1024
+    rows_per_family = 2
+    active_motifs = 4
+    assert split_counts.training // rows_per_family // active_motifs == 1024
+    assert split_counts.validation // rows_per_family // active_motifs == 128
+    assert split_counts.test // rows_per_family // active_motifs == 128
     assert sample_args.max_activities == 30
     assert sample_args.traces_per_sample == 16
     assert train_args.epochs == 100

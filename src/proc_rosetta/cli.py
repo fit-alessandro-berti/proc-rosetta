@@ -301,17 +301,17 @@ def split_counts_from_args(
         training=(
             _positive(args.train_families, 1, "train-families") * rows_per_family
             if args.train_families is not None
-            else _positive(train_count, default=4000, name="train-count")
+            else _positive(train_count, default=8192, name="train-count")
         ),
         validation=(
             _positive(args.validation_families, 1, "validation-families") * rows_per_family
             if args.validation_families is not None
-            else _positive(args.validation_count, default=512, name="validation-count")
+            else _positive(args.validation_count, default=1024, name="validation-count")
         ),
         test=(
             _positive(args.test_families, 1, "test-families") * rows_per_family
             if args.test_families is not None
-            else _positive(args.test_count, default=512, name="test-count")
+            else _positive(args.test_count, default=1024, name="test-count")
         ),
     )
 
