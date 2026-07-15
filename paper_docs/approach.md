@@ -108,7 +108,7 @@ make_node(depth)
 
 Activity leaves are initially named `a0`, `a1`, etc. After the tree is generated, activity labels are canonicalized to `A0`, `A1`, ... in order of first occurrence. This makes the synthetic data approximately invariant to arbitrary activity-name choices. If the generated tree contains fewer than two unique activity labels, the code attempts to make the sample less trivial by wrapping the tree in a sequential composition with an additional generated activity leaf. Because the leaf sampler itself can reuse an existing activity label, this is best understood as a heuristic rather than a strict duplicate-label guarantee.
 
-Under the default `behavior_families` generator, controlled families are balanced across four motifs: ordinary tree/isomorphic renaming, duplicate visible prefix versus silent routing, true concurrency versus explicit interleaving, and a non-free-choice M-pattern. Each family has a shared canonical tree target and two representation rows with the same `equivalence_id`.
+Under the default `behavior_families` generator, each behavior is written as two rows with the same canonical tree target and the same visible traces, but with different Petri-net graphs. Some pairs differ only by node names; others use different internal routing or interleaving while accepting the same visible traces. The two rows share the same `equivalence_id`.
 
 Two structural canonicalizations are important:
 
