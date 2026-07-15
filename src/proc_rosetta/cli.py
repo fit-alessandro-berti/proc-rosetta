@@ -80,6 +80,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Comma-separated KIND=WEIGHT values for behavior-family motifs.",
     )
+    sample.add_argument(
+        "--min-families-per-motif",
+        type=int,
+        default=None,
+        help="Minimum behavior families for every positive-weight motif in every split.",
+    )
+    sample.add_argument(
+        "--class-coverage-mode",
+        choices=["strict", "best_effort"],
+        default=None,
+        help="Fail on infeasible class quotas (strict) or record deficits (best_effort).",
+    )
 
     train = subparsers.add_parser("train", help="train the first-stage multimodal model")
     train.add_argument("--data-dir", default="data")
@@ -140,6 +152,15 @@ def synthetic_config_from_args(args: argparse.Namespace) -> SyntheticConfig:
         else config.motif_weights
     )
     overrides: dict[str, object] = {"motif_weights": motif_weights}
+    if args.min_families_per_motif is not None:
+        if args.min_families_per_motif < 0:
+            raise ValueError("min-families-per-motif must be non-negative")
+        overrides["min_families_per_motif"] = {
+            split: args.min_families_per_motif
+            for split in ("training", "validation", "test")
+        }
+    if args.class_coverage_mode is not None:
+        overrides["class_coverage_mode"] = args.class_coverage_mode
     defaults = {
         "max_depth": 3,
         "max_activities": DEFAULT_MAX_ACTIVITIES,

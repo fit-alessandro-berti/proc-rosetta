@@ -145,11 +145,29 @@ never crosses split boundaries. Useful generator controls include:
 ./sample.py --generator isolated  # legacy isolated triples
 ```
 
+Behavior-family splits use deterministic class quotas rather than independent
+random motif draws. By default, strict coverage requires at least 8 behavior
+families per positive-weight motif in training and 4 per motif in validation
+and test. Counts must describe complete families so every representation slot
+receives the same coverage. Change the thresholds in the nested
+`class_coverage.min_families_per_motif` configuration or uniformly from the
+command line:
+
+```bash
+./sample.py --min-families-per-motif 12
+```
+
+An infeasible strict request fails before existing data is replaced. Tiny
+diagnostic datasets can opt into `--class-coverage-mode best_effort`; their
+manifest records any motif or representation-slot deficits. Every split's
+metadata includes planned and actual motif-family counts, flattened motif ×
+representation counts, and a machine-checkable `meets_minimum` result.
+
 Additional evaluation presets include `iid_behavior`, `equivalence_seen`,
 `equivalence_unseen`, `scale_ood`, `sampling_ood`, and `loops_bounded`.
 
-Generator JSON uses nested `motifs`, `representations`, `logs`, and
-`validation` objects. Metadata records deterministic seeds, transformations,
+Generator JSON uses nested `motifs`, `class_coverage`, `representations`,
+`logs`, and `validation` objects. Metadata records deterministic seeds, transformations,
 structural statistics, and exact/bounded language certificates.
 Log modes include uniform, resampled, long-tail, sparse, incomplete, and noisy;
 noisy logs retain exact edit provenance.

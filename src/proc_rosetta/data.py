@@ -224,6 +224,23 @@ def read_samples_jsonl(path: str | Path, show_progress: bool = False) -> list[Pr
 
 def sample_statistics(samples: Sequence[ProcessSample]) -> dict[str, Any]:
     trace_lengths = [len(trace) for sample in samples for trace in sample.traces]
+    family_motifs: dict[str, str] = {}
+    for sample in samples:
+        motif = str(sample.metadata.get("motif", "unknown"))
+        existing = family_motifs.setdefault(sample.equivalence_id, motif)
+        if existing != motif:
+            raise ValueError(
+                f"behavior {sample.equivalence_id} has inconsistent motif labels"
+            )
+    motif_representation_counts: dict[str, dict[str, int]] = {}
+    motif_representation_slot_counts: dict[str, dict[str, int]] = {}
+    for sample in samples:
+        motif = str(sample.metadata.get("motif", "unknown"))
+        counts = motif_representation_counts.setdefault(motif, {})
+        counts[sample.representation_kind] = counts.get(sample.representation_kind, 0) + 1
+        slot = str(sample.metadata.get("representation_slot", "unknown"))
+        slot_counts = motif_representation_slot_counts.setdefault(motif, {})
+        slot_counts[slot] = slot_counts.get(slot, 0) + 1
     result: dict[str, Any] = {
         "count": len(samples),
         "avg_tree_size": _mean(sample.tree.size() for sample in samples),
@@ -233,13 +250,86 @@ def sample_statistics(samples: Sequence[ProcessSample]) -> dict[str, Any]:
         "max_petri_nodes": max((sample.petri_graph.num_nodes for sample in samples), default=0),
         "max_petri_edges": max((sample.petri_graph.num_edges for sample in samples), default=0),
         "behavior_count": len({sample.equivalence_id for sample in samples}),
+        "family_counts_by_motif": dict(
+            sorted(_counts(family_motifs.values()).items())
+        ),
+        "sample_counts_by_motif": dict(
+            sorted(_counts(str(sample.metadata.get("motif", "unknown")) for sample in samples).items())
+        ),
         "representation_counts": dict(
             sorted(
                 _counts(sample.representation_kind for sample in samples).items()
             )
         ),
+        "motif_representation_counts": {
+            motif: dict(sorted(counts.items()))
+            for motif, counts in sorted(motif_representation_counts.items())
+        },
+        "motif_representation_slot_counts": {
+            motif: dict(sorted(counts.items()))
+            for motif, counts in sorted(motif_representation_slot_counts.items())
+        },
     }
     return result
+
+
+def class_coverage_report(
+    samples: Sequence[ProcessSample],
+    config: SyntheticConfig,
+    seed: int,
+    split: str,
+) -> dict[str, Any]:
+    from proc_rosetta.families import active_motifs, motif_quota_plan
+
+    statistics = sample_statistics(samples)
+    family_count = int(statistics["behavior_count"])
+    _, planned, minimum, planned_meets_minimum = motif_quota_plan(
+        family_count, config, seed, split
+    )
+    actual = {
+        str(key): int(value)
+        for key, value in dict(statistics["family_counts_by_motif"]).items()
+    }
+    active = active_motifs(config.motif_weights)
+    deficits = {
+        motif: max(0, minimum - actual.get(motif, 0))
+        for motif in active
+        if actual.get(motif, 0) < minimum
+    }
+    minimum_rows_per_slot = minimum * config.log_views_per_behavior
+    slot_counts = dict(statistics["motif_representation_slot_counts"])
+    representation_slot_deficits: dict[str, dict[str, int]] = {}
+    for motif in active:
+        per_motif = dict(slot_counts.get(motif, {}))
+        missing = {
+            str(slot): max(0, minimum_rows_per_slot - int(per_motif.get(str(slot), 0)))
+            for slot in range(config.variants_per_behavior)
+            if int(per_motif.get(str(slot), 0)) < minimum_rows_per_slot
+        }
+        if missing:
+            representation_slot_deficits[motif] = missing
+    exact_quota_match = all(actual.get(motif, 0) == planned[motif] for motif in active)
+    meets_minimum = not deficits and not representation_slot_deficits
+    report: dict[str, Any] = {
+        "mode": config.class_coverage_mode,
+        "unit": "behavior_family",
+        "active_motifs": list(active),
+        "minimum_families_per_motif": minimum,
+        "planned_family_counts_by_motif": dict(sorted(planned.items())),
+        "actual_family_counts_by_motif": dict(sorted(actual.items())),
+        "sample_counts_by_motif": statistics["sample_counts_by_motif"],
+        "motif_representation_counts": statistics["motif_representation_counts"],
+        "motif_representation_slot_counts": slot_counts,
+        "minimum_rows_per_representation_slot": minimum_rows_per_slot,
+        "representation_slot_deficits_by_motif": representation_slot_deficits,
+        "deficits_by_motif": dict(sorted(deficits.items())),
+        "planned_meets_minimum": planned_meets_minimum,
+        "exact_quota_match": exact_quota_match,
+        "meets_minimum": meets_minimum,
+    }
+    if config.class_coverage_mode == "strict" and (not meets_minimum or not exact_quota_match):
+        raise RuntimeError(f"strict class coverage failed for {split}: {report}")
+    return report
 
 
 def recreate_data_splits(
@@ -251,6 +341,22 @@ def recreate_data_splits(
     data_dir = Path(data_dir)
     counts = counts or SplitCounts()
     config = config or SyntheticConfig()
+    if config.generator == "behavior_families":
+        from proc_rosetta.families import motif_quota_plan
+
+        if config.variants_per_behavior <= 0 or config.log_views_per_behavior <= 0:
+            raise ValueError(
+                "variants_per_behavior and log_views_per_behavior must be positive"
+            )
+        rows_per_family = config.variants_per_behavior * config.log_views_per_behavior
+        for split, count in counts.items():
+            if config.class_coverage_mode == "strict" and count % rows_per_family:
+                raise ValueError(
+                    f"strict class coverage requires the {split} sample count ({count}) "
+                    f"to be divisible by rows_per_family ({rows_per_family})"
+                )
+            family_count = (count + rows_per_family - 1) // rows_per_family
+            motif_quota_plan(family_count, config, seed, split)
     if data_dir.exists():
         shutil.rmtree(data_dir)
     data_dir.mkdir(parents=True)
@@ -283,9 +389,15 @@ def recreate_data_splits(
             samples = generate_family_samples(count, config, seed, split=split)
         path = split_samples_path(data_dir, split)
         write_samples_jsonl(path, samples)
+        statistics = sample_statistics(samples)
         split_metadata[split] = {
             "path": str(path.relative_to(data_dir)),
-            "statistics": sample_statistics(samples),
+            "statistics": statistics,
+            "class_coverage": (
+                class_coverage_report(samples, config, seed, split)
+                if config.generator == "behavior_families"
+                else {"mode": "not_applicable", "reason": "isolated_generator"}
+            ),
         }
 
     metadata = {

@@ -33,6 +33,10 @@ class SyntheticConfig:
             "m_nonfreechoice": 0.25,
         }
     )
+    min_families_per_motif: dict[str, int] = field(
+        default_factory=lambda: {"training": 8, "validation": 4, "test": 4}
+    )
+    class_coverage_mode: str = "strict"
     exact_language_max_states: int = 5000
     exact_language_max_traces: int = 10000
     bounded_visible_length: int = 20
@@ -76,6 +80,10 @@ class SyntheticConfig:
                 "traces_per_log": self.traces_per_sample,
             },
             "motifs": dict(self.motif_weights),
+            "class_coverage": {
+                "mode": self.class_coverage_mode,
+                "min_families_per_motif": dict(self.min_families_per_motif),
+            },
             "validation": {
                 "exact_language_max_states": self.exact_language_max_states,
                 "exact_language_max_traces": self.exact_language_max_traces,
@@ -96,10 +104,12 @@ class SyntheticConfig:
         logs = data.get("logs", {})
         validation = data.get("validation", {})
         noise = data.get("noise", {})
+        coverage = data.get("class_coverage", {})
         representations = representations if isinstance(representations, dict) else {}
         logs = logs if isinstance(logs, dict) else {}
         validation = validation if isinstance(validation, dict) else {}
         noise = noise if isinstance(noise, dict) else {}
+        coverage = coverage if isinstance(coverage, dict) else {}
         motif_weights = data.get("motifs", {})
         motif_weights = motif_weights if isinstance(motif_weights, dict) else {}
         return SyntheticConfig(
@@ -130,6 +140,18 @@ class SyntheticConfig:
                 "concurrent_vs_interleaved": 0.25,
                 "m_nonfreechoice": 0.25,
             },
+            min_families_per_motif={
+                str(key): int(value)
+                for key, value in (
+                    coverage.get(
+                        "min_families_per_motif",
+                        {"training": 8, "validation": 4, "test": 4},
+                    )
+                    if isinstance(coverage.get("min_families_per_motif", {}), dict)
+                    else {"training": 8, "validation": 4, "test": 4}
+                ).items()
+            },
+            class_coverage_mode=str(coverage.get("mode", "strict")),
             exact_language_max_states=int(
                 validation.get("exact_language_max_states", 5000)
             ),
@@ -169,6 +191,7 @@ class SyntheticConfig:
                     "concurrent_vs_interleaved": 1.0,
                     "m_nonfreechoice": 1.0,
                 },
+                "class_coverage": {"mode": "best_effort"},
             },
             "balanced_train": {},
             "iid_behavior": {},

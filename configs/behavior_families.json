@@ -11,6 +11,14 @@
     "concurrent_vs_interleaved": 0.25,
     "m_nonfreechoice": 0.25
   },
+  "class_coverage": {
+    "mode": "strict",
+    "min_families_per_motif": {
+      "training": 8,
+      "validation": 4,
+      "test": 4
+    }
+  },
   "representations": {
     "variants_per_behavior": 2,
     "exact_equivalence_only_for_training": true

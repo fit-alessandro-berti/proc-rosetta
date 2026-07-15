@@ -1,5 +1,6 @@
 import json
 import csv
+import pytest
 
 from proc_rosetta.cli import main
 from proc_rosetta.cli import build_parser, split_counts_from_args
@@ -42,6 +43,8 @@ def test_sample_cli_recreates_data_splits(tmp_path, capsys):
             "1",
             "--test-count",
             "1",
+            "--class-coverage-mode",
+            "best_effort",
             "--seed",
             "5",
             "--max-depth",
@@ -59,6 +62,72 @@ def test_sample_cli_recreates_data_splits(tmp_path, capsys):
     assert (data_dir / "validation" / "samples.jsonl").exists()
     assert (data_dir / "test" / "samples.jsonl").exists()
     assert metadata["splits"]["training"]["statistics"]["count"] == 2
+    coverage = metadata["splits"]["training"]["class_coverage"]
+    assert coverage["mode"] == "best_effort"
+    assert not coverage["meets_minimum"]
+    assert coverage["deficits_by_motif"]
+
+
+def test_strict_sample_coverage_hits_each_motif_and_representation(tmp_path, capsys):
+    data_dir = tmp_path / "covered-data"
+
+    assert main(
+        [
+            "sample",
+            "--data-dir",
+            str(data_dir),
+            "--train-count",
+            "8",
+            "--validation-count",
+            "8",
+            "--test-count",
+            "8",
+            "--min-families-per-motif",
+            "1",
+            "--max-depth",
+            "2",
+            "--traces-per-sample",
+            "2",
+        ]
+    ) == 0
+
+    metadata = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    for split in ("training", "validation", "test"):
+        coverage = metadata["splits"][split]["class_coverage"]
+        assert coverage["meets_minimum"]
+        assert coverage["exact_quota_match"]
+        assert not coverage["representation_slot_deficits_by_motif"]
+        assert set(coverage["actual_family_counts_by_motif"].values()) == {1}
+        assert all(
+            len(representation_counts) == 2
+            for representation_counts in coverage["motif_representation_counts"].values()
+        )
+
+
+def test_strict_sample_coverage_rejects_infeasible_counts_before_replacing_data(
+    tmp_path,
+):
+    data_dir = tmp_path / "existing-data"
+    data_dir.mkdir()
+    marker = data_dir / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="cannot provide at least"):
+        main(
+            [
+                "sample",
+                "--data-dir",
+                str(data_dir),
+                "--train-count",
+                "2",
+                "--validation-count",
+                "2",
+                "--test-count",
+                "2",
+            ]
+        )
+
+    assert marker.read_text(encoding="utf-8") == "keep"
 
 
 def test_train_and_test_cli_smoke(tmp_path, capsys):
@@ -76,6 +145,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
             "1",
             "--test-count",
             "1",
+            "--class-coverage-mode",
+            "best_effort",
             "--max-depth",
             "2",
             "--max-activities",

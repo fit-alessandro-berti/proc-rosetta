@@ -161,11 +161,87 @@ def stable_seed(global_seed: int, *parts: object) -> int:
     return int.from_bytes(digest, byteorder="big", signed=False)
 
 
+def active_motifs(weights: dict[str, float]) -> tuple[str, ...]:
+    motifs = tuple(name for name in MOTIF_KINDS if float(weights.get(name, 0.0)) > 0)
+    unknown = sorted(
+        name
+        for name, weight in weights.items()
+        if float(weight) > 0 and name not in MOTIF_KINDS
+    )
+    if unknown:
+        raise ValueError(f"unknown positive-weight motifs: {', '.join(unknown)}")
+    if not motifs:
+        raise ValueError("at least one known motif must have positive weight")
+    return motifs
+
+
+def allocate_motif_quotas(
+    family_count: int,
+    weights: dict[str, float],
+    minimum_per_motif: int,
+    *,
+    strict: bool,
+) -> dict[str, int]:
+    """Allocate deterministic weighted quotas while reserving class minima."""
+
+    if family_count < 0:
+        raise ValueError("family_count must be non-negative")
+    if minimum_per_motif < 0:
+        raise ValueError("minimum_per_motif must be non-negative")
+    motifs = active_motifs(weights)
+    required = minimum_per_motif * len(motifs)
+    if strict and family_count < required:
+        raise ValueError(
+            f"{family_count} families cannot provide at least {minimum_per_motif} "
+            f"families for each of {len(motifs)} active motifs; need at least {required}"
+        )
+
+    effective_minimum = min(minimum_per_motif, family_count // len(motifs))
+    quotas = {motif: effective_minimum for motif in motifs}
+    remaining = family_count - effective_minimum * len(motifs)
+    total_weight = sum(max(0.0, float(weights[motif])) for motif in motifs)
+    raw = {
+        motif: remaining * max(0.0, float(weights[motif])) / total_weight
+        for motif in motifs
+    }
+    for motif in motifs:
+        quotas[motif] += int(raw[motif])
+    leftovers = family_count - sum(quotas.values())
+    order = sorted(motifs, key=lambda motif: (-(raw[motif] % 1), motif))
+    for motif in order[:leftovers]:
+        quotas[motif] += 1
+    return quotas
+
+
+def motif_quota_plan(
+    family_count: int,
+    config: Any,
+    seed: int,
+    split: str,
+) -> tuple[list[str], dict[str, int], int, bool]:
+    minimums = getattr(config, "min_families_per_motif", {})
+    minimum = int(minimums.get(split, 0)) if isinstance(minimums, dict) else 0
+    mode = str(getattr(config, "class_coverage_mode", "strict"))
+    if mode not in {"strict", "best_effort"}:
+        raise ValueError("class_coverage_mode must be 'strict' or 'best_effort'")
+    quotas = allocate_motif_quotas(
+        family_count,
+        _motif_weights(config),
+        minimum,
+        strict=mode == "strict",
+    )
+    plan = [motif for motif in MOTIF_KINDS for _ in range(quotas.get(motif, 0))]
+    random.Random(stable_seed(seed, split, "motif-quota-plan")).shuffle(plan)
+    meets_minimum = all(value >= minimum for value in quotas.values())
+    return plan, quotas, minimum, meets_minimum
+
+
 def generate_behavior_family(
     config: Any,
     family_index: int,
     seed: int,
     split: str = "training",
+    motif: str | None = None,
 ) -> BehaviorFamily:
     family_seed = stable_seed(seed, split, family_index, "family")
     seed_bundle = {
@@ -176,7 +252,10 @@ def generate_behavior_family(
         "noise": stable_seed(family_seed, "noise"),
     }
     rng = random.Random(seed_bundle["model"])
-    motif = _weighted_choice(rng, _motif_weights(config))
+    if motif is None:
+        motif = _weighted_choice(rng, _motif_weights(config))
+    elif motif not in MOTIF_KINDS:
+        raise ValueError(f"unknown motif: {motif}")
     behavior_id = f"{split}-{_stable_id(seed, split, family_index)}"
 
     if motif == "duplicate_vs_silent":
@@ -368,7 +447,7 @@ def flatten_behavior_family(family: BehaviorFamily) -> list[Any]:
 
     rows: list[ProcessSample] = []
     for log_view in family.log_views:
-        for variant in family.model_variants:
+        for representation_slot, variant in enumerate(family.model_variants):
             rows.append(
                 ProcessSample(
                     tree=family.canonical_tree,
@@ -381,6 +460,7 @@ def flatten_behavior_family(family: BehaviorFamily) -> list[Any]:
                     equivalence_level=variant.equivalence_level,
                     metadata={
                         **family.metadata,
+                        "representation_slot": representation_slot,
                         "sampling_mode": log_view.sampling_mode,
                         "trace_edits": [
                             [edit.to_dict() for edit in trace_edits]
@@ -404,27 +484,50 @@ def generate_family_samples(
     seed: int,
     split: str,
 ) -> list[Any]:
+    if count < 0:
+        raise ValueError("count must be non-negative")
+    if count == 0:
+        return []
+    rows_per_family = max(1, int(getattr(config, "variants_per_behavior", 2))) * max(
+        1, int(getattr(config, "log_views_per_behavior", 1))
+    )
+    mode = str(getattr(config, "class_coverage_mode", "strict"))
+    if mode == "strict" and split in getattr(config, "min_families_per_motif", {}):
+        if count % rows_per_family:
+            raise ValueError(
+                f"strict class coverage requires the {split} sample count ({count}) to "
+                f"be divisible by rows_per_family ({rows_per_family}); use family counts "
+                "or class_coverage mode 'best_effort'"
+            )
+    family_count = (count + rows_per_family - 1) // rows_per_family
+    motif_plan, _, _, _ = motif_quota_plan(family_count, config, seed, split)
     rows: list[Any] = []
     family_index = 0
     attempts = 0
     max_attempts = max(100, count * 20)
-    while len(rows) < count and attempts < max_attempts:
-        attempts += 1
-        try:
-            family = generate_behavior_family(config, family_index, seed, split=split)
-        except (RuntimeError, ValueError):
+    for planned_motif in motif_plan:
+        accepted = False
+        while not accepted and attempts < max_attempts:
+            attempts += 1
+            try:
+                family = generate_behavior_family(
+                    config, family_index, seed, split=split, motif=planned_motif
+                )
+            except (RuntimeError, ValueError):
+                family_index += 1
+                continue
             family_index += 1
-            continue
-        if (
-            split == "training"
-            and bool(getattr(config, "exact_equivalence_only_for_training", True))
-            and family.equivalence_certificate.status != "exact"
-        ):
-            family_index += 1
-            continue
-        family_rows = flatten_behavior_family(family)
-        rows.extend(family_rows[: count - len(rows)])
-        family_index += 1
+            if (
+                split == "training"
+                and bool(getattr(config, "exact_equivalence_only_for_training", True))
+                and family.equivalence_certificate.status != "exact"
+            ):
+                continue
+            family_rows = flatten_behavior_family(family)
+            rows.extend(family_rows[: count - len(rows)])
+            accepted = True
+        if not accepted:
+            break
     if len(rows) != count:
         raise RuntimeError(f"generated {len(rows)} of {count} requested family samples")
     return rows
