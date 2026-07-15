@@ -6,9 +6,10 @@ Petri nets, aligns them in one latent process-behavior space, and decodes latent
 vectors back into grammar-valid process trees. Decoded trees can then be
 converted to Petri nets with PM4Py.
 
-The current implementation is intentionally conservative: process trees are the
-output language, and arbitrary Petri-net decoding is not implemented. This keeps
-generated models block-structured and easier to validate.
+Process trees remain the output language, but the input corpus now includes
+matched non-block and alternative Petri-net representations. Each generated
+behavior family has a canonical tree, shared log views, multiple Petri-net
+realizations, and a visible-trace-language equivalence certificate.
 
 ## Research Questions
 
@@ -34,12 +35,20 @@ claim that the neural model replaces mature discovery algorithms on real logs.
 
 ## What Is Implemented
 
-The synthetic training pipeline creates paired triples:
+The synthetic training pipeline creates behavior families and flattens them into
+grouped multimodal rows:
 
 ```text
-process tree -> PM4Py conversion -> Petri net -> typed PetriGraph
-process tree -> PM4Py playout    -> event log / traces
+one canonical behavior -> shared master trace pool -> one or more log views
+                       -> duplicate activity / silent-routing nets
+                       -> concurrent / explicit-interleaving nets
+                       -> block / non-free-choice M-pattern nets
+                       -> canonical / isomorphically renamed random nets
+                       -> optional exact prefix tries and tau refinements
 ```
+
+Controlled motifs are embedded in a configurable shared sequence context
+(`motif_context_size`) so matched experiments are not limited to tiny nets.
 
 Each sample contains:
 
@@ -47,6 +56,9 @@ Each sample contains:
 tree:        canonical process tree
 traces:      tuple of activity-label traces
 petri_graph: typed Petri-net graph with markings
+equivalence_id: behavior ID shared by every equivalent row
+model_variant_id / representation_kind / log_view_id
+equivalence_level and validation metadata
 ```
 
 The model contains:
@@ -65,6 +77,10 @@ The training objective combines:
 - latent mean alignment between modalities;
 - symmetric cross-modal contrastive alignment;
 - weak KL regularization.
+
+The contrastive objective is multi-positive: every row with the same behavior
+ID is a positive, and the training loader keeps multiple family views in the
+same batch. The Petri encoder also embeds visible transition labels.
 
 The default activity vocabulary supports `A0` through `A29`. If an old
 checkpoint was trained with fewer activity labels, retrain it before using logs
@@ -114,6 +130,30 @@ data/
   test/samples.jsonl
 ```
 
+Counts still refer to flattened samples, preserving the earlier command shape.
+Consecutive rows are alternate representations of one behavior and a behavior
+never crosses split boundaries. Useful generator controls include:
+
+```bash
+./sample.py --preset smoke --train-count 32 --validation-count 8 --test-count 8
+./sample.py --train-families 2000 --validation-families 256 --test-families 256
+./sample.py --preset equivalence_train --log-views-per-behavior 2
+./sample.py --preset nonblock_ood
+./sample.py --preset noise_ood
+./sample.py --motif-weights duplicate_vs_silent=1,m_nonfreechoice=1
+./sample.py --generator-config configs/behavior_families.json
+./sample.py --generator isolated  # legacy isolated triples
+```
+
+Additional evaluation presets include `iid_behavior`, `equivalence_seen`,
+`equivalence_unseen`, `scale_ood`, `sampling_ood`, and `loops_bounded`.
+
+Generator JSON uses nested `motifs`, `representations`, `logs`, and
+`validation` objects. Metadata records deterministic seeds, transformations,
+structural statistics, and exact/bounded language certificates.
+Log modes include uniform, resampled, long-tail, sparse, incomplete, and noisy;
+noisy logs retain exact edit provenance.
+
 Train the model:
 
 ```bash
@@ -139,6 +179,8 @@ Useful training controls:
 ./train.py --device cuda
 ./train.py --latent-dim 128 --hidden-dim 256
 ./train.py --dropout 0.2 --weight-decay 1e-4
+./train.py --views-per-family 2
+./train.py --no-group-aware-batches
 ```
 
 The tokenizer size is fixed by the data metadata stored when `sample.py` runs.
@@ -172,6 +214,8 @@ The test report includes:
   Inductive Miner using alignment fitness, precision, and F1;
 - behavioral distance summaries over the test logs;
 - cross-modal retrieval metrics;
+- behavior-family cosine, retrieval, equivalence margin, and distance by
+  representation pair;
 - learned embedding quality versus deterministic log and Petri baselines;
 - PM4Py Petri-net Node2Vec/Word2Vec baseline when available.
 
@@ -237,8 +281,8 @@ scripts/decode_ptml.py \
 External logs are canonicalized internally to `A0`, `A1`, ... in first-seen
 order. The XES and PTML decoding scripts restore original activity labels by
 default; pass `--keep-canonical-labels` to keep the canonical labels. The Petri
-graph encoder currently uses graph structure, node types, and markings; decoded
-PNML outputs therefore use the model's canonical activity labels.
+graph encoder uses graph structure, node types, markings, and visible transition
+labels; decoded PNML outputs use the model's canonical activity labels.
 
 If a decoded model is invalid or the decoder does not emit `<eos>` within the
 decode limit, the conversion script exits with a clear error instead of writing
@@ -246,9 +290,9 @@ an unusable `.ptml` file.
 
 ## Practical Limits
 
-- The model is trained on synthetic block-structured process trees. It can be
-  run on real XES logs, but out-of-distribution logs may produce poor or invalid
-  decodes.
+- The decoder still emits process trees for non-block Petri inputs. Behavioral
+  decode agreement is therefore more meaningful than exact tree syntax for
+  representation-ambiguous families.
 - The default script limits are `--max-traces 32` and `--max-trace-length 64`.
   Increase them for larger logs if memory allows.
 - A checkpoint can only encode activity labels covered by its tokenizer. The

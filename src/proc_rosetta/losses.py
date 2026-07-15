@@ -60,6 +60,7 @@ def latent_alignment_loss(dists: dict[str, LatentDistribution]) -> torch.Tensor:
 def cross_modal_contrastive_loss(
     dists: dict[str, LatentDistribution],
     temperature: float = 0.2,
+    positive_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
     names = list(dists)
     total = torch.zeros((), dtype=dists[names[0]].mu.dtype, device=dists[names[0]].mu.device)
@@ -69,12 +70,32 @@ def cross_modal_contrastive_loss(
             left = F.normalize(dists[left_name].mu, dim=-1)
             right = F.normalize(dists[right_name].mu, dim=-1)
             logits = left @ right.T / temperature
-            labels = torch.arange(logits.shape[0], device=logits.device)
+            if positive_mask is None:
+                mask = torch.eye(logits.shape[0], dtype=torch.bool, device=logits.device)
+            else:
+                mask = positive_mask.to(device=logits.device, dtype=torch.bool)
+                if mask.shape != logits.shape:
+                    raise ValueError(
+                        f"positive mask shape {tuple(mask.shape)} does not match "
+                        f"contrastive logits {tuple(logits.shape)}"
+                    )
             total = total + 0.5 * (
-                F.cross_entropy(logits, labels) + F.cross_entropy(logits.T, labels)
+                _multi_positive_info_nce(logits, mask)
+                + _multi_positive_info_nce(logits.T, mask.T)
             )
             pairs += 1
     return total / max(pairs, 1)
+
+
+def _multi_positive_info_nce(logits: torch.Tensor, positive_mask: torch.Tensor) -> torch.Tensor:
+    """InfoNCE where every row sharing a behavior ID is a valid positive."""
+
+    valid_rows = positive_mask.any(dim=1)
+    if not valid_rows.any():
+        return logits.sum() * 0.0
+    denominator = torch.logsumexp(logits, dim=1)
+    numerator = torch.logsumexp(logits.masked_fill(~positive_mask, -torch.inf), dim=1)
+    return (denominator[valid_rows] - numerator[valid_rows]).mean()
 
 
 def kl_divergence_loss(dists: dict[str, LatentDistribution]) -> torch.Tensor:
@@ -89,6 +110,7 @@ def multimodal_tree_loss(
     tree_tokens: torch.Tensor,
     pad_id: int = 0,
     weights: LossWeights | None = None,
+    positive_mask: torch.Tensor | None = None,
 ) -> dict[str, torch.Tensor]:
     weights = weights or LossWeights()
     targets = tree_tokens[:, 1:]
@@ -107,7 +129,7 @@ def multimodal_tree_loss(
         logits["petri"], targets, pad_id, label_smoothing=weights.label_smoothing
     )
     align = latent_alignment_loss(dists)
-    contrastive = cross_modal_contrastive_loss(dists)
+    contrastive = cross_modal_contrastive_loss(dists, positive_mask=positive_mask)
     kl = kl_divergence_loss(dists)
     total = (
         weights.tree_reconstruction * rec_tree

@@ -213,7 +213,10 @@ class ActivityTokenizer:
         return len(self.tokens)
 
     def encode_trace(self, trace: Sequence[str]) -> list[int]:
-        return [self.token_to_id[label] for label in trace]
+        # The generator can deliberately insert an out-of-alphabet event for
+        # robustness evaluation. ID 0 acts as the stable unknown embedding;
+        # sequence lengths still retain the event position.
+        return [self.token_to_id.get(label, self.pad_id) for label in trace]
 
     def encode_traces(self, traces: Sequence[Sequence[str]]) -> list[list[int]]:
         return [self.encode_trace(trace) for trace in traces]

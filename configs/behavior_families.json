@@ -1,0 +1,49 @@
+{
+  "generator": "behavior_families",
+  "max_depth": 3,
+  "max_activities": 30,
+  "max_arity": 3,
+  "curriculum_phase": 2,
+  "motif_context_size": 2,
+  "motifs": {
+    "ordinary_tree": 0.25,
+    "duplicate_vs_silent": 0.25,
+    "concurrent_vs_interleaved": 0.25,
+    "m_nonfreechoice": 0.25
+  },
+  "representations": {
+    "variants_per_behavior": 2,
+    "exact_equivalence_only_for_training": true
+  },
+  "logs": {
+    "log_views_per_behavior": 1,
+    "traces_per_log": 16,
+    "sampling_modes": [
+      "uniform_variants",
+      "resampled"
+    ]
+  },
+  "noise": {
+    "clean_fraction": 0.2,
+    "edit_count_weights": {
+      "1": 0.5,
+      "2": 0.3,
+      "3": 0.2
+    },
+    "operation_weights": {
+      "delete": 0.15,
+      "insert": 0.15,
+      "substitute": 0.15,
+      "swap": 0.15,
+      "repeat": 0.15,
+      "prefix_truncate": 0.1,
+      "suffix_truncate": 0.1,
+      "outside_insert": 0.05
+    }
+  },
+  "validation": {
+    "exact_language_max_states": 5000,
+    "exact_language_max_traces": 10000,
+    "bounded_visible_length": 20
+  }
+}

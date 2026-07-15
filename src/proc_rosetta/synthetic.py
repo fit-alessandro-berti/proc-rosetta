@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from proc_rosetta.pm4py_bridge import PetriGraph, simulate_traces, tree_to_petri_net
 from proc_rosetta.tree import NodeKind, ProcessTreeNode
@@ -19,6 +19,39 @@ class SyntheticConfig:
     curriculum_phase: int = 2
     reuse_activity_probability: float = 0.15
     leaf_probability: float = 0.35
+    motif_context_size: int = 2
+    generator: str = "behavior_families"
+    variants_per_behavior: int = 2
+    exact_equivalence_only_for_training: bool = True
+    log_views_per_behavior: int = 1
+    log_view_modes: tuple[str, ...] = ("uniform_variants", "resampled")
+    motif_weights: dict[str, float] = field(
+        default_factory=lambda: {
+            "ordinary_tree": 0.25,
+            "duplicate_vs_silent": 0.25,
+            "concurrent_vs_interleaved": 0.25,
+            "m_nonfreechoice": 0.25,
+        }
+    )
+    exact_language_max_states: int = 5000
+    exact_language_max_traces: int = 10000
+    bounded_visible_length: int = 20
+    noise_clean_fraction: float = 0.2
+    noise_edit_count_weights: dict[int, float] = field(
+        default_factory=lambda: {1: 0.5, 2: 0.3, 3: 0.2}
+    )
+    noise_operation_weights: dict[str, float] = field(
+        default_factory=lambda: {
+            "delete": 0.15,
+            "insert": 0.15,
+            "substitute": 0.15,
+            "swap": 0.15,
+            "repeat": 0.15,
+            "prefix_truncate": 0.1,
+            "suffix_truncate": 0.1,
+            "outside_insert": 0.05,
+        }
+    )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -29,19 +62,186 @@ class SyntheticConfig:
             "curriculum_phase": self.curriculum_phase,
             "reuse_activity_probability": self.reuse_activity_probability,
             "leaf_probability": self.leaf_probability,
+            "motif_context_size": self.motif_context_size,
+            "generator": self.generator,
+            "representations": {
+                "variants_per_behavior": self.variants_per_behavior,
+                "exact_equivalence_only_for_training": (
+                    self.exact_equivalence_only_for_training
+                ),
+            },
+            "logs": {
+                "log_views_per_behavior": self.log_views_per_behavior,
+                "sampling_modes": list(self.log_view_modes),
+                "traces_per_log": self.traces_per_sample,
+            },
+            "motifs": dict(self.motif_weights),
+            "validation": {
+                "exact_language_max_states": self.exact_language_max_states,
+                "exact_language_max_traces": self.exact_language_max_traces,
+                "bounded_visible_length": self.bounded_visible_length,
+            },
+            "noise": {
+                "clean_fraction": self.noise_clean_fraction,
+                "edit_count_weights": {
+                    str(key): value for key, value in self.noise_edit_count_weights.items()
+                },
+                "operation_weights": dict(self.noise_operation_weights),
+            },
         }
 
     @staticmethod
     def from_dict(data: dict[str, object]) -> "SyntheticConfig":
+        representations = data.get("representations", {})
+        logs = data.get("logs", {})
+        validation = data.get("validation", {})
+        noise = data.get("noise", {})
+        representations = representations if isinstance(representations, dict) else {}
+        logs = logs if isinstance(logs, dict) else {}
+        validation = validation if isinstance(validation, dict) else {}
+        noise = noise if isinstance(noise, dict) else {}
+        motif_weights = data.get("motifs", {})
+        motif_weights = motif_weights if isinstance(motif_weights, dict) else {}
         return SyntheticConfig(
             max_depth=int(data.get("max_depth", 3)),
             max_activities=int(data.get("max_activities", DEFAULT_MAX_ACTIVITIES)),
             max_arity=int(data.get("max_arity", 3)),
-            traces_per_sample=int(data.get("traces_per_sample", 16)),
+            traces_per_sample=int(logs.get("traces_per_log", data.get("traces_per_sample", 16))),
             curriculum_phase=int(data.get("curriculum_phase", 2)),
             reuse_activity_probability=float(data.get("reuse_activity_probability", 0.15)),
             leaf_probability=float(data.get("leaf_probability", 0.35)),
+            motif_context_size=int(data.get("motif_context_size", 2)),
+            generator=str(data.get("generator", "behavior_families")),
+            variants_per_behavior=int(representations.get("variants_per_behavior", 2)),
+            exact_equivalence_only_for_training=bool(
+                representations.get("exact_equivalence_only_for_training", True)
+            ),
+            log_views_per_behavior=int(logs.get("log_views_per_behavior", 1)),
+            log_view_modes=tuple(
+                str(value)
+                for value in logs.get("sampling_modes", ("uniform_variants", "resampled"))
+            ),
+            motif_weights={
+                str(key): float(value) for key, value in motif_weights.items()
+            }
+            or {
+                "ordinary_tree": 0.25,
+                "duplicate_vs_silent": 0.25,
+                "concurrent_vs_interleaved": 0.25,
+                "m_nonfreechoice": 0.25,
+            },
+            exact_language_max_states=int(
+                validation.get("exact_language_max_states", 5000)
+            ),
+            exact_language_max_traces=int(
+                validation.get("exact_language_max_traces", 10000)
+            ),
+            bounded_visible_length=int(validation.get("bounded_visible_length", 20)),
+            noise_clean_fraction=float(noise.get("clean_fraction", 0.2)),
+            noise_edit_count_weights={
+                int(key): float(value)
+                for key, value in (
+                    noise.get("edit_count_weights", {"1": 0.5, "2": 0.3, "3": 0.2})
+                    if isinstance(noise.get("edit_count_weights", {}), dict)
+                    else {"1": 0.5, "2": 0.3, "3": 0.2}
+                ).items()
+            },
+            noise_operation_weights={
+                str(key): float(value)
+                for key, value in (
+                    noise.get("operation_weights", SyntheticConfig().noise_operation_weights)
+                    if isinstance(noise.get("operation_weights", {}), dict)
+                    else SyntheticConfig().noise_operation_weights
+                ).items()
+            },
         )
+
+    @staticmethod
+    def preset(name: str) -> "SyntheticConfig":
+        presets: dict[str, dict[str, object]] = {
+            "smoke": {
+                "max_depth": 2,
+                "max_activities": 8,
+                "traces_per_sample": 4,
+                "motifs": {
+                    "ordinary_tree": 0.0,
+                    "duplicate_vs_silent": 1.0,
+                    "concurrent_vs_interleaved": 1.0,
+                    "m_nonfreechoice": 1.0,
+                },
+            },
+            "balanced_train": {},
+            "iid_behavior": {},
+            "equivalence_train": {
+                "motifs": {
+                    "ordinary_tree": 0.1,
+                    "duplicate_vs_silent": 0.3,
+                    "concurrent_vs_interleaved": 0.3,
+                    "m_nonfreechoice": 0.3,
+                },
+                "logs": {"log_views_per_behavior": 2},
+            },
+            "equivalence_test": {
+                "motifs": {
+                    "ordinary_tree": 0.0,
+                    "duplicate_vs_silent": 1.0,
+                    "concurrent_vs_interleaved": 1.0,
+                    "m_nonfreechoice": 1.0,
+                }
+            },
+            "equivalence_seen": {
+                "motifs": {
+                    "ordinary_tree": 0.0,
+                    "duplicate_vs_silent": 1.0,
+                    "concurrent_vs_interleaved": 1.0,
+                    "m_nonfreechoice": 1.0,
+                }
+            },
+            "equivalence_unseen": {
+                "motifs": {
+                    "ordinary_tree": 0.0,
+                    "duplicate_vs_silent": 1.0,
+                    "concurrent_vs_interleaved": 1.0,
+                    "m_nonfreechoice": 1.0,
+                },
+                "representations": {"variants_per_behavior": 4},
+            },
+            "nonblock_ood": {
+                "motifs": {"m_nonfreechoice": 1.0},
+            },
+            "scale_ood": {
+                "max_depth": 5,
+                "max_activities": DEFAULT_MAX_ACTIVITIES,
+                "traces_per_sample": 32,
+            },
+            "sampling_ood": {
+                "logs": {
+                    "log_views_per_behavior": 2,
+                    "sampling_modes": ["sparse", "long_tail"],
+                }
+            },
+            "noise_ood": {
+                "logs": {
+                    "log_views_per_behavior": 2,
+                    "sampling_modes": ["uniform_variants", "noisy"],
+                },
+                "noise": {
+                    "clean_fraction": 0.0,
+                    "edit_count_weights": {"2": 0.5, "3": 0.5},
+                },
+            },
+            "loops_bounded": {
+                "curriculum_phase": 3,
+                "motifs": {"ordinary_tree": 1.0},
+                "representations": {
+                    "variants_per_behavior": 2,
+                    "exact_equivalence_only_for_training": False,
+                },
+            },
+        }
+        if name not in presets:
+            raise ValueError(f"unknown generator preset: {name}")
+        return SyntheticConfig.from_dict(presets[name])
 
 
 @dataclass(frozen=True)
@@ -50,6 +250,11 @@ class ProcessSample:
     traces: tuple[tuple[str, ...], ...]
     petri_graph: PetriGraph
     equivalence_id: str
+    model_variant_id: str | None = None
+    log_view_id: str | None = None
+    representation_kind: str = "canonical_block_pm4py"
+    equivalence_level: str = "sampled"
+    metadata: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -57,6 +262,11 @@ class ProcessSample:
             "traces": [list(trace) for trace in self.traces],
             "petri_graph": self.petri_graph.to_dict(),
             "equivalence_id": self.equivalence_id,
+            "model_variant_id": self.model_variant_id,
+            "log_view_id": self.log_view_id,
+            "representation_kind": self.representation_kind,
+            "equivalence_level": self.equivalence_level,
+            "metadata": self.metadata,
         }
 
     @staticmethod
@@ -68,6 +278,13 @@ class ProcessSample:
             traces=tuple(tuple(str(event) for event in trace) for trace in data["traces"]),
             petri_graph=PetriGraph.from_dict(data["petri_graph"]),
             equivalence_id=str(data["equivalence_id"]),
+            model_variant_id=(
+                None if data.get("model_variant_id") is None else str(data["model_variant_id"])
+            ),
+            log_view_id=None if data.get("log_view_id") is None else str(data["log_view_id"]),
+            representation_kind=str(data.get("representation_kind", "canonical_block_pm4py")),
+            equivalence_level=str(data.get("equivalence_level", "sampled")),
+            metadata=dict(data.get("metadata", {})),
         )
 
 
@@ -138,6 +355,13 @@ def generate_samples(
     config: SyntheticConfig | None = None,
     seed: int | None = None,
 ) -> list[ProcessSample]:
-    rng = random.Random(seed)
     config = config or SyntheticConfig()
-    return [generate_sample(config=config, rng=rng, equivalence_id=f"synthetic-{idx}") for idx in range(count)]
+    if config.generator == "isolated":
+        rng = random.Random(seed)
+        return [
+            generate_sample(config=config, rng=rng, equivalence_id=f"synthetic-{idx}")
+            for idx in range(count)
+        ]
+    from proc_rosetta.families import generate_family_samples
+
+    return generate_family_samples(count, config, seed or 0, split="synthetic")

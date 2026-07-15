@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from collections import defaultdict
 from dataclasses import asdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,7 +9,7 @@ import sys
 from time import perf_counter
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Sampler
 
 from proc_rosetta.data import (
     BatchConfig,
@@ -43,6 +44,8 @@ class TrainConfig:
     lr_patience: int = 2
     lr_factor: float = 0.5
     min_lr: float = 1e-5
+    group_aware_batches: bool = True
+    views_per_family: int = 2
 
 
 def move_batch_to_device(batch: dict[str, object], device: torch.device) -> dict[str, object]:
@@ -83,7 +86,15 @@ def train_epoch(
         outputs = model(batch)
         tree_tokens = batch["tree_tokens"]
         assert isinstance(tree_tokens, torch.Tensor)
-        losses = multimodal_tree_loss(outputs, tree_tokens, model.tree_tokenizer.pad_id, weights=weights)
+        positive_mask = batch.get("positive_mask")
+        assert positive_mask is None or isinstance(positive_mask, torch.Tensor)
+        losses = multimodal_tree_loss(
+            outputs,
+            tree_tokens,
+            model.tree_tokenizer.pad_id,
+            weights=weights,
+            positive_mask=positive_mask,
+        )
         losses["loss"].backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
         optimizer.step()
@@ -118,7 +129,15 @@ def evaluate_epoch(
         outputs = model(batch, deterministic=True)
         tree_tokens = batch["tree_tokens"]
         assert isinstance(tree_tokens, torch.Tensor)
-        losses = multimodal_tree_loss(outputs, tree_tokens, model.tree_tokenizer.pad_id, weights=weights)
+        positive_mask = batch.get("positive_mask")
+        assert positive_mask is None or isinstance(positive_mask, torch.Tensor)
+        losses = multimodal_tree_loss(
+            outputs,
+            tree_tokens,
+            model.tree_tokenizer.pad_id,
+            weights=weights,
+            positive_mask=positive_mask,
+        )
         for name, value in losses.items():
             totals[name] = totals.get(name, 0.0) + float(value.detach().cpu())
         batches += 1
@@ -149,10 +168,77 @@ def build_jsonl_dataloader(
     shuffle: bool = False,
     batch_config: BatchConfig | None = None,
     show_progress: bool = False,
+    group_aware: bool = False,
+    views_per_family: int = 2,
+    seed: int = 13,
 ) -> DataLoader:
     dataset = JsonlProcessDataset(sample_path, show_progress=show_progress)
     collator = ProcessBatchCollator(tree_tokenizer, activity_tokenizer, config=batch_config)
+    if group_aware:
+        batch_sampler = BehaviorFamilyBatchSampler(
+            dataset.samples,
+            batch_size=batch_size,
+            views_per_family=views_per_family,
+            shuffle=shuffle,
+            seed=seed,
+        )
+        return DataLoader(dataset, batch_sampler=batch_sampler, collate_fn=collator)
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collator)
+
+
+class BehaviorFamilyBatchSampler(Sampler[list[int]]):
+    """Keep multiple views of a behavior together so batches contain positives."""
+
+    def __init__(
+        self,
+        samples,
+        *,
+        batch_size: int,
+        views_per_family: int = 2,
+        shuffle: bool = True,
+        seed: int = 13,
+    ) -> None:
+        self.batch_size = max(1, int(batch_size))
+        self.views_per_family = max(1, int(views_per_family))
+        self.shuffle = shuffle
+        self.seed = int(seed)
+        self.epoch = 0
+        grouped: dict[str, list[int]] = defaultdict(list)
+        for index, sample in enumerate(samples):
+            grouped[str(sample.equivalence_id)].append(index)
+        self.groups = list(grouped.values())
+        self.sample_count = len(samples)
+
+    def __iter__(self):
+        import random
+
+        rng = random.Random(self.seed + self.epoch)
+        self.epoch += 1
+        groups = [list(group) for group in self.groups]
+        if self.shuffle:
+            rng.shuffle(groups)
+            for group in groups:
+                rng.shuffle(group)
+
+        chunks: list[list[int]] = []
+        for group in groups:
+            for start in range(0, len(group), self.views_per_family):
+                chunks.append(group[start : start + self.views_per_family])
+        batch: list[int] = []
+        for chunk in chunks:
+            if batch and len(batch) + len(chunk) > self.batch_size:
+                yield batch
+                batch = []
+            if len(chunk) > self.batch_size:
+                for start in range(0, len(chunk), self.batch_size):
+                    yield chunk[start : start + self.batch_size]
+            else:
+                batch.extend(chunk)
+        if batch:
+            yield batch
+
+    def __len__(self) -> int:
+        return (self.sample_count + self.batch_size - 1) // self.batch_size
 
 
 def build_model(
@@ -243,6 +329,9 @@ def train_from_data_dir(
         batch_size=train_config.batch_size,
         shuffle=True,
         show_progress=show_progress,
+        group_aware=train_config.group_aware_batches,
+        views_per_family=train_config.views_per_family,
+        seed=train_config.seed,
     )
     debug("Loading validation split", enabled=show_progress)
     validation_loader = build_jsonl_dataloader(
@@ -526,7 +615,7 @@ def save_checkpoint(
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "version": 1,
+            "version": 2,
             "epoch": epoch,
             "model_state_dict": model.state_dict(),
             "train_config": asdict(train_config),
@@ -560,6 +649,14 @@ def load_checkpoint(
         device=str(device),
     )
     model = build_model(train_config, synthetic_config, torch.device(device))
-    model.load_state_dict(checkpoint["model_state_dict"])
+    incompatible = model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+    allowed_missing = {"petri_encoder.transition_label_embedding.weight"}
+    unexpected_missing = set(incompatible.missing_keys) - allowed_missing
+    if unexpected_missing or incompatible.unexpected_keys:
+        raise RuntimeError(
+            "checkpoint/model mismatch: "
+            f"missing={sorted(unexpected_missing)}, "
+            f"unexpected={sorted(incompatible.unexpected_keys)}"
+        )
     model.eval()
     return model, checkpoint

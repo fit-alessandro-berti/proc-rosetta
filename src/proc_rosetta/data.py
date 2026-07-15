@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import random
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +10,7 @@ import torch
 from torch.utils.data import Dataset
 
 from proc_rosetta.pm4py_bridge import PetriGraph
-from proc_rosetta.synthetic import ProcessSample, SyntheticConfig, generate_sample, generate_samples
+from proc_rosetta.synthetic import ProcessSample, SyntheticConfig, generate_samples
 from proc_rosetta.tokenizers import ActivityTokenizer, TreeTokenizer
 
 SPLIT_NAMES = ("training", "validation", "test")
@@ -84,10 +83,19 @@ class ProcessBatchCollator:
         self.config = config or BatchConfig()
 
     def __call__(self, samples: Sequence[ProcessSample]) -> dict[str, Any]:
+        equivalence_ids = [sample.equivalence_id for sample in samples]
         return {
             "tree_tokens": self._tree_tokens(samples),
             "traces": self._trace_tokens(samples),
             "petri": self._petri_graphs([sample.petri_graph for sample in samples]),
+            "equivalence_ids": equivalence_ids,
+            "positive_mask": torch.tensor(
+                [
+                    [left == right for right in equivalence_ids]
+                    for left in equivalence_ids
+                ],
+                dtype=torch.bool,
+            ),
             "samples": list(samples),
         }
 
@@ -132,6 +140,7 @@ class ProcessBatchCollator:
         batch_size = len(graphs)
         node_types = torch.zeros((batch_size, max_nodes), dtype=torch.long)
         node_mask = torch.zeros((batch_size, max_nodes), dtype=torch.bool)
+        transition_label_ids = torch.zeros((batch_size, max_nodes), dtype=torch.long)
         markings = torch.zeros((batch_size, max_nodes, 2), dtype=torch.float32)
         adjacency = torch.zeros((batch_size, 2, max_nodes, max_nodes), dtype=torch.float32)
 
@@ -139,6 +148,19 @@ class ProcessBatchCollator:
             node_count = min(graph.num_nodes, max_nodes)
             node_types[batch_idx, :node_count] = torch.tensor(graph.node_types[:node_count], dtype=torch.long)
             node_mask[batch_idx, :node_count] = True
+            fallback_labels: dict[str, int] = {}
+            for node_idx, label in enumerate(graph.transition_labels[:node_count]):
+                if label is None:
+                    continue
+                token_id = self.activity_tokenizer.token_to_id.get(label)
+                if token_id is None:
+                    if label not in fallback_labels:
+                        fallback_labels[label] = min(
+                            len(fallback_labels) + 1,
+                            self.activity_tokenizer.vocab_size - 1,
+                        )
+                    token_id = fallback_labels[label]
+                transition_label_ids[batch_idx, node_idx] = token_id
             markings[batch_idx, :node_count, 0] = torch.tensor(
                 graph.initial_marking[:node_count], dtype=torch.float32
             )
@@ -152,6 +174,7 @@ class ProcessBatchCollator:
         return {
             "node_types": node_types,
             "node_mask": node_mask,
+            "transition_label_ids": transition_label_ids,
             "markings": markings,
             "adjacency": adjacency,
         }
@@ -199,9 +222,9 @@ def read_samples_jsonl(path: str | Path, show_progress: bool = False) -> list[Pr
     return samples
 
 
-def sample_statistics(samples: Sequence[ProcessSample]) -> dict[str, float | int]:
+def sample_statistics(samples: Sequence[ProcessSample]) -> dict[str, Any]:
     trace_lengths = [len(trace) for sample in samples for trace in sample.traces]
-    return {
+    result: dict[str, Any] = {
         "count": len(samples),
         "avg_tree_size": _mean(sample.tree.size() for sample in samples),
         "avg_tree_depth": _mean(sample.tree.max_depth() for sample in samples),
@@ -209,7 +232,14 @@ def sample_statistics(samples: Sequence[ProcessSample]) -> dict[str, float | int
         "avg_trace_length": _mean(trace_lengths),
         "max_petri_nodes": max((sample.petri_graph.num_nodes for sample in samples), default=0),
         "max_petri_edges": max((sample.petri_graph.num_edges for sample in samples), default=0),
+        "behavior_count": len({sample.equivalence_id for sample in samples}),
+        "representation_counts": dict(
+            sorted(
+                _counts(sample.representation_kind for sample in samples).items()
+            )
+        ),
     }
+    return result
 
 
 def recreate_data_splits(
@@ -221,18 +251,36 @@ def recreate_data_splits(
     data_dir = Path(data_dir)
     counts = counts or SplitCounts()
     config = config or SyntheticConfig()
-    rng = random.Random(seed)
-
     if data_dir.exists():
         shutil.rmtree(data_dir)
     data_dir.mkdir(parents=True)
 
     split_metadata: dict[str, object] = {}
     for split, count in counts.items():
-        samples = [
-            generate_sample(config=config, rng=rng, equivalence_id=f"{split}-{idx}")
-            for idx in range(count)
-        ]
+        if config.generator == "isolated":
+            samples = generate_samples(
+                count,
+                config=config,
+                seed=seed + SPLIT_NAMES.index(split),
+            )
+            samples = [
+                ProcessSample(
+                    tree=sample.tree,
+                    traces=sample.traces,
+                    petri_graph=sample.petri_graph,
+                    equivalence_id=f"{split}-{idx}",
+                    model_variant_id=sample.model_variant_id,
+                    log_view_id=sample.log_view_id,
+                    representation_kind=sample.representation_kind,
+                    equivalence_level=sample.equivalence_level,
+                    metadata=sample.metadata,
+                )
+                for idx, sample in enumerate(samples)
+            ]
+        else:
+            from proc_rosetta.families import generate_family_samples
+
+            samples = generate_family_samples(count, config, seed, split=split)
         path = split_samples_path(data_dir, split)
         write_samples_jsonl(path, samples)
         split_metadata[split] = {
@@ -241,9 +289,9 @@ def recreate_data_splits(
         }
 
     metadata = {
-        "version": 2,
-        "schema": "proc-rosetta.synthetic-splits.v2",
-        "sample_format": "jsonl/process-sample.v1",
+        "version": 3,
+        "schema": "proc-rosetta.behavior-family-splits.v3",
+        "sample_format": "jsonl/process-sample.v2",
         "seed": seed,
         "synthetic_config": config.to_dict(),
         "splits": split_metadata,
@@ -280,3 +328,11 @@ def _mean(values: Sequence[float] | Any) -> float:
     if not values:
         return 0.0
     return float(sum(values) / len(values))
+
+
+def _counts(values: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        key = str(value)
+        counts[key] = counts.get(key, 0) + 1
+    return counts

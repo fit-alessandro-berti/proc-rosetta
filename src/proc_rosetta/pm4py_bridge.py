@@ -192,3 +192,42 @@ def petri_net_to_graph(net: Any, initial_marking: Any, final_marking: Any) -> Pe
         initial_marking=tuple(initial),
         final_marking=tuple(final),
     )
+
+
+def petri_graph_to_net(graph: PetriGraph, name: str = "petri_graph") -> PetriNetBundle:
+    """Reconstruct a PM4Py accepting net from the serialized typed graph."""
+
+    from pm4py.objects.petri_net.obj import Marking, PetriNet
+    from pm4py.objects.petri_net.utils import petri_utils
+
+    net = PetriNet(name)
+    nodes: list[Any] = []
+    for node_type, node_name, label in zip(
+        graph.node_types, graph.node_names, graph.transition_labels
+    ):
+        if node_type == 0:
+            node = PetriNet.Place(node_name)
+            net.places.add(node)
+        elif node_type in {1, 2}:
+            node = PetriNet.Transition(node_name, label if node_type == 1 else None)
+            net.transitions.add(node)
+        else:
+            raise ValueError(f"unknown Petri graph node type: {node_type}")
+        nodes.append(node)
+    for source, target, _ in graph.edges:
+        petri_utils.add_arc_from_to(nodes[source], nodes[target], net)
+    initial = Marking(
+        {
+            nodes[index]: int(tokens)
+            for index, tokens in enumerate(graph.initial_marking)
+            if graph.node_types[index] == 0 and tokens
+        }
+    )
+    final = Marking(
+        {
+            nodes[index]: int(tokens)
+            for index, tokens in enumerate(graph.final_marking)
+            if graph.node_types[index] == 0 and tokens
+        }
+    )
+    return PetriNetBundle(net, initial, final, graph)

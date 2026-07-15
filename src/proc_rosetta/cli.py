@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
+from pathlib import Path
 
 from proc_rosetta.benchmarks import (
     Pm4pyPetriEmbeddingConfig,
@@ -24,12 +26,60 @@ def build_parser() -> argparse.ArgumentParser:
     sample.add_argument("--train-count", type=int, default=None)
     sample.add_argument("--validation-count", type=int, default=None)
     sample.add_argument("--test-count", type=int, default=None)
+    sample.add_argument("--train-families", type=int, default=None)
+    sample.add_argument("--validation-families", type=int, default=None)
+    sample.add_argument("--test-families", type=int, default=None)
     sample.add_argument("--seed", type=int, default=13)
     sample.add_argument("--max-depth", type=int, default=3)
     sample.add_argument("--max-activities", type=int, default=DEFAULT_MAX_ACTIVITIES)
     sample.add_argument("--max-arity", type=int, default=3)
     sample.add_argument("--traces-per-sample", type=int, default=16)
     sample.add_argument("--curriculum-phase", type=int, default=2)
+    sample.add_argument(
+        "--generator",
+        choices=["behavior_families", "isolated"],
+        default="behavior_families",
+        help="Generate grouped equivalent representations (default) or legacy isolated triples.",
+    )
+    sample.add_argument(
+        "--generator-config",
+        type=Path,
+        default=None,
+        help="Load nested generator JSON; explicit legacy structure flags still override it.",
+    )
+    sample.add_argument(
+        "--preset",
+        choices=[
+            "smoke",
+            "balanced_train",
+            "iid_behavior",
+            "equivalence_train",
+            "equivalence_test",
+            "equivalence_seen",
+            "equivalence_unseen",
+            "nonblock_ood",
+            "scale_ood",
+            "sampling_ood",
+            "noise_ood",
+            "loops_bounded",
+        ],
+        default=None,
+    )
+    sample.add_argument("--variants-per-behavior", type=int, default=2)
+    sample.add_argument("--log-views-per-behavior", type=int, default=1)
+    sample.add_argument(
+        "--log-view-modes",
+        default="uniform_variants,resampled",
+        help=(
+            "Comma-separated modes: uniform_variants,resampled,long_tail,sparse,"
+            "incomplete,noisy."
+        ),
+    )
+    sample.add_argument(
+        "--motif-weights",
+        default=None,
+        help="Comma-separated KIND=WEIGHT values for behavior-family motifs.",
+    )
 
     train = subparsers.add_parser("train", help="train the first-stage multimodal model")
     train.add_argument("--data-dir", default="data")
@@ -51,6 +101,12 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--seed", type=int, default=13)
     train.add_argument("--device", default="cpu")
     train.add_argument("--quiet", action="store_true", help="disable stderr debug messages and progress bars")
+    train.add_argument("--views-per-family", type=int, default=2)
+    train.add_argument(
+        "--no-group-aware-batches",
+        action="store_true",
+        help="Disable family-grouped batches (multi-positive loss remains ID-aware).",
+    )
 
     test = subparsers.add_parser("test", help="load a checkpoint and evaluate the persisted test split")
     test.add_argument("--data-dir", default="data")
@@ -70,20 +126,63 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def synthetic_config_from_args(args: argparse.Namespace) -> SyntheticConfig:
-    return SyntheticConfig(
-        max_depth=args.max_depth,
-        max_activities=args.max_activities,
-        max_arity=args.max_arity,
-        traces_per_sample=args.traces_per_sample,
-        curriculum_phase=args.curriculum_phase,
+    if args.generator_config is not None:
+        with args.generator_config.open("r", encoding="utf-8") as handle:
+            config = SyntheticConfig.from_dict(json.load(handle))
+    elif args.preset is not None:
+        config = SyntheticConfig.preset(args.preset)
+    else:
+        config = SyntheticConfig()
+    configured = args.generator_config is not None or args.preset is not None
+    motif_weights = (
+        _parse_weights(args.motif_weights)
+        if args.motif_weights is not None
+        else config.motif_weights
     )
+    overrides: dict[str, object] = {"motif_weights": motif_weights}
+    defaults = {
+        "max_depth": 3,
+        "max_activities": DEFAULT_MAX_ACTIVITIES,
+        "max_arity": 3,
+        "traces_per_sample": 16,
+        "curriculum_phase": 2,
+        "generator": "behavior_families",
+        "variants_per_behavior": 2,
+        "log_views_per_behavior": 1,
+        "log_view_modes": "uniform_variants,resampled",
+    }
+    for field_name in (
+        "max_depth",
+        "max_activities",
+        "max_arity",
+        "traces_per_sample",
+        "curriculum_phase",
+        "generator",
+        "variants_per_behavior",
+        "log_views_per_behavior",
+    ):
+        value = getattr(args, field_name)
+        if not configured or value != defaults[field_name]:
+            overrides[field_name] = value
+    if not configured or args.log_view_modes != defaults["log_view_modes"]:
+        overrides["log_view_modes"] = tuple(
+            value.strip() for value in args.log_view_modes.split(",") if value.strip()
+        )
+    overrides["variants_per_behavior"] = max(
+        1, int(overrides.get("variants_per_behavior", config.variants_per_behavior))
+    )
+    overrides["log_views_per_behavior"] = max(
+        1, int(overrides.get("log_views_per_behavior", config.log_views_per_behavior))
+    )
+    return replace(config, **overrides)
 
 
 def run_sample(args: argparse.Namespace) -> int:
+    config = synthetic_config_from_args(args)
     metadata = recreate_data_splits(
         data_dir=args.data_dir,
-        counts=split_counts_from_args(args),
-        config=synthetic_config_from_args(args),
+        counts=split_counts_from_args(args, config=config),
+        config=config,
         seed=args.seed,
     )
     print(json.dumps(metadata, sort_keys=True))
@@ -107,6 +206,8 @@ def run_train(args: argparse.Namespace) -> int:
         min_lr=args.min_lr,
         seed=args.seed,
         device=args.device,
+        group_aware_batches=not args.no_group_aware_batches,
+        views_per_family=max(1, args.views_per_family),
     )
     _, history = train_from_data_dir(
         data_dir=args.data_dir,
@@ -158,12 +259,29 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-def split_counts_from_args(args: argparse.Namespace) -> SplitCounts:
+def split_counts_from_args(
+    args: argparse.Namespace,
+    config: SyntheticConfig | None = None,
+) -> SplitCounts:
     train_count = args.train_count if args.train_count is not None else args.count
+    config = config or SyntheticConfig()
+    rows_per_family = config.variants_per_behavior * config.log_views_per_behavior
     return SplitCounts(
-        training=_positive(train_count, default=4000, name="train-count"),
-        validation=_positive(args.validation_count, default=512, name="validation-count"),
-        test=_positive(args.test_count, default=512, name="test-count"),
+        training=(
+            _positive(args.train_families, 1, "train-families") * rows_per_family
+            if args.train_families is not None
+            else _positive(train_count, default=4000, name="train-count")
+        ),
+        validation=(
+            _positive(args.validation_families, 1, "validation-families") * rows_per_family
+            if args.validation_families is not None
+            else _positive(args.validation_count, default=512, name="validation-count")
+        ),
+        test=(
+            _positive(args.test_families, 1, "test-families") * rows_per_family
+            if args.test_families is not None
+            else _positive(args.test_count, default=512, name="test-count")
+        ),
     )
 
 
@@ -172,6 +290,21 @@ def _positive(value: int | None, default: int, name: str) -> int:
     if value <= 0:
         raise ValueError(f"{name} must be positive")
     return value
+
+
+def _parse_weights(value: str) -> dict[str, float]:
+    result: dict[str, float] = {}
+    for item in value.split(","):
+        if not item.strip():
+            continue
+        try:
+            name, weight = item.split("=", 1)
+            result[name.strip()] = float(weight)
+        except ValueError as exc:
+            raise ValueError("motif weights must use KIND=WEIGHT comma-separated syntax") from exc
+    if not result or sum(max(0.0, weight) for weight in result.values()) <= 0:
+        raise ValueError("at least one motif weight must be positive")
+    return result
 
 
 def round_metrics(metrics: dict[str, float]) -> dict[str, float]:

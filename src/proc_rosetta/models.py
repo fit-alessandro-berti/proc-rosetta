@@ -101,9 +101,16 @@ class PetriGraphEncoder(nn.Module):
         node_type_count: int = 3,
         message_passing_steps: int = 3,
         dropout: float = 0.0,
+        activity_vocab_size: int = 31,
     ) -> None:
         super().__init__()
         self.node_embedding = nn.Embedding(node_type_count, hidden_dim)
+        self.transition_label_embedding = nn.Embedding(
+            activity_vocab_size, hidden_dim, padding_idx=0
+        )
+        # A zero initialization makes pre-label-aware checkpoints behave exactly
+        # as before while allowing non-zero label gradients during retraining.
+        nn.init.zeros_(self.transition_label_embedding.weight)
         self.marking_projection = nn.Linear(2, hidden_dim)
         self.self_layers = nn.ModuleList(nn.Linear(hidden_dim, hidden_dim) for _ in range(message_passing_steps))
         self.in_layers = nn.ModuleList(nn.Linear(hidden_dim, hidden_dim) for _ in range(message_passing_steps))
@@ -118,8 +125,15 @@ class PetriGraphEncoder(nn.Module):
         markings: torch.Tensor,
         adjacency: torch.Tensor,
         node_mask: torch.Tensor,
+        transition_label_ids: torch.Tensor | None = None,
     ) -> LatentDistribution:
-        h = self.dropout(self.node_embedding(node_types) + self.marking_projection(markings))
+        if transition_label_ids is None:
+            transition_label_ids = torch.zeros_like(node_types)
+        h = self.dropout(
+            self.node_embedding(node_types)
+            + self.marking_projection(markings)
+            + self.transition_label_embedding(transition_label_ids)
+        )
         h = h * node_mask.unsqueeze(-1).to(h.dtype)
         adjacency_any = adjacency.sum(dim=1).clamp(max=1.0)
 
@@ -228,7 +242,12 @@ class ProcRosettaModel(nn.Module):
         )
         self.tree_encoder = TreeEncoder(self.tree_tokenizer.vocab_size, latent_dim, hidden_dim, dropout)
         self.trace_encoder = TraceEncoder(self.activity_tokenizer.vocab_size, latent_dim, hidden_dim, dropout)
-        self.petri_encoder = PetriGraphEncoder(latent_dim, hidden_dim, dropout=dropout)
+        self.petri_encoder = PetriGraphEncoder(
+            latent_dim,
+            hidden_dim,
+            dropout=dropout,
+            activity_vocab_size=self.activity_tokenizer.vocab_size,
+        )
         self.tree_decoder = GrammarTreeDecoder(self.tree_tokenizer, latent_dim, hidden_dim, dropout)
 
     def encode_tree(self, tree_tokens: torch.Tensor) -> LatentDistribution:
@@ -243,6 +262,7 @@ class ProcRosettaModel(nn.Module):
             petri["markings"],
             petri["adjacency"],
             petri["node_mask"],
+            petri.get("transition_label_ids"),
         )
 
     def forward(self, batch: dict[str, object], deterministic: bool = False) -> dict[str, object]:

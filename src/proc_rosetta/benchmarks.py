@@ -11,7 +11,7 @@ import torch
 
 from proc_rosetta.behavior import behavioral_distance
 from proc_rosetta.data import ProcessBatchCollator
-from proc_rosetta.pm4py_bridge import simulate_traces, tree_to_petri_net
+from proc_rosetta.pm4py_bridge import petri_graph_to_net, simulate_traces, tree_to_petri_net
 from proc_rosetta.synthetic import ProcessSample
 from proc_rosetta.training import evaluate_split_from_checkpoint, load_checkpoint
 
@@ -128,6 +128,9 @@ def rich_test_report(
         "decode_quality": decode_quality,
         "discovery_quality": discovery_quality,
         "cross_modal_retrieval": cross_modal_retrieval(neural_embeddings),
+        "equivalence_families": equivalence_family_embedding_report(
+            samples, neural_embeddings
+        ),
         "embedding_methods": methods,
         "method_ranking": rank_embedding_methods(methods),
         "method_comparisons_against_proc_rosetta_fused_mu": compare_methods_against_reference(
@@ -146,6 +149,85 @@ def rich_test_report(
         },
     }
     return report
+
+
+def equivalence_family_embedding_report(
+    samples: Sequence[ProcessSample],
+    embeddings: dict[str, np.ndarray],
+) -> dict[str, object]:
+    """Measure representation invariance using explicit behavior-family IDs."""
+
+    family_ids = [sample.equivalence_id for sample in samples]
+    representation_kinds = [sample.representation_kind for sample in samples]
+    family_sizes = Counter(family_ids)
+    paired_indices = [index for index, value in enumerate(family_ids) if family_sizes[value] > 1]
+    methods: dict[str, object] = {}
+    for method, matrix in embeddings.items():
+        normalized = np.asarray(matrix, dtype=float)
+        norms = np.linalg.norm(normalized, axis=1, keepdims=True)
+        normalized = normalized / np.maximum(norms, 1e-12)
+        similarities = normalized @ normalized.T
+        within: list[float] = []
+        between: list[float] = []
+        by_kind: dict[str, list[float]] = {}
+        log_resampling: list[float] = []
+        margins: list[float] = []
+        retrieval_hits = 0
+        retrieval_count = 0
+        for left in range(len(samples)):
+            positive = [
+                right
+                for right in range(len(samples))
+                if right != left and family_ids[right] == family_ids[left]
+            ]
+            negative = [
+                right
+                for right in range(len(samples))
+                if family_ids[right] != family_ids[left]
+            ]
+            if positive and negative:
+                margins.append(
+                    max(float(similarities[left, right]) for right in positive)
+                    - max(float(similarities[left, right]) for right in negative)
+                )
+                candidates = [right for right in range(len(samples)) if right != left]
+                nearest = max(candidates, key=lambda right: similarities[left, right])
+                retrieval_hits += int(family_ids[nearest] == family_ids[left])
+                retrieval_count += 1
+            for right in range(left + 1, len(samples)):
+                similarity = float(similarities[left, right])
+                if family_ids[left] == family_ids[right]:
+                    within.append(similarity)
+                    if (
+                        samples[left].model_variant_id == samples[right].model_variant_id
+                        and samples[left].log_view_id != samples[right].log_view_id
+                    ):
+                        log_resampling.append(similarity)
+                    pair = "__vs__".join(
+                        sorted((representation_kinds[left], representation_kinds[right]))
+                    )
+                    by_kind.setdefault(pair, []).append(1.0 - similarity)
+                else:
+                    between.append(similarity)
+        methods[method] = {
+            "within_family_cosine": round_float(mean(within)),
+            "between_family_cosine": round_float(mean(between)),
+            "equivalence_margin": round_float(mean(margins)),
+            "behavior_id_retrieval_top1": round_float(
+                retrieval_hits / retrieval_count if retrieval_count else 0.0
+            ),
+            "log_resampling_consistency": round_float(mean(log_resampling)),
+            "representation_distance_by_kind": {
+                key: round_float(mean(values)) for key, values in sorted(by_kind.items())
+            },
+        }
+    return {
+        "semantics": "visible_complete_trace_language",
+        "behavior_count": len(family_sizes),
+        "paired_behavior_count": sum(1 for size in family_sizes.values() if size > 1),
+        "paired_sample_count": len(paired_indices),
+        "methods": methods,
+    }
 
 
 @torch.no_grad()
@@ -643,7 +725,10 @@ def pm4py_petri_method_report(
     vectors: list[np.ndarray] = []
     try:
         for sample in samples:
-            bundle = tree_to_petri_net(sample.tree)
+            bundle = petri_graph_to_net(
+                sample.petri_graph,
+                name=sample.model_variant_id or sample.equivalence_id,
+            )
             vectors.append(
                 embeddings_similarity.petri_net_embedding(
                     bundle.net,
@@ -904,7 +989,43 @@ def format_human_test_report(report: dict[str, object]) -> str:
     if pm4py_summary:
         lines.append("")
         lines.append(pm4py_summary)
+    elif "pm4py_colonna_petri_node2vec" in methods:
+        pm4py_method = methods["pm4py_colonna_petri_node2vec"]
+        if isinstance(pm4py_method, dict) and not pm4py_method.get("available", False):
+            lines.append("")
+            lines.append(
+                "pm4py Petri Node2Vec vs ProcRosetta fused: unavailable ("
+                f"{pm4py_method.get('reason', 'dependency or runtime error')})."
+            )
     lines.append("")
+
+    family_report = report.get("equivalence_families", {})
+    if isinstance(family_report, dict):
+        family_methods = family_report.get("methods", {})
+        if isinstance(family_methods, dict):
+            lines.append("Behavior-family equivalence")
+            lines.append("---------------------------")
+            lines.append(
+                f"paired behaviors: {family_report.get('paired_behavior_count', 0)}; "
+                "within-family cosine and retrieval use alternate exact-equivalent representations."
+            )
+            lines.append(
+                format_table(
+                    ["embedding", "within cosine", "between cosine", "margin", "family top1"],
+                    [
+                        [
+                            human_method_name(name),
+                            format_metric(values.get("within_family_cosine")),
+                            format_metric(values.get("between_family_cosine")),
+                            format_metric(values.get("equivalence_margin")),
+                            format_metric(values.get("behavior_id_retrieval_top1")),
+                        ]
+                        for name, values in sorted(family_methods.items())
+                        if isinstance(values, dict)
+                    ],
+                )
+            )
+            lines.append("")
 
     retrieval = report["cross_modal_retrieval"]
     assert isinstance(retrieval, dict)
