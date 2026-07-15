@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
+from typing import Callable
 
 from proc_rosetta.pm4py_bridge import PetriGraph, simulate_traces, tree_to_petri_net
 from proc_rosetta.tree import NodeKind, ProcessTreeNode
@@ -408,14 +409,25 @@ def generate_samples(
     count: int,
     config: SyntheticConfig | None = None,
     seed: int | None = None,
+    progress_update: Callable[[int], None] | None = None,
 ) -> list[ProcessSample]:
     config = config or SyntheticConfig()
     if config.generator == "isolated":
         rng = random.Random(seed)
-        return [
-            generate_sample(config=config, rng=rng, equivalence_id=f"synthetic-{idx}")
-            for idx in range(count)
-        ]
+        samples: list[ProcessSample] = []
+        for idx in range(count):
+            samples.append(
+                generate_sample(config=config, rng=rng, equivalence_id=f"synthetic-{idx}")
+            )
+            if progress_update is not None:
+                progress_update(1)
+        return samples
     from proc_rosetta.families import generate_family_samples
 
-    return generate_family_samples(count, config, seed or 0, split="synthetic")
+    return generate_family_samples(
+        count,
+        config,
+        seed or 0,
+        split="synthetic",
+        progress_update=progress_update,
+    )

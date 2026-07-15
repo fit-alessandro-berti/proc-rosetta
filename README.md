@@ -130,6 +130,9 @@ data/
   test/samples.jsonl
 ```
 
+`sample.py` shows per-split `tqdm` progress on stderr while triplets are
+generated. Pass `--quiet` to suppress the progress bars.
+
 These defaults correspond to 4,096 independent training behavior families and
 512 families in each evaluation split with the standard two representations
 per family. Under balanced motif weights that gives 1,024 training families and
@@ -207,6 +210,9 @@ Useful training controls:
 ./train.py --views-per-family 2
 ./train.py --no-group-aware-batches
 ```
+
+Training, testing, and external-file scripts default to `cuda` when available,
+then `mps` when available, and otherwise `cpu`. Pass `--device cpu` to force CPU.
 
 The tokenizer size is fixed by the data metadata stored when `sample.py` runs.
 For logs with many activities, generate data with a sufficiently large

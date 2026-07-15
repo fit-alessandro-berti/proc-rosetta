@@ -20,6 +20,7 @@ from proc_rosetta.data import (
     sample_statistics,
     split_samples_path,
 )
+from proc_rosetta.devices import default_device, resolve_device
 from proc_rosetta.losses import LossWeights, multimodal_tree_loss
 from proc_rosetta.models import ProcRosettaModel
 from proc_rosetta.synthetic import SyntheticConfig
@@ -35,7 +36,7 @@ class TrainConfig:
     latent_dim: int = 256
     hidden_dim: int = 96
     seed: int = 13
-    device: str = "cpu"
+    device: str = default_device()
     dropout: float = 0.25
     weight_decay: float = 1e-3
     label_smoothing: float = 0.08
@@ -282,7 +283,7 @@ def train_synthetic(
     train_config = train_config or TrainConfig()
     synthetic_config = synthetic_config or SyntheticConfig()
     torch.manual_seed(train_config.seed)
-    device = torch.device(train_config.device)
+    device = resolve_device(train_config.device)
 
     model = build_model(train_config, synthetic_config, device)
     dataloader = build_synthetic_dataloader(
@@ -316,7 +317,7 @@ def train_from_data_dir(
 ) -> tuple[ProcRosettaModel, list[dict[str, object]]]:
     train_config = train_config or TrainConfig()
     torch.manual_seed(train_config.seed)
-    device = torch.device(train_config.device)
+    device = resolve_device(train_config.device)
     debug(f"Loading metadata from {Path(data_dir) / 'metadata.json'}", enabled=show_progress)
     metadata = load_data_metadata(data_dir)
     synthetic_config = SyntheticConfig.from_dict(metadata.get("synthetic_config", {}))
@@ -488,9 +489,9 @@ def evaluate_split_from_checkpoint(
     data_dir: str | Path = "data",
     split: str = "test",
     batch_size: int = 16,
-    device: str = "cpu",
+    device: str | None = None,
 ) -> dict[str, float]:
-    torch_device = torch.device(device)
+    torch_device = resolve_device(device)
     model, _ = load_checkpoint(checkpoint_path, torch_device)
     loader = build_jsonl_dataloader(
         split_samples_path(data_dir, split),
@@ -648,25 +649,18 @@ def save_checkpoint(
 
 def load_checkpoint(
     checkpoint_path: str | Path,
-    device: torch.device | str = "cpu",
+    device: torch.device | str | None = None,
 ) -> tuple[ProcRosettaModel, dict[str, object]]:
     checkpoint_path = Path(checkpoint_path)
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"checkpoint does not exist: {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    train_config = TrainConfig(**checkpoint["train_config"])
+    torch_device = resolve_device(device)
+    checkpoint = torch.load(checkpoint_path, map_location=torch_device)
+    train_config_data = dict(checkpoint["train_config"])
+    train_config_data["device"] = str(torch_device)
+    train_config = TrainConfig(**train_config_data)
     synthetic_config = SyntheticConfig.from_dict(checkpoint["synthetic_config"])
-    train_config = TrainConfig(
-        samples=train_config.samples,
-        epochs=train_config.epochs,
-        batch_size=train_config.batch_size,
-        learning_rate=train_config.learning_rate,
-        latent_dim=train_config.latent_dim,
-        hidden_dim=train_config.hidden_dim,
-        seed=train_config.seed,
-        device=str(device),
-    )
-    model = build_model(train_config, synthetic_config, torch.device(device))
+    model = build_model(train_config, synthetic_config, torch_device)
     incompatible = model.load_state_dict(checkpoint["model_state_dict"], strict=False)
     allowed_missing = {"petri_encoder.transition_label_embedding.weight"}
     unexpected_missing = set(incompatible.missing_keys) - allowed_missing

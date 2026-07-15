@@ -11,6 +11,7 @@ import torch
 
 from proc_rosetta.behavior import behavioral_distance
 from proc_rosetta.data import ProcessBatchCollator
+from proc_rosetta.devices import resolve_device
 from proc_rosetta.pm4py_bridge import petri_graph_to_net, simulate_traces, tree_to_petri_net
 from proc_rosetta.synthetic import ProcessSample
 from proc_rosetta.training import evaluate_split_from_checkpoint, load_checkpoint
@@ -45,31 +46,35 @@ def rich_test_report(
     data_dir: str,
     samples: Sequence[ProcessSample],
     batch_size: int = 16,
-    device: str = "cpu",
+    device: str | None = None,
     include_pm4py_petri: bool = True,
     pm4py_petri_config: Pm4pyPetriEmbeddingConfig | None = None,
 ) -> dict[str, object]:
+    torch_device = resolve_device(device)
+    device_name = str(torch_device)
     pm4py_petri_config = pm4py_petri_config or Pm4pyPetriEmbeddingConfig()
     loss_metrics = evaluate_split_from_checkpoint(
         checkpoint_path=checkpoint_path,
         data_dir=data_dir,
         split="test",
         batch_size=batch_size,
-        device=device,
+        device=device_name,
     )
-    model, _ = load_checkpoint(checkpoint_path, torch.device(device))
-    neural_embeddings = proc_rosetta_embeddings(model, samples, batch_size=batch_size, device=device)
+    model, _ = load_checkpoint(checkpoint_path, torch_device)
+    neural_embeddings = proc_rosetta_embeddings(
+        model, samples, batch_size=batch_size, device=device_name
+    )
     decode_quality = decode_quality_report(
         model,
         samples,
         batch_size=batch_size,
-        device=device,
+        device=device_name,
     )
     discovery_quality = discovery_quality_report(
         model,
         samples,
         batch_size=batch_size,
-        device=device,
+        device=device_name,
     )
 
     behavior = behavior_matrices(samples)
@@ -235,12 +240,12 @@ def discovery_quality_report(
     model,
     samples: Sequence[ProcessSample],
     batch_size: int = 16,
-    device: str = "cpu",
+    device: str | None = None,
     max_decode_length: int = 512,
 ) -> dict[str, object]:
     model.eval()
-    model.to(device)
-    torch_device = torch.device(device)
+    torch_device = resolve_device(device)
+    model.to(torch_device)
     collator = ProcessBatchCollator(model.tree_tokenizer, model.activity_tokenizer)
     rows: dict[str, list[dict[str, object]]] = {
         "proc_rosetta_trace_mu": [],
@@ -463,16 +468,17 @@ def proc_rosetta_embeddings(
     model,
     samples: Sequence[ProcessSample],
     batch_size: int = 16,
-    device: str = "cpu",
+    device: str | None = None,
 ) -> dict[str, np.ndarray]:
     model.eval()
-    model.to(device)
+    torch_device = resolve_device(device)
+    model.to(torch_device)
     collator = ProcessBatchCollator(model.tree_tokenizer, model.activity_tokenizer)
     chunks: dict[str, list[np.ndarray]] = {"tree": [], "trace": [], "petri": []}
     for start in range(0, len(samples), batch_size):
         batch_samples = samples[start : start + batch_size]
         batch = collator(batch_samples)
-        batch = _move_batch_to_device(batch, torch.device(device))
+        batch = _move_batch_to_device(batch, torch_device)
         tree_dist = model.encode_tree(batch["tree_tokens"])
         trace_dist = model.encode_traces(batch["traces"])
         petri_dist = model.encode_petri(batch["petri"])
@@ -501,13 +507,13 @@ def decode_quality_report(
     model,
     samples: Sequence[ProcessSample],
     batch_size: int = 16,
-    device: str = "cpu",
+    device: str | None = None,
     max_decode_length: int = 512,
     behavior_traces_per_sample: int = 128,
 ) -> dict[str, object]:
     model.eval()
-    model.to(device)
-    torch_device = torch.device(device)
+    torch_device = resolve_device(device)
+    model.to(torch_device)
     collator = ProcessBatchCollator(model.tree_tokenizer, model.activity_tokenizer)
     rows: dict[str, list[dict[str, object]]] = {
         "proc_rosetta_tree_mu": [],

@@ -8,6 +8,7 @@ from _common import (
     activity_mapping_from_traces,
     activity_mapping_from_tree,
     canonicalize_traces,
+    default_device,
     encode_petri_mu_logvar,
     encode_traces_mu_logvar,
     encode_tree_mu_logvar,
@@ -30,7 +31,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("input", help="input .xes, .pnml, or .ptml file")
     parser.add_argument("--checkpoint", default="checkpoints/proc_rosetta.pt")
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument(
+        "--device",
+        default=default_device(),
+        help="Torch device; defaults to cuda or mps when available, otherwise cpu.",
+    )
     parser.add_argument("--activity-key", default="concept:name")
     parser.add_argument("--case-id-key", default="case:concept:name")
     parser.add_argument("--max-traces", type=int, default=128)

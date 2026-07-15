@@ -24,6 +24,7 @@ from proc_rosetta.pm4py_bridge import (  # noqa: E402
     to_pm4py_tree,
     tree_to_petri_net,
 )
+from proc_rosetta.devices import default_device, resolve_device  # noqa: E402
 from proc_rosetta.training import load_checkpoint  # noqa: E402
 from proc_rosetta.tree import ProcessTreeNode  # noqa: E402
 
@@ -31,8 +32,11 @@ from proc_rosetta.tree import ProcessTreeNode  # noqa: E402
 SUPPORTED_EXTENSIONS = {".xes", ".pnml", ".ptml"}
 
 
-def load_trained_model(checkpoint_path: str | Path, device: str) -> tuple[Any, torch.device]:
-    torch_device = torch.device(device)
+def load_trained_model(
+    checkpoint_path: str | Path,
+    device: str | None = None,
+) -> tuple[Any, torch.device]:
+    torch_device = resolve_device(device)
     model, _ = load_checkpoint(checkpoint_path, torch_device)
     model.eval()
     model.to(torch_device)

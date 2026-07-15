@@ -4,6 +4,9 @@ import pytest
 
 from proc_rosetta.cli import main
 from proc_rosetta.cli import build_parser, split_counts_from_args
+from proc_rosetta.data import SplitCounts, recreate_data_splits
+from proc_rosetta.devices import default_device
+from proc_rosetta.synthetic import SyntheticConfig
 
 
 def test_default_sample_and_train_values_match_recommended_run():
@@ -11,6 +14,7 @@ def test_default_sample_and_train_values_match_recommended_run():
 
     sample_args = parser.parse_args(["sample"])
     train_args = parser.parse_args(["train"])
+    test_args = parser.parse_args(["test"])
     split_counts = split_counts_from_args(sample_args)
 
     assert split_counts.training == 8192
@@ -26,15 +30,52 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert sample_args.max_arity == 3
     assert sample_args.traces_per_sample == 128
     assert sample_args.curriculum_phase == 3
+    assert not sample_args.quiet
     assert train_args.epochs == 100
     assert train_args.batch_size == 32
     assert train_args.latent_dim == 256
+    assert train_args.device == default_device()
     assert train_args.hidden_dim == 96
     assert train_args.dropout == 0.25
     assert train_args.weight_decay == 1e-3
     assert train_args.label_smoothing == 0.08
     assert train_args.early_stopping_patience == 4
     assert train_args.activity_remap_probability == 0.5
+    assert test_args.device == default_device()
+
+
+def test_sample_progress_reports_generated_triplets(tmp_path, monkeypatch):
+    updates: list[int] = []
+
+    class RecordingProgress:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def update(self, count: int = 1) -> None:
+            updates.append(count)
+
+    def progress_bar(total, enabled, **kwargs):
+        assert enabled
+        assert kwargs["unit"] == "triplet"
+        return RecordingProgress()
+
+    monkeypatch.setattr("proc_rosetta.data.progress_bar", progress_bar)
+    recreate_data_splits(
+        tmp_path / "data",
+        counts=SplitCounts(training=2, validation=1, test=1),
+        config=SyntheticConfig(
+            generator="isolated",
+            max_depth=2,
+            max_activities=4,
+            traces_per_sample=1,
+        ),
+        show_progress=True,
+    )
+
+    assert sum(updates) == 4
 
 
 def test_sample_cli_recreates_data_splits(tmp_path, capsys):

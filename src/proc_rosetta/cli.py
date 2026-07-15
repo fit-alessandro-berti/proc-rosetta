@@ -12,6 +12,7 @@ from proc_rosetta.benchmarks import (
 )
 from proc_rosetta.data import SplitCounts, recreate_data_splits
 from proc_rosetta.data import read_samples_jsonl, split_samples_path
+from proc_rosetta.devices import default_device
 from proc_rosetta.synthetic import DEFAULT_MAX_ACTIVITIES, SyntheticConfig
 from proc_rosetta.training import TrainConfig, train_from_data_dir
 
@@ -92,6 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Fail on infeasible class quotas (strict) or record deficits (best_effort).",
     )
+    sample.add_argument("--quiet", action="store_true", help="disable generation progress bars")
 
     train = subparsers.add_parser("train", help="train the first-stage multimodal model")
     train.add_argument("--data-dir", default="data")
@@ -111,7 +113,11 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--min-lr", type=float, default=1e-5)
     train.add_argument("--metrics-csv", default="checkpoints/training_metrics.csv")
     train.add_argument("--seed", type=int, default=13)
-    train.add_argument("--device", default="cpu")
+    train.add_argument(
+        "--device",
+        default=default_device(),
+        help="Torch device; defaults to cuda or mps when available, otherwise cpu.",
+    )
     train.add_argument("--quiet", action="store_true", help="disable stderr debug messages and progress bars")
     train.add_argument("--views-per-family", type=int, default=2)
     train.add_argument(
@@ -133,7 +139,11 @@ def build_parser() -> argparse.ArgumentParser:
     test.add_argument("--data-dir", default="data")
     test.add_argument("--checkpoint", default="checkpoints/proc_rosetta.pt")
     test.add_argument("--batch-size", type=int, default=16)
-    test.add_argument("--device", default="cpu")
+    test.add_argument(
+        "--device",
+        default=default_device(),
+        help="Torch device; defaults to cuda or mps when available, otherwise cpu.",
+    )
     test.add_argument("--skip-pm4py-petri-embedding", action="store_true")
     test.add_argument("--petri-embedding-dim", type=int, default=256)
     test.add_argument("--petri-num-walks", type=int, default=5)
@@ -214,6 +224,7 @@ def run_sample(args: argparse.Namespace) -> int:
         counts=split_counts_from_args(args, config=config),
         config=config,
         seed=args.seed,
+        show_progress=not args.quiet,
     )
     print(json.dumps(metadata, sort_keys=True))
     return 0

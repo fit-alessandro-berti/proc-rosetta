@@ -4,7 +4,7 @@ from collections import Counter
 from dataclasses import dataclass
 from hashlib import blake2b
 import random
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from proc_rosetta.pm4py_bridge import (
     PetriGraph,
@@ -554,6 +554,7 @@ def generate_family_samples(
     config: Any,
     seed: int,
     split: str,
+    progress_update: Callable[[int], None] | None = None,
 ) -> list[Any]:
     if count < 0:
         raise ValueError("count must be non-negative")
@@ -595,7 +596,10 @@ def generate_family_samples(
             ):
                 continue
             family_rows = flatten_behavior_family(family)
-            rows.extend(family_rows[: count - len(rows)])
+            accepted_rows = family_rows[: count - len(rows)]
+            rows.extend(accepted_rows)
+            if progress_update is not None:
+                progress_update(len(accepted_rows))
             accepted = True
         if not accepted:
             break

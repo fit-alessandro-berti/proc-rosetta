@@ -6,6 +6,7 @@ from pathlib import Path
 
 from _common import (
     activity_mapping_from_tree,
+    default_device,
     decode_tree_from_latent,
     encode_tree_mu_logvar,
     load_trained_model,
@@ -26,7 +27,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("input", help="input .ptml file")
     parser.add_argument("output", help="output .ptml file")
     parser.add_argument("--checkpoint", default="checkpoints/proc_rosetta.pt")
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument(
+        "--device",
+        default=default_device(),
+        help="Torch device; defaults to cuda or mps when available, otherwise cpu.",
+    )
     parser.add_argument("--max-decode-length", type=int, default=512)
     parser.add_argument(
         "--keep-canonical-labels",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import json
 import random
 import shutil
@@ -396,6 +397,7 @@ def recreate_data_splits(
     counts: SplitCounts | None = None,
     config: SyntheticConfig | None = None,
     seed: int = 13,
+    show_progress: bool = False,
 ) -> dict[str, object]:
     data_dir = Path(data_dir)
     counts = counts or SplitCounts()
@@ -422,30 +424,43 @@ def recreate_data_splits(
 
     split_metadata: dict[str, object] = {}
     for split, count in counts.items():
-        if config.generator == "isolated":
-            samples = generate_samples(
-                count,
-                config=config,
-                seed=seed + SPLIT_NAMES.index(split),
-            )
-            samples = [
-                ProcessSample(
-                    tree=sample.tree,
-                    traces=sample.traces,
-                    petri_graph=sample.petri_graph,
-                    equivalence_id=f"{split}-{idx}",
-                    model_variant_id=sample.model_variant_id,
-                    log_view_id=sample.log_view_id,
-                    representation_kind=sample.representation_kind,
-                    equivalence_level=sample.equivalence_level,
-                    metadata=sample.metadata,
+        with progress_bar(
+            total=count,
+            enabled=show_progress,
+            desc=f"Generating {split}",
+            unit="triplet",
+        ) as progress:
+            if config.generator == "isolated":
+                samples = generate_samples(
+                    count,
+                    config=config,
+                    seed=seed + SPLIT_NAMES.index(split),
+                    progress_update=progress.update,
                 )
-                for idx, sample in enumerate(samples)
-            ]
-        else:
-            from proc_rosetta.families import generate_family_samples
+                samples = [
+                    ProcessSample(
+                        tree=sample.tree,
+                        traces=sample.traces,
+                        petri_graph=sample.petri_graph,
+                        equivalence_id=f"{split}-{idx}",
+                        model_variant_id=sample.model_variant_id,
+                        log_view_id=sample.log_view_id,
+                        representation_kind=sample.representation_kind,
+                        equivalence_level=sample.equivalence_level,
+                        metadata=sample.metadata,
+                    )
+                    for idx, sample in enumerate(samples)
+                ]
+            else:
+                from proc_rosetta.families import generate_family_samples
 
-            samples = generate_family_samples(count, config, seed, split=split)
+                samples = generate_family_samples(
+                    count,
+                    config,
+                    seed,
+                    split=split,
+                    progress_update=progress.update,
+                )
         path = split_samples_path(data_dir, split)
         write_samples_jsonl(path, samples)
         statistics = sample_statistics(samples)
@@ -492,6 +507,19 @@ def progress_iterator(iterable: Any, enabled: bool, **kwargs: Any) -> Any:
     from tqdm.auto import tqdm
 
     return tqdm(iterable, leave=False, **kwargs)
+
+
+def progress_bar(total: int, enabled: bool, **kwargs: Any) -> Any:
+    if not enabled:
+        return nullcontext(_NoOpProgress())
+    from tqdm.auto import tqdm
+
+    return tqdm(total=total, leave=False, **kwargs)
+
+
+class _NoOpProgress:
+    def update(self, _: int = 1) -> None:
+        return
 
 
 def _mean(values: Sequence[float] | Any) -> float:
