@@ -235,3 +235,5 @@ nohup.out
 *.snm
 *.toc
 
+*.tar.gz
+
