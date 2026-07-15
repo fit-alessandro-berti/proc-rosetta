@@ -1,0 +1,64 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<ptml>
+  <processTree name="011a1e2a-1f6a-4f1c-8ef0-60eb27046b96" root="b84c769c-35d2-44e3-8361-88a4cd06cd4c" id="69e37c11-1f46-431a-9e8a-7b6abb5ec10f">
+    <sequence name="" id="b84c769c-35d2-44e3-8361-88a4cd06cd4c"/>
+    <manualTask name="Create Fine" id="b1a67559-f73c-4c9b-acab-6de348b631e7"/>
+    <and name="" id="b05e696d-fa3b-4a07-a2c7-2255047e7d53"/>
+    <xor name="" id="70b581fb-7630-49f9-8c1c-b85dac257ede"/>
+    <xor name="" id="cb8fe545-bafc-4fe4-be87-3d89229ed9a8"/>
+    <xor name="" id="580c1fc3-21ec-48ef-9632-3f42cfdff830"/>
+    <automaticTask name="" id="c6dff9d3-389e-4b0e-a520-06caedf3f2c9"/>
+    <manualTask name="Send for Credit Collection" id="3fd46b13-5e91-4c3e-8dc1-ecd186ca13e5"/>
+    <automaticTask name="" id="9ba14146-47c1-459a-a2df-cca58ef84181"/>
+    <xorLoop name="" id="1a332388-9833-4639-a286-f9ba1fd6be85"/>
+    <automaticTask name="" id="3b63834b-713b-4d8b-a47b-773b90ee10e5"/>
+    <sequence name="" id="65873302-5f36-4454-af43-afb1edb97057"/>
+    <manualTask name="Payment" id="5e02bf3d-b0c2-446a-9215-0233ab444fbd"/>
+    <automaticTask name="" id="fcdbe2ba-4c41-4aff-adb6-e67eabc12e38"/>
+    <automaticTask name="" id="f1dcbdb8-a17e-4720-8377-28ab04afa9f0"/>
+    <manualTask name="Send Fine" id="7223def8-338b-46d9-b59f-669bdccbe4fc"/>
+    <xor name="" id="f564d923-2948-4f43-ab18-ac5b04197c6a"/>
+    <automaticTask name="" id="093b3f82-44f6-4dfe-8ac8-5809311bcc2a"/>
+    <sequence name="" id="4b787099-aeae-4052-8697-b7425149f101"/>
+    <manualTask name="Insert Fine Notification" id="b3d732b4-e13b-46c0-9640-370ebacbf6f8"/>
+    <xor name="" id="6e3e9db7-e96f-4bf9-82eb-75bb227d1c11"/>
+    <manualTask name="Add penalty" id="3ef8366c-8989-4291-b8f1-fcf769aeca05"/>
+    <xor name="" id="3869fdc7-1470-4a41-9e4d-22147146f12f"/>
+    <automaticTask name="" id="20a9dc46-50da-4bba-a690-9492f88e2bab"/>
+    <manualTask name="Insert Date Appeal to Prefecture" id="fc0fc466-14f7-4107-9d2f-a8ad551282c9"/>
+    <automaticTask name="" id="312ab47d-0cbc-4e9a-a1fc-861399bb2ac0"/>
+    <sequence name="" id="4e1b7747-acf0-47ff-9d35-d8a341ca1a7a"/>
+    <manualTask name="Send Appeal to Prefecture" id="8ef0b0cf-0123-4913-8219-7a40cfc41446"/>
+    <manualTask name="Receive Result Appeal from Prefecture" id="6e730a16-494e-441f-948b-212927989a30"/>
+    <manualTask name="Notify Result Appeal to Offender" id="215fb4d8-2762-400e-8b5b-eae1b34ab1aa"/>
+    <parentsNode id="d6b2e82d-86d5-4730-aa6a-2e0256e475a7" sourceId="b84c769c-35d2-44e3-8361-88a4cd06cd4c" targetId="b1a67559-f73c-4c9b-acab-6de348b631e7"/>
+    <parentsNode id="1ca82275-91a6-49af-9d0a-9aeb1758f20c" sourceId="b84c769c-35d2-44e3-8361-88a4cd06cd4c" targetId="b05e696d-fa3b-4a07-a2c7-2255047e7d53"/>
+    <parentsNode id="44969748-c878-482b-87a9-74d0f4e02857" sourceId="b84c769c-35d2-44e3-8361-88a4cd06cd4c" targetId="70b581fb-7630-49f9-8c1c-b85dac257ede"/>
+    <parentsNode id="b22794af-84a5-4fd6-9cce-560c9295247b" sourceId="b05e696d-fa3b-4a07-a2c7-2255047e7d53" targetId="cb8fe545-bafc-4fe4-be87-3d89229ed9a8"/>
+    <parentsNode id="d8213da9-cd2d-4636-8501-8c7c47f8e716" sourceId="b05e696d-fa3b-4a07-a2c7-2255047e7d53" targetId="580c1fc3-21ec-48ef-9632-3f42cfdff830"/>
+    <parentsNode id="82491894-9ce0-4cc0-b479-db5ced4c450e" sourceId="70b581fb-7630-49f9-8c1c-b85dac257ede" targetId="c6dff9d3-389e-4b0e-a520-06caedf3f2c9"/>
+    <parentsNode id="a2e95e92-2bec-4311-b98d-69c78851ea83" sourceId="70b581fb-7630-49f9-8c1c-b85dac257ede" targetId="3fd46b13-5e91-4c3e-8dc1-ecd186ca13e5"/>
+    <parentsNode id="3f636f68-ea6b-4505-a218-8bd5f9865c49" sourceId="cb8fe545-bafc-4fe4-be87-3d89229ed9a8" targetId="9ba14146-47c1-459a-a2df-cca58ef84181"/>
+    <parentsNode id="b270d6c1-658c-4918-bf62-53f91b479816" sourceId="cb8fe545-bafc-4fe4-be87-3d89229ed9a8" targetId="1a332388-9833-4639-a286-f9ba1fd6be85"/>
+    <parentsNode id="3e677aaa-b7bb-43d5-91b3-d599642220cf" sourceId="580c1fc3-21ec-48ef-9632-3f42cfdff830" targetId="3b63834b-713b-4d8b-a47b-773b90ee10e5"/>
+    <parentsNode id="b46754f2-fdec-418a-a9e7-5c2da39225df" sourceId="580c1fc3-21ec-48ef-9632-3f42cfdff830" targetId="65873302-5f36-4454-af43-afb1edb97057"/>
+    <parentsNode id="1b8c6044-3234-424a-9b81-474c11428b05" sourceId="1a332388-9833-4639-a286-f9ba1fd6be85" targetId="5e02bf3d-b0c2-446a-9215-0233ab444fbd"/>
+    <parentsNode id="6d86d542-47b2-47a9-849b-8fb87063830f" sourceId="1a332388-9833-4639-a286-f9ba1fd6be85" targetId="fcdbe2ba-4c41-4aff-adb6-e67eabc12e38"/>
+    <parentsNode id="d9086a91-2c4e-4011-8577-e3ae2a121106" sourceId="1a332388-9833-4639-a286-f9ba1fd6be85" targetId="f1dcbdb8-a17e-4720-8377-28ab04afa9f0"/>
+    <parentsNode id="ca48655a-44d8-453e-b638-af4730ec3bd1" sourceId="65873302-5f36-4454-af43-afb1edb97057" targetId="7223def8-338b-46d9-b59f-669bdccbe4fc"/>
+    <parentsNode id="53ca0753-1893-4811-a8f4-14a91d275835" sourceId="65873302-5f36-4454-af43-afb1edb97057" targetId="f564d923-2948-4f43-ab18-ac5b04197c6a"/>
+    <parentsNode id="efb6585c-2b23-40c1-a3f4-976395708e20" sourceId="f564d923-2948-4f43-ab18-ac5b04197c6a" targetId="093b3f82-44f6-4dfe-8ac8-5809311bcc2a"/>
+    <parentsNode id="9f8e292c-d249-49e7-b351-ff33c4906fd9" sourceId="f564d923-2948-4f43-ab18-ac5b04197c6a" targetId="4b787099-aeae-4052-8697-b7425149f101"/>
+    <parentsNode id="a048bcb2-a229-4845-902a-69c1d1451ee5" sourceId="4b787099-aeae-4052-8697-b7425149f101" targetId="b3d732b4-e13b-46c0-9640-370ebacbf6f8"/>
+    <parentsNode id="186ef299-1da2-4e17-9a47-a3c1ea1c2b74" sourceId="4b787099-aeae-4052-8697-b7425149f101" targetId="6e3e9db7-e96f-4bf9-82eb-75bb227d1c11"/>
+    <parentsNode id="527985c7-4a54-44b5-ab0e-431b7acfacd6" sourceId="4b787099-aeae-4052-8697-b7425149f101" targetId="3ef8366c-8989-4291-b8f1-fcf769aeca05"/>
+    <parentsNode id="fb4158d0-1712-4f6e-98e7-0971a6c3de97" sourceId="4b787099-aeae-4052-8697-b7425149f101" targetId="3869fdc7-1470-4a41-9e4d-22147146f12f"/>
+    <parentsNode id="dea08db0-bdcb-4471-aa8e-d635d2aad941" sourceId="6e3e9db7-e96f-4bf9-82eb-75bb227d1c11" targetId="20a9dc46-50da-4bba-a690-9492f88e2bab"/>
+    <parentsNode id="0e8ef0e4-7e9d-461b-aee7-f0f741ab42ec" sourceId="6e3e9db7-e96f-4bf9-82eb-75bb227d1c11" targetId="fc0fc466-14f7-4107-9d2f-a8ad551282c9"/>
+    <parentsNode id="84d9792d-62f3-4f27-9bd9-0b5670218027" sourceId="3869fdc7-1470-4a41-9e4d-22147146f12f" targetId="312ab47d-0cbc-4e9a-a1fc-861399bb2ac0"/>
+    <parentsNode id="2db55f90-6134-4116-84f2-3fdaba5634b0" sourceId="3869fdc7-1470-4a41-9e4d-22147146f12f" targetId="4e1b7747-acf0-47ff-9d35-d8a341ca1a7a"/>
+    <parentsNode id="a7e36792-6ef5-42c8-a514-bc82f9dfa076" sourceId="4e1b7747-acf0-47ff-9d35-d8a341ca1a7a" targetId="8ef0b0cf-0123-4913-8219-7a40cfc41446"/>
+    <parentsNode id="43a69f61-a516-4fe2-ade5-5bc5699150ba" sourceId="4e1b7747-acf0-47ff-9d35-d8a341ca1a7a" targetId="6e730a16-494e-441f-948b-212927989a30"/>
+    <parentsNode id="93ff4e1a-8e3d-41ce-9b4c-da19e11ea102" sourceId="4e1b7747-acf0-47ff-9d35-d8a341ca1a7a" targetId="215fb4d8-2762-400e-8b5b-eae1b34ab1aa"/>
+  </processTree>
+</ptml>
