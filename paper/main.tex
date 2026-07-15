@@ -243,24 +243,6 @@ pulling the three views of one process toward the same point. The \emph{contrast
 \label{eq:loss}
 \end{equation}
 
-\begin{table}
-\caption{Model and training configuration.}
-\label{tab:hyper}
-\small
-\begin{tabular}{llll}
-\toprule
-\multicolumn{2}{l}{\textbf{Architecture}} & \multicolumn{2}{l}{\textbf{Optimization}} \\
-\midrule
-Latent dimension $D_z$ & 48 & Optimizer & AdamW (lr $10^{-3}$, weight decay $10^{-3}$) \\
-Hidden dimension $H$ & 96 & Batch size & 32 \\
-Dropout & 0.25 & Gradient clipping & global norm 5.0 \\
-Petri message-passing rounds & 3 & Label smoothing & 0.08 \\
-Vocabularies & 40 tree / 31 act.\ tokens & LR schedule & halve on val.\ plateau (patience 2) \\
-Trainable parameters & 302{,}825 & Early stopping & patience 4 of max.\ 100 epochs \\
-\bottomrule
-\end{tabular}
-\end{table}
-
 Table~\ref{tab:hyper} summarizes the configuration. The model is deliberately small ($\approx$0.3M parameters), with standard safeguards against overfitting: dropout, weight decay, label smoothing, stochastic latent sampling, family-grouped positives, activity remapping, validation-based learning-rate reduction, early stopping, and best-validation checkpoint retention.
 
 \section{Assessment}
@@ -275,12 +257,37 @@ The assessment follows the three research questions, covering training behavior,
 
 Figure~\ref{fig:training} shows the training run. Training converged smoothly: the validation loss decreased from $2.50$ to a best value of $1.905$, the schedule halved the learning rate once (epoch 31), and early stopping ended the run after epoch 32; the best-validation checkpoint is epoch 28, while the final checkpoint is used for the test report below. The validation loss is lower than the training loss because training uses dropout, stochastic latent sampling, grouped positives, and activity remapping, whereas validation and testing use deterministic latent means and unremapped inputs. All validation loss components improve together (Figure~\ref{fig:training}b): reconstruction is slightly easier than the two translation tasks, and the contrastive loss drops from $1.70$ to $1.31$. The final-checkpoint test loss is $1.416$ (tree reconstruction $0.428$, trace$\to$tree $0.450$, Petri$\to$tree $0.436$, contrastive $0.800$, KL $19.903$). Training takes about 46 minutes on a single CPU; no GPU is required at this scale.
 
-\begin{figure}
-  \centering
-  \includegraphics[width=0.88\textwidth]{figures/training_curves.pdf}
-  \caption{Training behavior. (a)~Training and validation loss per epoch; the dashed line marks the learning-rate halving on a validation plateau, the dotted line the best-validation checkpoint (epoch 28), and the final checkpoint at epoch 32 is used for the test report. (b)~The validation loss components decrease jointly.}
-  \label{fig:training}
-\end{figure}
+\begin{center}
+\begin{minipage}[t]{0.47\textwidth}
+\leavevmode
+\centering
+\scriptsize
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llll}
+\toprule
+\multicolumn{2}{l}{\textbf{Architecture}} & \multicolumn{2}{l}{\textbf{Optimization}} \\
+\midrule
+Latent dimension $D_z$ & 48 & Optimizer & AdamW (lr $10^{-3}$, weight decay $10^{-3}$) \\
+Hidden dimension $H$ & 96 & Batch size & 32 \\
+Dropout & 0.25 & Gradient clipping & global norm 5.0 \\
+Petri message-passing rounds & 3 & Label smoothing & 0.08 \\
+Vocabularies & 40 tree / 31 act.\ tokens & LR schedule & halve on val.\ plateau (patience 2) \\
+Trainable parameters & 302{,}825 & Early stopping & patience 4 of max.\ 100 epochs \\
+\bottomrule
+\end{tabular}}
+\captionsetup{hypcap=false}
+\captionof{table}{Model and training configuration.}
+\label{tab:hyper}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.50\textwidth}
+\leavevmode
+\centering
+\includegraphics[width=\linewidth]{figures/training_curves.pdf}
+\captionsetup{hypcap=false}
+\captionof{figure}{Training behavior. (a)~Training and validation loss per epoch; the dashed line marks the learning-rate halving on a validation plateau, the dotted line the best-validation checkpoint (epoch 28), and the final checkpoint at epoch 32 is used for the test report. (b)~The validation loss components decrease jointly.}
+\label{fig:training}
+\end{minipage}
+\end{center}
 
 \subsection{Decode Quality (RQ2)}
 \label{sec:decodequality}
