@@ -183,7 +183,7 @@ This section presents the paired training data, the encoders, the grammar-masked
 \subsection{Synthetic Paired Triples}
 \label{sec:datagen}
 
-Real-world collections rarely record which log, tree, and net represent the \emph{same} process, so ProcRosetta is trained on synthetic \emph{paired triples} in which the correspondence holds by construction (Figure~\ref{fig:triple}): each sample $x_i = (T_i, L_i, G_i, e_i)$ belongs to one behavior family $e_i$ with a canonical process tree $T_i$.
+ProcRosetta is trained on synthetic \emph{paired triples} whose correspondence is fixed by the generator (Figure~\ref{fig:triple}): each sample $x_i = (T_i, L_i, G_i, e_i)$ belongs to one behavior family $e_i$ with a canonical process tree $T_i$.
 \begin{itemize}
   \item canonical trees are sampled from $\{\operatorname{SEQ}, \operatorname{XOR}, \operatorname{AND}\}$ trees (maximum depth $3$, arity $2$--$3$, at most $30$ activities, reuse probability $0.15$) and canonicalized (Section~\ref{sec:preliminaries});
   \item each behavior is stored in two rows with the same tree target and the same visible traces, but with different Petri-net graphs; the second graph may simply rename nodes or use different internal routing while preserving the same behavior;
