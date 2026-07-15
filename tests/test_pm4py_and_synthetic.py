@@ -1,7 +1,7 @@
 from proc_rosetta.pm4py_bridge import petri_graph_to_net, simulate_traces, tree_to_petri_net
 from proc_rosetta.synthetic import ProcessSample, SyntheticConfig, generate_sample
 from proc_rosetta.families import enumerate_visible_language, generate_behavior_family
-from proc_rosetta.tree import ProcessTreeNode
+from proc_rosetta.tree import NodeKind, ProcessTreeNode
 
 
 def test_tree_to_petri_net_and_trace_simulation():
@@ -28,6 +28,25 @@ def test_generate_sample_contains_all_modalities():
 
     restored = ProcessSample.from_dict(sample.to_dict())
     assert restored.to_dict() == sample.to_dict()
+
+
+def test_default_generator_uses_two_child_loops_and_larger_logs():
+    sample = generate_sample(SyntheticConfig(), equivalence_id="x")
+
+    loop_nodes = []
+
+    def visit(node):
+        if node.kind is NodeKind.LOOP:
+            loop_nodes.append(node)
+        for child in node.children:
+            visit(child)
+
+    visit(sample.tree)
+
+    assert len(sample.traces) == 128
+    assert sample.tree.max_depth() >= 4
+    assert loop_nodes
+    assert all(len(node.children) == 2 for node in loop_nodes)
 
 
 def test_exact_behavior_family_motifs_share_language_and_ids():

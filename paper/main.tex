@@ -46,7 +46,7 @@
 \renewcommand{\shortauthors}{Alessandro Berti et al.}
 
 \begin{abstract}
-Process mining revolves around heterogeneous artifacts: event logs record observed behavior, while process trees and Petri nets specify intended or discovered behavior. Every established technique that connects two of these artifact types---process discovery, conformance checking, model transformation---is a dedicated algorithm for one direction of one artifact pair. This paper presents \emph{ProcRosetta}, a multimodal neural framework that embeds event logs, process trees, and Petri nets into a single shared latent space of process behavior and decodes any point of that space into a syntactically valid process tree. Three artifact-specific encoders (a recurrent tree encoder, a hierarchical attention-based log encoder, and a message-passing Petri-net encoder) are trained jointly with a shared grammar-masked decoder on synthetic paired triples, using reconstruction, cross-modal translation, latent alignment, contrastive, and variational objectives; grammar masking and deterministic tree-to-net conversion make every generated model well-formed by construction. On a held-out test split of 1{,}024 process triples grouped into 512 behavior families, ProcRosetta decodes valid, Petri-convertible process trees from all three modalities in 100\% of the cases, translates unseen event logs into process models that reach an alignment-based F1 of 0.938 (compared to 0.980 for the Inductive Miner), retrieves exact cross-modal counterparts above chance level, and produces 48-dimensional embeddings whose geometry correlates with behavioral distance on par with much higher-dimensional deterministic log representations. The implementation, data generator, and evaluation suite are publicly available.
+Process mining revolves around heterogeneous artifacts: event logs record observed behavior, while process trees and Petri nets specify intended or discovered behavior. Every established technique that connects two of these artifact types---process discovery, conformance checking, model transformation---is a dedicated algorithm for one direction of one artifact pair. This paper presents \emph{ProcRosetta}, a multimodal neural framework that embeds event logs, process trees, and Petri nets into a single shared latent space of process behavior and decodes any point of that space into a syntactically valid process tree. Three artifact-specific encoders (a recurrent tree encoder, a hierarchical attention-based log encoder, and a message-passing Petri-net encoder) are trained jointly with a shared grammar-masked decoder on synthetic paired triples, using reconstruction, cross-modal translation, latent alignment, contrastive, and variational objectives; grammar masking and deterministic tree-to-net conversion make every generated model well-formed by construction. On a held-out test split of 1{,}024 process triples grouped into 512 behavior families, ProcRosetta decodes valid, Petri-convertible process trees from all three modalities in 100\% of the cases, translates unseen event logs into process models that reach an alignment-based F1 of 0.938 (compared to 0.980 for the Inductive Miner), retrieves exact cross-modal counterparts above chance level, and produces 256-dimensional embeddings whose geometry correlates with behavioral distance on par with much higher-dimensional deterministic log representations. The implementation, data generator, and evaluation suite are publicly available.
 \end{abstract}
 
 \ccsdesc[500]{Information systems~Business process management}
@@ -116,11 +116,11 @@ A \emph{process tree}~\cite{Leemans2013,Leemans2026} is a block-structured proce
 \begin{equation}
 \begin{split}
 T \;::=\;& a \;\mid\; \tau \;\mid\; \operatorname{SEQ}(T_1,\ldots,T_k) \;\mid\; \operatorname{XOR}(T_1,\ldots,T_k)\\
-&\mid\; \operatorname{AND}(T_1,\ldots,T_k) \;\mid\; \operatorname{LOOP}(T_{\mathit{body}},T_{\mathit{redo}},T_{\mathit{exit}})
+&\mid\; \operatorname{AND}(T_1,\ldots,T_k) \;\mid\; \operatorname{LOOP}(T_{\mathit{body}},T_{\mathit{redo}})
 \end{split}
 \label{eq:grammar}
 \end{equation}
-with $k \ge 2$, where $a \in \Sigma$ is a visible activity, $\tau$ is a silent step, $\operatorname{SEQ}$ executes its children in order, $\operatorname{XOR}$ selects exactly one child, $\operatorname{AND}$ interleaves its children, and $\operatorname{LOOP}$ repeats a body with a redo and an exit part. Every process tree can be converted into a sound workflow net~\cite{Leemans2013}. Since $\operatorname{XOR}$ and $\operatorname{AND}$ are commutative, their children are sorted by a canonical structural key, giving behaviorally identical permutations one canonical representation.
+with $k \ge 2$, where $a \in \Sigma$ is a visible activity, $\tau$ is a silent step, $\operatorname{SEQ}$ executes its children in order, $\operatorname{XOR}$ selects exactly one child, $\operatorname{AND}$ interleaves its children, and $\operatorname{LOOP}$ repeats a body through a redo branch. Every process tree can be converted into a sound workflow net~\cite{Leemans2013}. Since $\operatorname{XOR}$ and $\operatorname{AND}$ are commutative, their children are sorted by a canonical structural key, giving behaviorally identical permutations one canonical representation.
 
 \paragraph{Petri nets.}
 An \emph{accepting labeled Petri net}~\cite{vanDerAalst2016} is a tuple $\mathit{PN} = (P, T, F, \ell, M_0, M_f)$ with places $P$, transitions $T$ ($P \cap T = \emptyset$), flow relation $F \subseteq (P \times T) \cup (T \times P)$, labeling $\ell : T \to \Sigma \cup \{\tau\}$, and initial and final markings $M_0, M_f$. For neural encoding, a Petri net is represented as a \emph{typed graph}: each node carries a type (place, visible transition, or invisible transition) and its token counts in $M_0$ and $M_f$; each arc carries a direction type. Nodes are sorted by name before tensorization, making the representation deterministic.
@@ -185,23 +185,23 @@ This section presents the paired training data, the encoders, the grammar-masked
 
 ProcRosetta is trained on synthetic \emph{paired triples} whose correspondence is fixed by the generator (Figure~\ref{fig:triple}): each sample $x_i = (T_i, L_i, G_i, e_i)$ belongs to one behavior family $e_i$ with a canonical process tree $T_i$.
 \begin{itemize}
-  \item canonical trees are sampled from $\{\operatorname{SEQ}, \operatorname{XOR}, \operatorname{AND}\}$ trees (maximum depth $3$, arity $2$--$3$, at most $30$ activities, reuse probability $0.15$) and canonicalized (Section~\ref{sec:preliminaries});
+  \item canonical ordinary trees are sampled from $\{\operatorname{SEQ}, \operatorname{XOR}, \operatorname{AND}, \operatorname{LOOP}\}$ trees (maximum recursion depth $8$, arity $2$--$3$ for non-loop operators, two-child loops, at most $30$ activities, reuse probability $0.15$) and canonicalized (Section~\ref{sec:preliminaries});
   \item each behavior is stored in two rows with the same tree target and the same visible traces, but with different Petri-net graphs; the second graph may simply rename nodes or use different internal routing while preserving the same behavior;
-  \item $L_i$ is a $16$-trace log view sampled from the family's visible behavior, and $G_i$ is the typed-graph representation of the corresponding Petri-net variant.
+  \item $L_i$ is a $128$-trace log view sampled from the family's visible behavior, and $G_i$ is the typed-graph representation of the corresponding Petri-net variant.
 \end{itemize}
-The generator uses a fixed random seed and produces three disjoint family-wise splits: $8{,}192$ training, $1{,}024$ validation, and $1{,}024$ test rows, corresponding to $4{,}096$, $512$, and $512$ behavior families (Table~\ref{tab:dataset}). The grammar and the architecture support the $\operatorname{LOOP}$ operator as well (Equation~\ref{eq:grammar}), but loops were not enabled in this run. A loop can repeat an arbitrary number of times, so a finite $16$-trace sample depends strongly on the simulator's repeat and exit choices. We therefore use only $\{\operatorname{SEQ}, \operatorname{XOR}, \operatorname{AND}\}$ in the main experiment, keeping the data focused on sequence, choice, and concurrency; loop-heavy data is left to a separate evaluation.
+The generator uses a fixed random seed and produces three disjoint family-wise splits: $8{,}192$ training, $1{,}024$ validation, and $1{,}024$ test rows, corresponding to $4{,}096$, $512$, and $512$ behavior families (Table~\ref{tab:dataset}). Loops are enabled in the ordinary-tree family. Since loop languages are generally unbounded, ordinary loop families use process-tree playout to construct the finite observed trace pool, while their alternate Petri-net representation is certified by isomorphic renaming. The controlled duplicate-label, concurrency, and non-free-choice families remain checked by bounded complete visible-language enumeration. After regenerating the full splits and rerunning training, aggregate statistics and empirical result tables should be refreshed from the new metadata and test report.
 
 \begin{table}
-\caption{Synthetic dataset statistics per split (rows are paired triples; behavior families group exact-equivalent rows; fixed seed).}
+\caption{Configured synthetic dataset splits for the loop-enabled data run (rows are paired triples; behavior families group equivalent rows; fixed seed).}
 \label{tab:dataset}
 \small
-\begin{tabular}{lrrrrrrrr}
+\begin{tabular}{lrrrrrr}
 \toprule
-Split & Rows & Families & \makecell[r]{Avg.\ tree\\size} & \makecell[r]{Avg.\ tree\\depth} & \makecell[r]{Traces per\\row} & \makecell[r]{Avg.\ trace\\length} & \makecell[r]{Max Petri\\nodes} & \makecell[r]{Max Petri\\edges} \\
+Split & Rows & Families & \makecell[r]{Families per\\motif} & \makecell[r]{Max recursion\\depth} & \makecell[r]{Traces per\\row} & \makecell[r]{Petri variants\\per family} \\
 \midrule
-Training   & 8{,}192 & 4{,}096 & 8.20 & 3.51 & 16 & 3.76 & 66 & 78 \\
-Validation & 1{,}024 & 512     & 8.24 & 3.52 & 16 & 3.76 & 45 & 56 \\
-Test       & 1{,}024 & 512     & 8.31 & 3.51 & 16 & 3.78 & 51 & 60 \\
+Training   & 8{,}192 & 4{,}096 & 1{,}024 & 8 & 128 & 2 \\
+Validation & 1{,}024 & 512     & 128     & 8 & 128 & 2 \\
+Test       & 1{,}024 & 512     & 128     & 8 & 128 & 2 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -211,7 +211,7 @@ For neural processing, each artifact is \emph{tokenized}. A process tree becomes
 \subsection{Three Encoders, One Latent Space}
 \label{sec:encoders}
 
-Each encoder maps its artifact to a diagonal Gaussian $q_m(z \mid x) = \mathcal{N}(\mu_m, \operatorname{diag}(\sigma_m^2))$ over a shared $D_z$-dimensional latent space ($D_z = 48$), for modality $m \in \{\mathit{tree}, \mathit{trace}, \mathit{petri}\}$, as in variational autoencoders~\cite{KingmaWelling2014}: $\mu_m$ is the embedding of the artifact and $\sigma_m$ the encoder's uncertainty. During training, latent vectors are sampled as $z_m = \mu_m + \epsilon \odot \sigma_m$ with $\epsilon \sim \mathcal{N}(0, I)$, which regularizes the space; at test time the deterministic mean $z_m = \mu_m$ is used.
+Each encoder maps its artifact to a diagonal Gaussian $q_m(z \mid x) = \mathcal{N}(\mu_m, \operatorname{diag}(\sigma_m^2))$ over a shared $D_z$-dimensional latent space ($D_z = 256$), for modality $m \in \{\mathit{tree}, \mathit{trace}, \mathit{petri}\}$, as in variational autoencoders~\cite{KingmaWelling2014}: $\mu_m$ is the embedding of the artifact and $\sigma_m$ the encoder's uncertainty. During training, latent vectors are sampled as $z_m = \mu_m + \epsilon \odot \sigma_m$ with $\epsilon \sim \mathcal{N}(0, I)$, which regularizes the space; at test time the deterministic mean $z_m = \mu_m$ is used.
 
 \emph{Tree encoder.} The token sequence of the process tree is embedded and processed by a gated recurrent unit (GRU)---a standard recurrent network that reads a sequence left to right while maintaining a hidden state---with hidden size $H = 96$; the hidden state at the last non-padding token is projected linearly to $(\mu_{\mathit{tree}}, \sigma_{\mathit{tree}})$.
 
@@ -267,12 +267,12 @@ Figure~\ref{fig:training} shows the training run. Training converged smoothly: t
 \toprule
 \multicolumn{2}{l}{\textbf{Architecture}} & \multicolumn{2}{l}{\textbf{Optimization}} \\
 \midrule
-Latent dimension $D_z$ & 48 & Optimizer & AdamW (lr $10^{-3}$, weight decay $10^{-3}$) \\
+Latent dimension $D_z$ & 256 & Optimizer & AdamW (lr $10^{-3}$, weight decay $10^{-3}$) \\
 Hidden dimension $H$ & 96 & Batch size & 32 \\
 Dropout & 0.25 & Gradient clipping & global norm 5.0 \\
 Petri message-passing rounds & 3 & Label smoothing & 0.08 \\
 Vocabularies & 40 tree / 31 act.\ tokens & LR schedule & halve on val.\ plateau (patience 2) \\
-Trainable parameters & 302{,}825 & Early stopping & patience 4 of max.\ 100 epochs \\
+Trainable parameters & 443{,}849 & Early stopping & patience 4 of max.\ 100 epochs \\
 \bottomrule
 \end{tabular}}
 \captionsetup{hypcap=false}
@@ -341,7 +341,7 @@ The semantic half is also strong. The decoded tree \emph{exactly} equals the can
 
 Table~\ref{tab:discovery} addresses the log-to-model use case: each test log is translated by ProcRosetta (encode the log, decode a tree, convert to a net) and, independently, mined with PM4Py's Inductive Miner; both models are scored against the log with alignment-based fitness~\cite{Adriansyah2012} and precision.
 
-The Inductive Miner achieves perfect fitness (1.000) and an F1 of 0.980. This is expected: the test logs are complete, noise-free sampled views of structured behavior---precisely the setting in which the Inductive Miner enjoys rediscovery guarantees on block-structured logs~\cite{Leemans2013}---so the comparison is intentionally played on its home turf. ProcRosetta reaches a fitness of 0.950, a precision of 0.937, and an F1 of 0.938---about 96\% of the Inductive Miner's F1. Notably, a purely neural translation---the entire log is compressed into a single 48-dimensional vector, with no search, replay, or counting---lands within this range while producing a valid model for every log. The remaining gap is concentrated in fitness: a slightly wrong decoded tree can make some observed traces non-replayable, whereas the Inductive Miner is designed to include them. We interpret this not as a claim that neural translation should replace classical discovery, but as evidence that the shared latent space preserves enough behavioral information to support discovery-grade model generation.
+The Inductive Miner achieves perfect fitness (1.000) and an F1 of 0.980. This is expected: the test logs are complete, noise-free sampled views of structured behavior---precisely the setting in which the Inductive Miner enjoys rediscovery guarantees on block-structured logs~\cite{Leemans2013}---so the comparison is intentionally played on its home turf. ProcRosetta reaches a fitness of 0.950, a precision of 0.937, and an F1 of 0.938---about 96\% of the Inductive Miner's F1. Notably, a purely neural translation---the entire log is compressed into a single 256-dimensional vector, with no search, replay, or counting---lands within this range while producing a valid model for every log. The remaining gap is concentrated in fitness: a slightly wrong decoded tree can make some observed traces non-replayable, whereas the Inductive Miner is designed to include them. We interpret this not as a claim that neural translation should replace classical discovery, but as evidence that the shared latent space preserves enough behavioral information to support discovery-grade model generation.
 
 \subsection{Embedding Quality (RQ1, RQ3)}
 \label{sec:embeddingresults}
@@ -359,13 +359,13 @@ Method & Type & Dim. & Behavior $\rho$ $\uparrow$ & NN behavior $\downarrow$ & I
 Eventually-follows distribution & $\circ$ log features & 148 & \textbf{0.889} & 0.026 & 1.184 \\
 Activity counts & $\circ$ log features & 14 & 0.848 & 0.023 & 1.186 \\
 PM4Py log case features & $\circ$ log features & 28 & 0.846 & 0.146 & 1.063 \\
-\textbf{ProcRosetta} $\mu_{\mathit{trace}}$ & $\bullet$ learned (log) & 48 & 0.841 & \textbf{0.000} & \textbf{1.209} \\
+\textbf{ProcRosetta} $\mu_{\mathit{trace}}$ & $\bullet$ learned (log) & 256 & 0.841 & \textbf{0.000} & \textbf{1.209} \\
 Directly-follows distribution$^\dagger$ & $\circ$ log features & 146 & 0.764 & \textbf{0.000} & \textbf{1.209} \\
-\textbf{ProcRosetta} $\mu_{\mathit{fused}}$ & $\bullet$ learned (all) & 48 & 0.757 & \textbf{0.000} & \textbf{1.209} \\
-PetriNet2Vec (PM4Py)~\cite{Colonna2024} & $\bullet$ learned (net) & 64 & 0.722 & 0.531 & 0.678 \\
+\textbf{ProcRosetta} $\mu_{\mathit{fused}}$ & $\bullet$ learned (all) & 256 & 0.757 & \textbf{0.000} & \textbf{1.209} \\
+PetriNet2Vec (PM4Py)~\cite{Colonna2024} & $\bullet$ learned (net) & 256 & 0.722 & 0.531 & 0.678 \\
 Trace-variant distribution$^\dagger$ & $\circ$ log features & 665 & 0.692 & \textbf{0.000} & \textbf{1.209} \\
-\textbf{ProcRosetta} $\mu_{\mathit{petri}}$ & $\bullet$ learned (net) & 48 & 0.686 & \textbf{0.000} & \textbf{1.209} \\
-\textbf{ProcRosetta} $\mu_{\mathit{tree}}$ & $\bullet$ learned (tree) & 48 & 0.673 & \textbf{0.000} & \textbf{1.209} \\
+\textbf{ProcRosetta} $\mu_{\mathit{petri}}$ & $\bullet$ learned (net) & 256 & 0.686 & \textbf{0.000} & \textbf{1.209} \\
+\textbf{ProcRosetta} $\mu_{\mathit{tree}}$ & $\bullet$ learned (tree) & 256 & 0.673 & \textbf{0.000} & \textbf{1.209} \\
 Petri structural counts & $\circ$ net features & 9 & 0.528 & \textbf{0.000} & \textbf{1.209} \\
 \bottomrule
 \end{tabular}
@@ -373,7 +373,7 @@ Petri structural counts & $\circ$ net features & 9 & 0.528 & \textbf{0.000} & \t
 
 Table~\ref{tab:embedding} ranks the four learned ProcRosetta representations against six deterministic baselines and the learned PetriNet2Vec baseline~\cite{Colonna2024}. Three observations stand out. First, deterministic log abstractions are strong on this structured synthetic test set: eventually-follows, activity counts, and PM4Py case features reach $\rho = 0.846$--$0.889$. The directly-follows and trace-variant baselines still deserve a caveat: the behavioral distance is \emph{defined} as an average that includes their $L_1$ abstractions, so they partially measure the evaluation target by construction and should be read as skyline references rather than as competing methods.
 
-Second, ProcRosetta's learned log embedding is competitive with those deterministic features: $\rho = 0.841$ with 48 dimensions, close to the best log baselines and above directly-follows and trace variants. The zero nearest-neighbor behavior values in several rows are expected under the new family-based split: many methods retrieve the exact-equivalent alternate representation of the same behavior family as nearest neighbor.
+Second, ProcRosetta's learned log embedding is competitive with those deterministic features: $\rho = 0.841$ with 256 dimensions, close to the best log baselines and above directly-follows and trace variants. The zero nearest-neighbor behavior values in several rows are expected under the new family-based split: many methods retrieve the exact-equivalent alternate representation of the same behavior family as nearest neighbor.
 
 Third, the comparison on the Petri-net side favors ProcRosetta on neighborhoods: PetriNet2Vec attains a good global correlation ($\rho = 0.722$) but weaker nearest neighbors (NN behavior 0.531), whereas ProcRosetta's net embedding ($\rho = 0.686$) and fused embedding ($\rho = 0.757$) retrieve exact-equivalent nearest neighbors on average.
 
@@ -449,7 +449,7 @@ The canonical target trees used in the experiments cover sequence, exclusive cho
 \section{Conclusion}
 \label{sec:conclusion}
 
-This paper introduced ProcRosetta, a multimodal neural framework that embeds the three central artifact types of process mining---event logs, process trees, and Petri nets---into a single latent space of process behavior and decodes any point of that space into a grammar-valid process tree that converts deterministically into a sound Petri net. The assessment answered all three research questions affirmatively and quantified the remaining headroom: the three encoders converge to one shared geometry that aligns paired artifacts above chance at exact-row level and strongly at behavior-family level (RQ1); grammar-masked decoding produced a valid, Petri-convertible process tree in 100\% of 4{,}096 test decodes, with decoded behavior far closer to the source than unrelated models (RQ2); and the learned 48-dimensional embeddings rival much higher-dimensional deterministic features while log-to-model translation reaches about 96\% of the Inductive Miner's F1 in the miner's own best-case setting (RQ3).
+This paper introduced ProcRosetta, a multimodal neural framework that embeds the three central artifact types of process mining---event logs, process trees, and Petri nets---into a single latent space of process behavior and decodes any point of that space into a grammar-valid process tree that converts deterministically into a sound Petri net. The assessment answered all three research questions affirmatively and quantified the remaining headroom: the three encoders converge to one shared geometry that aligns paired artifacts above chance at exact-row level and strongly at behavior-family level (RQ1); grammar-masked decoding produced a valid, Petri-convertible process tree in 100\% of 4{,}096 test decodes, with decoded behavior far closer to the source than unrelated models (RQ2); and the learned 256-dimensional embeddings rival much higher-dimensional deterministic features while log-to-model translation reaches about 96\% of the Inductive Miner's F1 in the miner's own best-case setting (RQ3).
 
 Future work follows directly from the assessment. On the data side: larger and more diverse tree distributions including loops, noisy and incomplete simulated logs, quantified near-duplicate behavior across splits, and validation on real-life logs and model collections. On the model side: stronger cross-modal retrieval objectives, beam or sampling-based decoding, multi-seed robustness studies, and scaling the encoders. On the representation side: richer sound target languages such as POWL~\cite{Kourani2026} as decoder output, an exact-conformance-based evaluation distance, and attaching further encoders---including natural-language process descriptions~\cite{Kourani2024LLM}---to the same latent space, moving closer to a true Rosetta stone for process representations.
 

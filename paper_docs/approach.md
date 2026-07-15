@@ -76,18 +76,18 @@ The process tree is the decoder target and canonical behavior description. The d
 
 | Parameter | Default | Meaning |
 |---|---:|---|
-| `max_depth` | 3 | Maximum recursion depth for generated trees. |
+| `max_depth` | 8 | Maximum recursion depth for generated trees. |
 | `max_activities` | 30 | Maximum number of distinct activity labels before canonicalization. |
 | `max_arity` | 3 | Maximum arity for non-loop operators. |
-| `traces_per_sample` | 16 | Number of simulated traces generated from each process tree. |
-| `curriculum_phase` | 2 | Operator set used during generation. Phase 2 enables `SEQ`, `XOR`, and `AND`; phase 3 additionally enables `LOOP`. |
+| `traces_per_sample` | 128 | Number of traces stored in each generated log view. |
+| `curriculum_phase` | 3 | Operator set used during generation. Phase 3 enables `SEQ`, `XOR`, `AND`, and `LOOP`. |
 | `reuse_activity_probability` | 0.15 | Probability of reusing an activity label instead of introducing a new one. |
-| `leaf_probability` | 0.35 | Probability of stopping recursion early and generating a leaf. |
+| `leaf_probability` | 0.65 | Probability of stopping recursion early and generating a leaf. |
 | `generator` | `behavior_families` | Generate grouped exact-equivalent behavior rows rather than isolated triples. |
 | `variants_per_behavior` | 2 | Number of representation rows per behavior family. |
-| `motif_context_size` | 2 | Shared sequence context wrapped around controlled equivalence motifs. |
+| `motif_context_size` | 4 | Shared sequence context wrapped around controlled equivalence motifs. |
 
-The current generated split uses `curriculum_phase = 2`, so it does not include `LOOP` nodes. This is an experimental-control choice rather than a model limitation: loop trees can repeat behavior arbitrarily many times, and a finite sampled log then depends heavily on the simulator's repeat and exit choices. The code supports `curriculum_phase = 3` for loop generation, but loop-heavy data should be evaluated as a separate setting.
+The current generated split uses `curriculum_phase = 3`, so ordinary-tree families include `LOOP` nodes. The generated loop form is the two-child form `LOOP(body, redo)`. Since loop languages can be unbounded, ordinary loop families use process-tree playout for the finite observed trace pool and certify their alternate Petri representation by isomorphic renaming.
 
 The ordinary-tree motif and legacy isolated generator first sample the number of activities uniformly from the range `[2, max_activities]`, then recursively construct a process tree. At each recursive call, the generator either creates a leaf or creates an operator node:
 
@@ -104,8 +104,7 @@ make_node(depth)
     │   └── recursively generate each child
     └── if operator is LOOP:
         ├── generate body child
-        ├── generate redo child
-        └── generate exit child, either tau or a generated subtree
+        └── generate redo child
 ```
 
 Activity leaves are initially named `a0`, `a1`, etc. After the tree is generated, activity labels are canonicalized to `A0`, `A1`, ... in order of first occurrence. This makes the synthetic data approximately invariant to arbitrary activity-name choices. If the generated tree contains fewer than two unique activity labels, the code attempts to make the sample less trivial by wrapping the tree in a sequential composition with an additional generated activity leaf. Because the leaf sampler itself can reuse an existing activity label, this is best understood as a heuristic rather than a strict duplicate-label guarantee.
@@ -125,7 +124,7 @@ TAU                 silent leaf
 SEQ(children)       sequential composition
 XOR(children)       exclusive-choice composition
 AND(children)       parallel composition
-LOOP(children)      loop composition, with two or three children in the data model
+LOOP(children)      loop composition, generated and decoded with two children
 ```
 
 ### 2.3 Petri-net generation from the process tree
@@ -153,7 +152,7 @@ Places and transitions are sorted by their string names before graph extraction,
 
 ### 2.4 Trace/event-log simulation
 
-The event log is sampled from the same generated behavior. For ordinary tree rows and the legacy isolated generator, the code converts the internal tree to a `pm4py` process tree and uses process-tree playout. For behavior-family rows, the code samples from the family trace pool so alternate Petri representations share the same visible behavior. The number of traces is `traces_per_sample`, defaulting to 16.
+The event log is sampled from the same generated behavior. For ordinary loop behavior-family rows and the legacy isolated generator, the code converts the internal tree to a `pm4py` process tree and uses process-tree playout. For controlled behavior-family rows, the code samples from the checked family trace pool so alternate Petri representations share the same visible behavior. The number of traces is `traces_per_sample`, defaulting to 128.
 
 The event log is then converted into a pure Python trace representation:
 
@@ -209,10 +208,10 @@ The default collation limits are:
 
 | Batch limit | Default |
 |---|---:|
-| `max_tree_tokens` | 128 |
-| `max_traces` | 32 |
-| `max_trace_length` | 64 |
-| `max_petri_nodes` | 128 |
+| `max_tree_tokens` | 512 |
+| `max_traces` | 128 |
+| `max_trace_length` | 128 |
+| `max_petri_nodes` | 512 |
 
 Each mini-batch contains:
 
@@ -298,7 +297,7 @@ The default architectural hyperparameters used by `train.py` are:
 
 | Hyperparameter | Default |
 |---|---:|
-| latent dimension `D_z` | 48 |
+| latent dimension `D_z` | 256 |
 | hidden dimension `H` | 96 |
 | dropout probability | 0.25 |
 | Petri message-passing steps | 3 |
@@ -510,7 +509,7 @@ Conceptually:
 5. When `open_nodes = 0`, the only valid next structural token is `<eos>`.
 6. After `<eos>`, the only valid token is `<pad>`.
 
-For `LOOP`, the mask restricts the arity to the loop-compatible arity used by the tokenizer. Under the default tokenizer, this is `ARITY_3`.
+For `LOOP`, the mask restricts the arity to the generated two-child form. Under the default tokenizer, this is `ARITY_2`.
 
 Invalid logits are set to approximately negative infinity (`-1e9`) before the cross-entropy is computed. Therefore, the model is trained only over syntactically admissible next tokens.
 

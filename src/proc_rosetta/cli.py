@@ -30,11 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
     sample.add_argument("--validation-families", type=int, default=None)
     sample.add_argument("--test-families", type=int, default=None)
     sample.add_argument("--seed", type=int, default=13)
-    sample.add_argument("--max-depth", type=int, default=3)
+    sample.add_argument("--max-depth", type=int, default=8)
     sample.add_argument("--max-activities", type=int, default=DEFAULT_MAX_ACTIVITIES)
     sample.add_argument("--max-arity", type=int, default=3)
-    sample.add_argument("--traces-per-sample", type=int, default=16)
-    sample.add_argument("--curriculum-phase", type=int, default=2)
+    sample.add_argument("--traces-per-sample", type=int, default=128)
+    sample.add_argument("--curriculum-phase", type=int, default=3)
     sample.add_argument(
         "--generator",
         choices=["behavior_families", "isolated"],
@@ -99,7 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--epochs", type=int, default=100)
     train.add_argument("--batch-size", type=int, default=32)
     train.add_argument("--learning-rate", type=float, default=1e-3)
-    train.add_argument("--latent-dim", type=int, default=48)
+    train.add_argument("--latent-dim", type=int, default=256)
     train.add_argument("--hidden-dim", type=int, default=96)
     train.add_argument("--dropout", type=float, default=0.25)
     train.add_argument("--weight-decay", type=float, default=1e-3)
@@ -135,7 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
     test.add_argument("--batch-size", type=int, default=16)
     test.add_argument("--device", default="cpu")
     test.add_argument("--skip-pm4py-petri-embedding", action="store_true")
-    test.add_argument("--petri-embedding-dim", type=int, default=64)
+    test.add_argument("--petri-embedding-dim", type=int, default=256)
     test.add_argument("--petri-num-walks", type=int, default=5)
     test.add_argument("--petri-walk-length", type=int, default=20)
     test.add_argument("--petri-window", type=int, default=5)
@@ -171,11 +171,11 @@ def synthetic_config_from_args(args: argparse.Namespace) -> SyntheticConfig:
     if args.class_coverage_mode is not None:
         overrides["class_coverage_mode"] = args.class_coverage_mode
     defaults = {
-        "max_depth": 3,
+        "max_depth": 8,
         "max_activities": DEFAULT_MAX_ACTIVITIES,
         "max_arity": 3,
-        "traces_per_sample": 16,
-        "curriculum_phase": 2,
+        "traces_per_sample": 128,
+        "curriculum_phase": 3,
         "generator": "behavior_families",
         "variants_per_behavior": 2,
         "log_views_per_behavior": 1,

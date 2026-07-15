@@ -117,7 +117,7 @@ Start by recreating synthetic training, validation, and test splits:
   --validation-count 1024 \
   --test-count 1024 \
   --max-activities 30 \
-  --traces-per-sample 16
+  --traces-per-sample 128
 ```
 
 This creates:
@@ -202,7 +202,7 @@ Useful training controls:
 ```bash
 ./train.py --quiet
 ./train.py --device cuda
-./train.py --latent-dim 128 --hidden-dim 256
+./train.py --latent-dim 256 --hidden-dim 256
 ./train.py --dropout 0.2 --weight-decay 1e-4
 ./train.py --views-per-family 2
 ./train.py --no-group-aware-batches
@@ -318,7 +318,8 @@ an unusable `.ptml` file.
 - The decoder still emits process trees for non-block Petri inputs. Behavioral
   decode agreement is therefore more meaningful than exact tree syntax for
   representation-ambiguous families.
-- The default script limits are `--max-traces 32` and `--max-trace-length 64`.
+- The default script limits are `--max-traces 128`, `--max-trace-length 128`,
+  and `--max-petri-nodes 512` where Petri inputs are accepted.
   Increase them for larger logs if memory allows.
 - A checkpoint can only encode activity labels covered by its tokenizer. The
   current default is 30 activities, but older checkpoints may support fewer.

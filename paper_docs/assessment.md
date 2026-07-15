@@ -73,8 +73,7 @@ T ::= {} & a \\
       \mid{} & \operatorname{SEQ}(T_1,\ldots,T_k), \quad k \ge 2 \\
       \mid{} & \operatorname{XOR}(T_1,\ldots,T_k), \quad k \ge 2 \\
       \mid{} & \operatorname{AND}(T_1,\ldots,T_k), \quad k \ge 2 \\
-      \mid{} & \operatorname{LOOP}(T_{body},T_{redo}) \\
-      \mid{} & \operatorname{LOOP}(T_{body},T_{redo},T_{exit}).
+      \mid{} & \operatorname{LOOP}(T_{body},T_{redo}).
 \end{aligned}
 \]
 
@@ -83,12 +82,12 @@ Here, \(a \in \Sigma\) is a visible activity leaf and \(\tau\) is an invisible/s
 - `SEQ` executes children in order.
 - `XOR` selects one branch.
 - `AND` executes branches in parallel/interleaving semantics.
-- `LOOP` represents repeated execution of a body with a redo branch and, in the current synthetic generation, an explicit exit branch.
+- `LOOP` represents repeated execution of a body through a redo branch.
 
-The data model accepts two- or three-child loop nodes. However, the current grammar-masked decoder uses a tokenizer whose maximum arity is forced to be at least 3 and whose next-token mask always emits `ARITY_3` for `LOOP`. The synthetic generator also constructs loops with an explicit third exit child. Thus, the effective generated-and-decoded loop form in the current experimental setting is the three-child form:
+The data model accepts two- or three-child loop nodes for compatibility with older serialized data. The current grammar-masked decoder and synthetic generator use the two-child form:
 
 \[
-\operatorname{LOOP}(T_{body}, T_{redo}, T_{exit}).
+\operatorname{LOOP}(T_{body}, T_{redo}).
 \]
 
 Process trees are serialized recursively as dictionaries. An activity has kind `activity` and a label, a silent node has kind `tau`, and an operator has a kind and a list of children. For example:
@@ -274,7 +273,7 @@ proc_rosetta_petri_mu
 proc_rosetta_fused_mu
 ```
 
-The decoder is grammar-masked, and the maximum generated token length is 128 by default. For each decoded token sequence, the following per-sample quantities are computed.
+The decoder is grammar-masked, and the maximum generated token length is 512 by default. For each decoded token sequence, the following per-sample quantities are computed.
 
 | Metric | Meaning |
 |---|---|
@@ -657,7 +656,7 @@ This baseline is introduced in the project. It is intentionally simple and tests
 The default baseline configuration in the project is:
 
 ```text
-dimensions = 64
+dimensions = 256
 num_walks = 5
 walk_length = 20
 window = 5
@@ -896,13 +895,13 @@ The embedding-quality ranking by Spearman behavior correlation is:
 | eventually-follows | 0.889 | 0.026 | 1.184 | 148 |
 | trace activity counts | 0.848 | 0.023 | 1.186 | 14 |
 | pm4py log features | 0.846 | 0.146 | 1.063 | 28 |
-| ProcRosetta trace | 0.841 | 0.000 | 1.209 | 48 |
+| ProcRosetta trace | 0.841 | 0.000 | 1.209 | 256 |
 | directly-follows | 0.764 | 0.000 | 1.209 | 146 |
-| ProcRosetta fused | 0.757 | 0.000 | 1.209 | 48 |
-| pm4py Petri Node2Vec | 0.722 | 0.531 | 0.678 | 64 |
+| ProcRosetta fused | 0.757 | 0.000 | 1.209 | 256 |
+| pm4py Petri Node2Vec | 0.722 | 0.531 | 0.678 | 256 |
 | trace variants | 0.692 | 0.000 | 1.209 | 665 |
-| ProcRosetta Petri | 0.686 | 0.000 | 1.209 | 48 |
-| ProcRosetta tree | 0.673 | 0.000 | 1.209 | 48 |
+| ProcRosetta Petri | 0.686 | 0.000 | 1.209 | 256 |
+| ProcRosetta tree | 0.673 | 0.000 | 1.209 | 256 |
 | Petri structural counts | 0.528 | 0.000 | 1.209 | 9 |
 
 Exact row-level cross-modal retrieval is above chance but remains the largest source of headroom:

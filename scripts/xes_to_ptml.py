@@ -30,9 +30,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--activity-key", default="concept:name")
     parser.add_argument("--case-id-key", default="case:concept:name")
-    parser.add_argument("--max-traces", type=int, default=32)
-    parser.add_argument("--max-trace-length", type=int, default=64)
-    parser.add_argument("--max-decode-length", type=int, default=128)
+    parser.add_argument("--max-traces", type=int, default=128)
+    parser.add_argument("--max-trace-length", type=int, default=128)
+    parser.add_argument("--max-decode-length", type=int, default=512)
     parser.add_argument(
         "--keep-canonical-labels",
         action="store_true",

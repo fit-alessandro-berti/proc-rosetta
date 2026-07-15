@@ -21,10 +21,10 @@ METADATA_FILENAME = "metadata.json"
 
 @dataclass(frozen=True)
 class BatchConfig:
-    max_tree_tokens: int = 128
-    max_traces: int = 32
-    max_trace_length: int = 64
-    max_petri_nodes: int = 128
+    max_tree_tokens: int = 512
+    max_traces: int = 128
+    max_trace_length: int = 128
+    max_petri_nodes: int = 512
 
 
 @dataclass(frozen=True)

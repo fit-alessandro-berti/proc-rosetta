@@ -21,11 +21,14 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert split_counts.training // rows_per_family // active_motifs == 1024
     assert split_counts.validation // rows_per_family // active_motifs == 128
     assert split_counts.test // rows_per_family // active_motifs == 128
+    assert sample_args.max_depth == 8
     assert sample_args.max_activities == 30
-    assert sample_args.traces_per_sample == 16
+    assert sample_args.max_arity == 3
+    assert sample_args.traces_per_sample == 128
+    assert sample_args.curriculum_phase == 3
     assert train_args.epochs == 100
     assert train_args.batch_size == 32
-    assert train_args.latent_dim == 48
+    assert train_args.latent_dim == 256
     assert train_args.hidden_dim == 96
     assert train_args.dropout == 0.25
     assert train_args.weight_decay == 1e-3

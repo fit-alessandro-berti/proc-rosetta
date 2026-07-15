@@ -56,22 +56,25 @@ Test & 1{,}024 & 512 \\
 
 The important generator settings are:
 \begin{itemize}
-  \item maximum tree depth: 3;
+  \item maximum ordinary-tree recursion depth: 8;
+  \item minimum ordinary-tree depth/size targets: depth 4 and 20 nodes;
   \item maximum activity labels: 30;
   \item maximum operator arity: 3;
-  \item traces per generated log view: 16;
+  \item traces per generated log view: 128;
   \item activity-label reuse probability: 0.15;
-  \item early leaf probability during tree recursion: 0.35;
+  \item early leaf probability during tree recursion: 0.65;
   \item representation rows per behavior family: 2;
   \item log views per behavior family: 1;
-  \item enabled process-tree operators: \texttt{SEQ}, \texttt{XOR}, and
-        \texttt{AND}.
+  \item enabled process-tree operators: \texttt{SEQ}, \texttt{XOR},
+        \texttt{AND}, and two-child \texttt{LOOP}.
 \end{itemize}
-The grammar and tokenizer support \texttt{LOOP}, but loops are not enabled in
-this data run. A loop can repeat an arbitrary number of times. With only
-16 traces per generated log view, the observed traces would depend heavily on
-the simulator's repeat/exit choices. The current experiment therefore keeps the
-main data focused on sequence, choice, and concurrency.
+The \texttt{LOOP} operator is generated in the ordinary-tree family. The
+generated and decoded loop form is the two-child form
+$\operatorname{LOOP}(T_{\mathit{body}},T_{\mathit{redo}})$; the tokenizer mask
+therefore emits \texttt{ARITY\_2} after a \texttt{LOOP} token. Because a loop
+can repeat an arbitrary number of times, ordinary loop families use finite
+process-tree playout to construct the observed trace pool rather than trying to
+enumerate an unbounded language exhaustively.
 
 \subsection{Why the Generator Uses Behavior Families}
 \label{app:behavior-families}
@@ -130,12 +133,14 @@ For ordinary-tree families, the generator samples a random process tree. It
 first samples a pool of activity labels, then recursively builds the tree:
 \begin{enumerate}
   \item If the maximum depth has been reached, it creates an activity leaf.
-  \item Otherwise, with probability 0.35 it also stops early and creates an
+  \item Otherwise, with probability 0.65 it also stops early and creates an
         activity leaf.
   \item If it does not stop, it chooses one operator from \texttt{SEQ},
-        \texttt{XOR}, and \texttt{AND}.
-  \item For these operators, it samples an arity between 2 and 3 and recursively
-        generates the children.
+        \texttt{XOR}, \texttt{AND}, and \texttt{LOOP}.
+  \item For \texttt{SEQ}, \texttt{XOR}, and \texttt{AND}, it samples an arity
+        between 2 and 3 and recursively generates the children.
+  \item For \texttt{LOOP}, it recursively generates exactly two children: the
+        body and the redo branch.
 \end{enumerate}
 Activity labels are introduced as \texttt{a0}, \texttt{a1}, and so on. With
 probability 0.15 the generator reuses an earlier label instead of introducing a
@@ -146,6 +151,10 @@ equivalent child permutations do not become different targets.
 
 If a generated ordinary tree has fewer than two unique activity labels, the
 generator tries to make it less trivial by adding another activity in sequence.
+The sampler retries ordinary trees and keeps the first tree that contains a
+loop, reaches the configured minimum depth, and has at least 20 nodes. If this
+does not happen within the retry budget, it keeps the deepest and largest
+candidate encountered.
 
 \paragraph{Controlled behavior families.}
 The other three family types use small hand-defined canonical trees:
@@ -160,10 +169,12 @@ The other three family types use small hand-defined canonical trees:
 \end{itemize}
 These trees are intentionally small because their purpose is to isolate one
 specific representation issue at a time. To avoid making every controlled case
-too bare, the generator appends up to two fresh activity labels as a shared
-sequential suffix. For example, if a motif already uses \texttt{A0},
-\texttt{A1}, and \texttt{A2}, the suffix can add \texttt{A3} and \texttt{A4}.
-The same suffix is added to both Petri-net variants in the family.
+too bare, the generator appends up to four fresh activity labels as a shared
+sequential suffix. The suffix is added as nested binary sequence nodes, so the
+configured maximum arity remains 3. For example, if a motif already uses
+\texttt{A0}, \texttt{A1}, and \texttt{A2}, the suffix can add \texttt{A3}
+through \texttt{A6}. The same suffix is added to both Petri-net variants in the
+family.
 
 \subsection{Step 3: Build Two Petri-Net Variants}
 \label{app:build-petri-variants}
@@ -204,21 +215,24 @@ structure is less block-like.
 \subsection{Step 4: Check Behavioral Equivalence}
 \label{app:equivalence-check}
 
-Before a behavior family is accepted, the generator checks that all Petri-net
-variants in that family have the same complete visible trace language. The
-checker explores reachable markings, records complete visible traces that reach
-the final marking, and ignores invisible transitions in the visible trace.
+Before a controlled behavior family is accepted, the generator checks that all
+Petri-net variants in that family have the same complete visible trace
+language. The checker explores reachable markings, records complete visible
+traces that reach the final marking, and ignores invisible transitions in the
+visible trace.
 
 The check has explicit resource limits:
 \begin{itemize}
   \item at most 5{,}000 explored states;
   \item at most 10{,}000 complete traces;
-  \item at most 20 visible activities per trace.
+  \item at most 32 visible activities per trace.
 \end{itemize}
 If all variants produce exactly the same language within these limits, the
-family is accepted. If a training family cannot be proven exact under the
-limits, it is skipped and the generator tries another family. The accepted row
-stores the equivalence status and the checked variant names in its metadata.
+family is accepted. Ordinary loop families are handled separately: their second
+Petri net is an isomorphic clone of the PM4Py tree conversion, so equivalence is
+certified structurally by the renaming transformation. These families store the
+equivalence status \texttt{isomorphic}. The accepted row stores the equivalence
+status and the checked variant names in its metadata.
 
 The generator also checks simple structural health conditions. In particular,
 the final marking must be reachable and there must be no dead transitions. A
@@ -227,15 +241,17 @@ family that fails these checks is rejected.
 \subsection{Step 5: Create the Generated Log View}
 \label{app:create-log-view}
 
-After equivalence is checked, the reference visible language is sorted into a
-trace pool. The current run creates one log view per behavior family and stores
-16 traces in that log view.
+After equivalence is checked or certified, the generator creates a trace pool.
+For controlled finite-language families, the pool is the sorted complete visible
+language found by the checker. For ordinary loop families, the pool is the set
+of traces observed in process-tree playout. The current run creates one log view
+per behavior family and stores 128 traces in that log view.
 
 The default log sampling mode is \texttt{uniform\_variants}. In this mode, the
-generator cycles through the complete trace pool until it has 16 traces, then
+generator cycles through the trace pool until it has 128 traces, then
 shuffles their order with a deterministic seed. If a behavior has only two trace
 variants, each variant appears several times. If it has more variants, the first
-16 positions of the repeated cycle are used. This keeps the generated logs
+128 positions of the repeated cycle are used. This keeps the generated logs
 simple and reproducible.
 
 The configuration also defines other sampling modes, such as sparse,

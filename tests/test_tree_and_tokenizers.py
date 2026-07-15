@@ -27,3 +27,20 @@ def test_tree_tokenizer_round_trip_and_grammar_mask():
     mask_after_bos = tokenizer.next_token_mask([tokenizer.bos_id])
     assert mask_after_bos[tokenizer.token_to_id["SEQ"]]
     assert not mask_after_bos[tokenizer.token_to_id["ARITY_2"]]
+
+
+def test_tree_tokenizer_masks_loop_as_two_child_operator():
+    tokenizer = TreeTokenizer(max_activities=4, max_arity=4)
+    prefix = [tokenizer.bos_id, tokenizer.token_to_id["LOOP"]]
+
+    mask = tokenizer.next_token_mask(prefix)
+
+    assert mask[tokenizer.token_to_id["ARITY_2"]]
+    assert not mask[tokenizer.token_to_id["ARITY_3"]]
+
+    tree = ProcessTreeNode.loop(
+        ProcessTreeNode.activity("raw_a"),
+        ProcessTreeNode.activity("raw_b"),
+    )
+    decoded = tokenizer.decode_tree(tokenizer.encode_tree(tree))
+    assert len(decoded.children) == 2

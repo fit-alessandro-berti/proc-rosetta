@@ -25,8 +25,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("output", help="output .ptml file")
     parser.add_argument("--checkpoint", default="checkpoints/proc_rosetta.pt")
     parser.add_argument("--device", default="cpu")
-    parser.add_argument("--max-petri-nodes", type=int, default=128)
-    parser.add_argument("--max-decode-length", type=int, default=128)
+    parser.add_argument("--max-petri-nodes", type=int, default=512)
+    parser.add_argument("--max-decode-length", type=int, default=512)
     parser.add_argument("--auto-guess-final-marking", action="store_true")
     return parser
 

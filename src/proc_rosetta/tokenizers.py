@@ -114,8 +114,7 @@ class TreeTokenizer:
         if state is GrammarState.NEED_ARITY:
             assert pending_operator is not None
             if pending_operator == "LOOP":
-                token = "ARITY_3" if self.max_arity >= 3 else "ARITY_2"
-                valid[self.token_to_id[token]] = True
+                valid[self.token_to_id["ARITY_2"]] = True
             else:
                 for token in self.arity_tokens:
                     valid[self.token_to_id[token]] = True

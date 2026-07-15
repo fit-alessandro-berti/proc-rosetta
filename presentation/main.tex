@@ -105,7 +105,7 @@
     % encoders
     \node[encb, minimum width=22mm] (enc) at (4.3,0) {\textbf{3 encoders}\\one per artifact};
     % latent space
-    \node[latb, circle, minimum size=21mm] (lat) at (8.0,0) {\textbf{shared}\\\textbf{latent space}\\64 dim};
+    \node[latb, circle, minimum size=21mm] (lat) at (8.0,0) {\textbf{shared}\\\textbf{latent space}\\256 dim};
     % decoder
     \node[decb, minimum width=24mm] (dec) at (11.6,0) {\textbf{shared decoder}\\grammar mask};
     % output
@@ -141,7 +141,7 @@
     \node[encb, minimum width=36mm] (pe) at (0,-1.5) {\textbf{Petri encoder}\\message-passing GNN, 3 rounds};
     % latent
     \node[latb, minimum width=25mm, minimum height=22mm] (lat) at (5.4,0)
-      {\textbf{latent space}\\$z \in \mathbb{R}^{64}$\\Gaussian $(\mu, \sigma)$};
+      {\textbf{latent space}\\$z \in \mathbb{R}^{256}$\\Gaussian $(\mu, \sigma)$};
     % decoder
     \node[decb, minimum width=33mm, minimum height=15mm] (dec) at (10.2,0)
       {\textbf{shared GRU decoder}\\autoregressive\\\keyg{grammar mask} per step};
@@ -202,7 +202,7 @@
     \vspace{2mm}
     \begin{enumerate}\setlength{\itemsep}{5pt}
       \item \keyc{sample} a random process tree\\(SEQ, XOR, AND; depth $\le 3$; $\le 30$ activities)
-      \item \keyc{simulate} it into an event log\\(16 traces per sample)
+      \item \keyc{simulate} it into an event log\\(128 traces per sample)
       \item \keyc{convert} it into a Petri net\\(deterministic, via PM4Py)
     \end{enumerate}
   \end{column}
@@ -303,14 +303,14 @@
       \toprule
       Log representation & Dim. & $\rho$ \\
       \midrule
-      \keyc{ProcRosetta} (learned) & \keyc{64} & 0.630 \\
+      \keyc{ProcRosetta} (learned) & \keyc{256} & 0.630 \\
       directly-follows relations & 332 & 0.736 \\
       trace-variant distribution & 2{,}548 & 0.614 \\
       \bottomrule
     \end{tabular}
     \end{center}
     \vspace{1mm}
-    \small A compact \keyc{64-dim} learned vector rivals feature vectors
+    \small A compact \keyc{256-dim} learned vector rivals feature vectors
     \keya{5 to 40$\times$ larger} that partly \keya{define} the target distance.
   \end{column}
   \end{columns}
@@ -405,7 +405,7 @@
     \item Three encoders converge to \keyc{one geometry} of process behavior (RQ1)
     \item Grammar masking: \keyg{100\%} valid, sound outputs (RQ2)
     \item Learned translation reaches \keyc{92\%} of the Inductive Miner F1;
-      64-dim embeddings rival much larger deterministic features (RQ3)
+      256-dim embeddings rival much larger deterministic features (RQ3)
   \end{itemize}
   \vspace{4mm}
   \centering\small Code, data generator, and evaluation suite:\\
@@ -460,7 +460,7 @@
       \item Test logs are noise-free playouts of block-structured trees:
         the Inductive Miner's \keya{best case} (rediscovery guarantee,
         fitness 1.0)
-      \item ProcRosetta compresses the whole log into \keyc{one 64-dim vector},
+      \item ProcRosetta compresses the whole log into \keyc{one 256-dim vector},
         no search or replay, and still reaches \keyc{92\%} of the IM's F1
     \end{itemize}
   \end{column}
@@ -508,13 +508,13 @@
     Method & Type & Dim. & $\rho$ $\uparrow$ & NN $\downarrow$ \\
     \midrule
     Directly-follows distribution$^\dagger$ & log features & 332 & \keya{0.736} & 0.784 \\
-    PetriNet2Vec & learned (net) & 64 & 0.643 & 1.115 \\
+    PetriNet2Vec & learned (net) & 256 & 0.643 & 1.115 \\
     Activity counts & log features & 20 & 0.635 & 0.946 \\
-    \keyc{ProcRosetta} $\mu_{\mathit{trace}}$ & learned (log) & \keyc{64} & 0.630 & \keyc{0.794} \\
-    \keyc{ProcRosetta} $\mu_{\mathit{fused}}$ & learned (all) & \keyc{64} & 0.628 & 0.804 \\
+    \keyc{ProcRosetta} $\mu_{\mathit{trace}}$ & learned (log) & \keyc{256} & 0.630 & \keyc{0.794} \\
+    \keyc{ProcRosetta} $\mu_{\mathit{fused}}$ & learned (all) & \keyc{256} & 0.628 & 0.804 \\
     Trace-variant distribution$^\dagger$ & log features & 2{,}548 & 0.614 & \keya{0.781} \\
-    \keyc{ProcRosetta} $\mu_{\mathit{tree}}$ & learned (tree) & \keyc{64} & 0.611 & 0.836 \\
-    \keyc{ProcRosetta} $\mu_{\mathit{petri}}$ & learned (net) & \keyc{64} & 0.574 & 0.913 \\
+    \keyc{ProcRosetta} $\mu_{\mathit{tree}}$ & learned (tree) & \keyc{256} & 0.611 & 0.836 \\
+    \keyc{ProcRosetta} $\mu_{\mathit{petri}}$ & learned (net) & \keyc{256} & 0.574 & 0.913 \\
     Eventually-follows distribution & log features & 347 & 0.412 & 0.881 \\
     \bottomrule
   \end{tabular}
@@ -522,7 +522,7 @@
   \vspace{2mm}
   \small $^\dagger$ shares components with the behavioral-distance definition:
   a \keya{skyline}, not a fair competitor. Among the rest, ProcRosetta's log
-  embedding is the \keyc{strongest all-round performer} at only 64 dimensions.
+  embedding is the \keyc{strongest all-round performer} at only 256 dimensions.
 \end{frame}
 
 % ---------------------------------------------------------------- A5

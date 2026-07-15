@@ -32,7 +32,7 @@ class TrainConfig:
     epochs: int = 100
     batch_size: int = 32
     learning_rate: float = 1e-3
-    latent_dim: int = 48
+    latent_dim: int = 256
     hidden_dim: int = 96
     seed: int = 13
     device: str = "cpu"

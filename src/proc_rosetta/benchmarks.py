@@ -22,7 +22,7 @@ FeatureDict = dict[Hashable, float]
 
 @dataclass(frozen=True)
 class Pm4pyPetriEmbeddingConfig:
-    dimensions: int = 64
+    dimensions: int = 256
     num_walks: int = 5
     walk_length: int = 20
     window: int = 5
@@ -236,7 +236,7 @@ def discovery_quality_report(
     samples: Sequence[ProcessSample],
     batch_size: int = 16,
     device: str = "cpu",
-    max_decode_length: int = 128,
+    max_decode_length: int = 512,
 ) -> dict[str, object]:
     model.eval()
     model.to(device)
@@ -502,8 +502,8 @@ def decode_quality_report(
     samples: Sequence[ProcessSample],
     batch_size: int = 16,
     device: str = "cpu",
-    max_decode_length: int = 128,
-    behavior_traces_per_sample: int = 16,
+    max_decode_length: int = 512,
+    behavior_traces_per_sample: int = 128,
 ) -> dict[str, object]:
     model.eval()
     model.to(device)
@@ -561,7 +561,7 @@ def evaluate_single_decode(
     model,
     sample: ProcessSample,
     token_ids: Sequence[int],
-    behavior_traces_per_sample: int = 16,
+    behavior_traces_per_sample: int = 128,
 ) -> dict[str, object]:
     tokenizer = model.tree_tokenizer
     decoded_tokens = trim_tree_token_sequence(token_ids, tokenizer)

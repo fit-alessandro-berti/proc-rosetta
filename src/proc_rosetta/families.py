@@ -6,8 +6,13 @@ from hashlib import blake2b
 import random
 from typing import Any, Sequence
 
-from proc_rosetta.pm4py_bridge import PetriGraph, petri_net_to_graph, tree_to_petri_net
-from proc_rosetta.tree import ProcessTreeNode
+from proc_rosetta.pm4py_bridge import (
+    PetriGraph,
+    petri_net_to_graph,
+    simulate_traces,
+    tree_to_petri_net,
+)
+from proc_rosetta.tree import NodeKind, ProcessTreeNode
 
 
 EQUIVALENCE_SEMANTICS = "visible_complete_trace_language"
@@ -266,6 +271,9 @@ def generate_behavior_family(
         tree, runtime_variants = _m_nonfreechoice_family(behavior_id)
     else:
         tree, runtime_variants = _ordinary_tree_family(config, rng, behavior_id)
+    ordinary_loop_tree = motif == "ordinary_tree" and _tree_contains_kind(
+        tree, NodeKind.LOOP
+    )
 
     context_labels: tuple[str, ...] = ()
     if motif != "ordinary_tree":
@@ -283,9 +291,8 @@ def generate_behavior_family(
                 labels.append(label)
         context_labels = tuple(labels)
         if context_labels:
-            tree = ProcessTreeNode.seq(
-                tree, *(ProcessTreeNode.activity(label) for label in context_labels)
-            )
+            for label in context_labels:
+                tree = ProcessTreeNode.seq(tree, ProcessTreeNode.activity(label))
             runtime_variants = tuple(
                 _append_visible_suffix(variant, context_labels, behavior_id)
                 for variant in runtime_variants
@@ -295,8 +302,8 @@ def generate_behavior_family(
     requested_variants = max(1, int(getattr(config, "variants_per_behavior", 2)))
     max_states = int(getattr(config, "exact_language_max_states", 5000))
     max_traces = int(getattr(config, "exact_language_max_traces", 10000))
-    max_visible_length = int(getattr(config, "bounded_visible_length", 20))
-    if requested_variants >= 3:
+    max_visible_length = int(getattr(config, "bounded_visible_length", 32))
+    if requested_variants >= 3 and not ordinary_loop_tree:
         finite_language, finite_complete = enumerate_visible_language(
             runtime_variants[0].net,
             runtime_variants[0].initial_marking,
@@ -358,6 +365,70 @@ def generate_behavior_family(
                 nonblock_reason=base.nonblock_reason,
                 partial_order_equivalent=base.partial_order_equivalent,
             )
+        )
+
+    if ordinary_loop_tree:
+        equivalence_level = "isomorphic"
+        variants = tuple(
+            ModelVariant(
+                variant_id=f"{behavior_id}:{variant.representation_kind}",
+                representation_kind=variant.representation_kind,
+                petri_graph=petri_net_to_graph(
+                    variant.net, variant.initial_marking, variant.final_marking
+                ),
+                transformation_sequence=variant.transformations,
+                structural_statistics=structural_statistics(
+                    variant.net,
+                    variant.initial_marking,
+                    variant.final_marking,
+                    nonblock_reason=variant.nonblock_reason,
+                ),
+                equivalence_level=equivalence_level,
+            )
+            for variant in runtime_variants[:requested_variants]
+        )
+        if any(
+            not variant.structural_statistics["final_marking_reachable"]
+            or int(variant.structural_statistics["dead_transition_count"]) > 0
+            for variant in variants
+        ):
+            raise ValueError(f"family {behavior_id} contains an unsound structural variant")
+
+        playout_count = max(256, int(getattr(config, "traces_per_sample", 128)) * 4)
+        trace_pool = tuple(
+            sorted({tuple(trace) for trace in simulate_traces(tree, num_traces=playout_count)})
+        )
+        if not trace_pool:
+            raise ValueError(f"family {behavior_id} has no sampled visible traces")
+        certificate = EquivalenceCertificate(
+            status=equivalence_level,
+            semantics=EQUIVALENCE_SEMANTICS,
+            reference_language_size=len(trace_pool),
+            checked_variants=tuple(
+                variant.representation_kind for variant in runtime_variants[:requested_variants]
+            ),
+            max_visible_length=max(len(trace) for trace in trace_pool),
+        )
+        log_views = _make_log_views(config, trace_pool, behavior_id, seed_bundle["log_view"])
+        return BehaviorFamily(
+            behavior_id=behavior_id,
+            canonical_tree=tree,
+            model_variants=variants,
+            clean_trace_pool=trace_pool,
+            log_views=log_views,
+            equivalence_certificate=certificate,
+            metadata={
+                "motif": motif,
+                "family_index": family_index,
+                "family_seed": family_seed,
+                "seed_bundle": seed_bundle,
+                "equivalence_semantics": EQUIVALENCE_SEMANTICS,
+                "trace_language_equivalent": True,
+                "partial_order_equivalent": None,
+                "context_suffix": list(context_labels),
+                "trace_pool_source": "process_tree_playout",
+                "playout_trace_count": playout_count,
+            },
         )
 
     languages: list[set[tuple[str, ...]]] = []
@@ -933,7 +1004,7 @@ def _make_log_views(
     seed: int,
 ) -> tuple[LogView, ...]:
     count = max(1, int(getattr(config, "log_views_per_behavior", 1)))
-    traces_per_view = max(1, int(getattr(config, "traces_per_sample", 16)))
+    traces_per_view = max(1, int(getattr(config, "traces_per_sample", 128)))
     modes = tuple(getattr(config, "log_view_modes", ("uniform_variants", "resampled")))
     alphabet = tuple(sorted({label for trace in trace_pool for label in trace}))
     views: list[LogView] = []
@@ -1000,6 +1071,10 @@ def _motif_weights(config: Any) -> dict[str, float]:
             "m_nonfreechoice": 0.25,
         }
     return weights
+
+
+def _tree_contains_kind(node: ProcessTreeNode, kind: NodeKind) -> bool:
+    return node.kind is kind or any(_tree_contains_kind(child, kind) for child in node.children)
 
 
 def _weighted_choice(rng: random.Random, weights: dict[str, float]) -> str:
