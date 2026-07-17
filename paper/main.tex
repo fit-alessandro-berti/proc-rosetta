@@ -83,7 +83,7 @@ Figure~\ref{fig:outline} summarizes the framework. Three research questions orga
 
 The contributions are: (i)~a multimodal architecture with three artifact-specific encoders projecting into one latent space of process behavior; (ii)~a shared, grammar-masked process-tree decoder that guarantees syntactic validity of every generated model and, through deterministic conversion, yields sound Petri nets; (iii)~a training procedure over synthetic paired triples combining reconstruction, cross-modal translation, latent alignment, contrastive, and variational objectives; and (iv)~a comprehensive assessment with a publicly available implementation, covering decode quality, discovery quality against the Inductive Miner, behavior-aligned embedding quality, and cross-modal retrieval.
 
-Section~\ref{sec:relatedWork} reviews related work; Section~\ref{sec:preliminaries} introduces the process-mining objects; Section~\ref{sec:approach} presents the framework; Section~\ref{sec:assessment} reports the assessment; Sections~\ref{sec:discussion} and~\ref{sec:conclusion} discuss and conclude.
+Section~\ref{sec:relatedWork} reviews related work; Section~\ref{sec:preliminaries} introduces the process-mining objects; Section~\ref{sec:approach} presents the framework; Section~\ref{sec:tool} presents the interactive tool support; Section~\ref{sec:assessment} reports the assessment; Sections~\ref{sec:discussion} and~\ref{sec:conclusion} discuss and conclude.
 
 \section{Related Work}
 \label{sec:relatedWork}
@@ -245,6 +245,27 @@ pulling the three views of one process toward the same point. The \emph{contrast
 
 Table~\ref{tab:hyper} summarizes the configuration. The model is deliberately small ($\approx$0.3M parameters), with standard safeguards against overfitting: dropout, weight decay, label smoothing, stochastic latent sampling, family-grouped positives, activity remapping, validation-based learning-rate reduction, early stopping, and best-validation checkpoint retention.
 
+\section{Interactive Tool Support}
+\label{sec:tool}
+
+ProcRosetta is accompanied by an interactive Streamlit tool that turns the framework into an inspectable workflow. Users can collect event logs, process trees, and Petri nets in a common workspace, encode individual or grouped artifacts, and translate their representations back into process trees. The translation view presents the generated tree, its validity checks, the deterministically derived Petri net, and a comparison with the source artifact. A complementary latent-space view supports projections, similarity and group-agreement inspection, nearest-neighbor exploration, and interpolation. The tool also provides checkpoint summaries, guided evaluation, and export of embeddings and generated models. Figure~\ref{fig:tool} illustrates the translation and latent-space views.
+
+\begin{figure*}[t]
+  \centering
+  \begin{minipage}[t]{0.495\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{rosetta-tool-pt-discovery.png}
+    \par\smallskip\small (a) Translation and process-tree inspection.
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.495\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{rosetta-tool-latent-explorer.png}
+    \par\smallskip\small (b) Latent-space exploration.
+  \end{minipage}
+  \caption{Interactive tool support for ProcRosetta. The translation view exposes generated models and validation outcomes, while the latent-space view makes relationships among heterogeneous artifacts explorable.}
+  \label{fig:tool}
+\end{figure*}
+
 \section{Assessment}
 \label{sec:assessment}
 
@@ -334,6 +355,36 @@ Inductive Miner & 100\% & 100\% & \textbf{1.000} & \textbf{0.969} & \textbf{0.98
 
 The semantic half is also strong. The decoded tree \emph{exactly} equals the canonical target in 85.9\% of the cases when decoding from the tree's own embedding, 85.2\% from the log, and 85.7\% from the Petri-net structure. Exact match is demanding (a single differing leaf counts as failure); the error-tolerant metrics are more informative: the normalized token edit distance is low (0.063--0.083), and the \emph{behavioral} distance between the original log and traces simulated from the decoded model ranges from 0.310 to 0.336, whereas the same distance between two \emph{unrelated} test logs averages 1.209 (Section~\ref{sec:embeddingresults})---decoded models are behaviorally much closer to their source than a random model of the same distribution. The ordering of sources is now nearly tied, indicating that tree, log, and Petri encoders all retain enough information for high-quality tree decoding.
 
+Figure~\ref{fig:reconstructionexamples} makes the exact-match boundary concrete. We ranked all tree-to-tree decodes in the default test split by source-tree size and depth. The first row is a largest exact reconstruction (15 nodes, depth 7; tied with other controlled cases): it preserves both occurrences of $\mathrm{A0}$ in the exclusive-choice branches and the complete sequential suffix. For contrast, the second row is the closest non-exact reconstruction among cases at least this large, rather than a worst-case failure. The decoder retains the two upper exclusive-choice layers and one parallel block, but reduces a 23-node, depth-9 source to 13 nodes and depth 5, replacing its deep sequence--parallel--loop continuation with a shallow choice. Thus grammar masking still guarantees a valid model, but does not prevent semantic simplification near the upper end of the learned complexity distribution.
+
+\begin{figure*}[t]
+  \centering
+  \begin{minipage}[c]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth,height=0.23\textheight,keepaspectratio]{figures/reconstruction_exact_original.pdf}
+    \par\smallskip\small (a) Exact case: original tree.
+  \end{minipage}\hfill
+  \begin{minipage}[c]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth,height=0.23\textheight,keepaspectratio]{figures/reconstruction_exact_reconstructed.pdf}
+    \par\smallskip\small (b) Exact case: reconstructed tree.
+  \end{minipage}
+
+  \medskip
+  \begin{minipage}[c]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth,height=0.27\textheight,keepaspectratio]{figures/reconstruction_mismatch_original.pdf}
+    \par\smallskip\small (c) Non-exact case: original tree.
+  \end{minipage}\hfill
+  \begin{minipage}[c]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth,height=0.27\textheight,keepaspectratio]{figures/reconstruction_mismatch_reconstructed.pdf}
+    \par\smallskip\small (d) Non-exact case: reconstructed tree.
+  \end{minipage}
+  \caption{Qualitative tree reconstruction examples from the default held-out test split. The top row is intentionally identical: it is a largest source tree reconstructed exactly. The bottom row shows a relatively complex, non-exact case selected to expose a representative simplification rather than the largest observed error. All panels are PM4Py process-tree visualizations imported as PDF.}
+  \label{fig:reconstructionexamples}
+\end{figure*}
+
 \subsection{Process-Discovery Quality (RQ3)}
 \label{sec:discoveryresults}
 
@@ -342,6 +393,36 @@ The semantic half is also strong. The decoded tree \emph{exactly} equals the can
 Table~\ref{tab:discovery} addresses the log-to-model use case: each test log is translated by ProcRosetta (encode the log, decode a tree, convert to a net) and, independently, mined with PM4Py's Inductive Miner; both models are scored against the log with alignment-based fitness~\cite{Adriansyah2012} and precision.
 
 The Inductive Miner achieves perfect fitness (1.000) and an F1 of 0.980. This is expected: the test logs are complete, noise-free sampled views of structured behavior---precisely the setting in which the Inductive Miner enjoys rediscovery guarantees on block-structured logs~\cite{Leemans2013}---so the comparison is intentionally played on its home turf. ProcRosetta reaches a fitness of 0.950, a precision of 0.937, and an F1 of 0.938---about 96\% of the Inductive Miner's F1. Notably, a purely neural translation---the entire log is compressed into a single 256-dimensional vector, with no search, replay, or counting---lands within this range while producing a valid model for every log. The remaining gap is concentrated in fitness: a slightly wrong decoded tree can make some observed traces non-replayable, whereas the Inductive Miner is designed to include them. We interpret this not as a claim that neural translation should replace classical discovery, but as evidence that the shared latent space preserves enough behavioral information to support discovery-grade model generation.
+
+Figure~\ref{fig:discoveryexamples} provides an out-of-distribution comparison on two supplied event logs. The ProcRosetta trees are reconstructed directly from the two tool screenshots; no activity label is abbreviated (long labels are only line-wrapped). For a common reference, both models are scored on the same frequency-preserving input sample: 128 traces for \texttt{receipt.xes} and all 100 traces for \texttt{roadtraffic100traces.xes}. On the receipt log, the 16-node screenshot tree retains 10 activities and reaches alignment F1 0.193, compared with 0.483 for the Inductive Miner's 47-node tree. On road traffic, the 16-node screenshot tree contains all ten activities but reaches F1 0.202, whereas the Inductive Miner reaches 0.850. The two ProcRosetta outputs share a compact top-level-choice and nested-loop structure, but the low precision (0.125 in both cases) shows that arranging the labels into a valid tree is not enough to capture their ordering constraints. The deterministic miner fits the observed variants much more closely, so these examples support the aggregate in-distribution result without suggesting equivalent performance on external logs.
+
+\begin{figure*}[t]
+  \centering
+  \begin{minipage}[c]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth,height=0.29\textheight,keepaspectratio]{figures/discovery_receipt_rosetta.pdf}
+    \par\smallskip\small (a) \texttt{receipt.xes}: ProcRosetta.
+  \end{minipage}\hfill
+  \begin{minipage}[c]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth,height=0.29\textheight,keepaspectratio]{figures/discovery_receipt_inductive.pdf}
+    \par\smallskip\small (b) \texttt{receipt.xes}: Inductive Miner.
+  \end{minipage}
+
+  \medskip
+  \begin{minipage}[c]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth,height=0.25\textheight,keepaspectratio]{figures/discovery_roadtraffic_rosetta.pdf}
+    \par\smallskip\small (c) \texttt{roadtraffic100traces.xes}: ProcRosetta.
+  \end{minipage}\hfill
+  \begin{minipage}[c]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth,height=0.25\textheight,keepaspectratio]{figures/discovery_roadtraffic_inductive.pdf}
+    \par\smallskip\small (d) \texttt{roadtraffic100traces.xes}: Inductive Miner.
+  \end{minipage}
+  \caption{Process discovery on two supplied logs. The ProcRosetta trees (left) are reconstructed from the tool screenshots; PM4Py's Inductive Miner trees are shown on the right. Full activity labels are retained and only line-wrapped for legibility. All panels use PM4Py's process-tree visualization and are imported as PDF.}
+  \label{fig:discoveryexamples}
+\end{figure*}
 
 \subsection{Embedding Quality (RQ1, RQ3)}
 \label{sec:embeddingresults}

@@ -231,6 +231,8 @@ nohup.out
 
 !presentation/*.pdf
 !paper/figures/training_curves.pdf
+!paper/figures/reconstruction_*.pdf
+!paper/figures/discovery_*.pdf
 
 *.nav
 *.snm
