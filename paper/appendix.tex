@@ -65,6 +65,9 @@ The important generator settings are:
   \item early leaf probability during tree recursion: 0.65;
   \item representation rows per behavior family: 2;
   \item log views per behavior family: 1;
+  \item controlled-motif context suffix: 4 fresh activities;
+  \item strict minimum motif coverage: 8 families per motif in training and
+        4 per motif in validation and test;
   \item enabled process-tree operators: \texttt{SEQ}, \texttt{XOR},
         \texttt{AND}, and two-child \texttt{LOOP}.
 \end{itemize}
@@ -121,6 +124,20 @@ The four family types have equal weight. The generator allocates a deterministic
 quota to each type and shuffles the order using a seed derived from the global
 seed, the split name, and the phrase \texttt{motif-quota-plan}. This gives a
 mixed order of samples on disk while preserving exact class balance.
+
+The current run uses strict class coverage. Before replacing the data
+directory, the generator verifies that every requested row count is divisible
+by the number of rows per family and that the requested family count can meet
+the per-motif minimum. An infeasible request therefore fails before the
+existing split files are removed. A separate \texttt{best\_effort} mode is
+available for small diagnostic datasets; it records motif and representation-
+slot deficits instead of requiring them to be zero.
+
+A complete behavior family is assigned to exactly one split, and its
+equivalence identifier includes that split. The generator does not, however,
+deduplicate complete visible languages across different families or splits.
+Consequently, family members cannot leak across a split boundary, but equal or
+near-equal behaviors can still occur independently in training and evaluation.
 
 \subsection{Step 2: Build the Canonical Process Tree}
 \label{app:build-tree}
@@ -215,11 +232,11 @@ structure is less block-like.
 \subsection{Step 4: Check Behavioral Equivalence}
 \label{app:equivalence-check}
 
-Before a controlled behavior family is accepted, the generator checks that all
-Petri-net variants in that family have the same complete visible trace
-language. The checker explores reachable markings, records complete visible
-traces that reach the final marking, and ignores invisible transitions in the
-visible trace.
+Before a non-loop behavior family is accepted, the generator compares the
+visible trace sets returned for all of its Petri-net variants. The checker
+explores reachable markings, records traces that reach the final marking, and
+omits invisible transitions from those traces. It also reports whether the
+search finished exhaustively or encountered a resource limit.
 
 The check has explicit resource limits:
 \begin{itemize}
@@ -227,12 +244,22 @@ The check has explicit resource limits:
   \item at most 10{,}000 complete traces;
   \item at most 32 visible activities per trace.
 \end{itemize}
-If all variants produce exactly the same language within these limits, the
-family is accepted. Ordinary loop families are handled separately: their second
-Petri net is an isomorphic clone of the PM4Py tree conversion, so equivalence is
-certified structurally by the renaming transformation. These families store the
-equivalence status \texttt{isomorphic}. The accepted row stores the equivalence
-status and the checked variant names in its metadata.
+The returned trace set must be nonempty and identical for every variant. If all
+searches finish, the certificate status is \texttt{exact}; if a bound truncates
+at least one search, the compared finite result receives status
+\texttt{bounded}. The current configuration sets
+\texttt{exact\_equivalence\_only\_for\_training} to false, so a bounded family
+is eligible for any split. In the persisted data used here, however, every
+controlled family received an \texttt{exact} certificate; there are no bounded
+rows.
+
+Ordinary loop families are handled separately because their language is
+unbounded. Their second Petri net is an isomorphic clone of the PM4Py tree
+conversion, so equivalence is certified structurally by the renaming
+transformation. All ordinary-tree rows in the persisted data therefore store
+the status \texttt{isomorphic}. Each accepted row includes the certificate
+status, semantics, checked variant names, and reference-language size in its
+metadata.
 
 The generator also checks simple structural health conditions. In particular,
 the final marking must be reachable and there must be no dead transitions. A
@@ -242,10 +269,13 @@ family that fails these checks is rejected.
 \label{app:create-log-view}
 
 After equivalence is checked or certified, the generator creates a trace pool.
-For controlled finite-language families, the pool is the sorted complete visible
-language found by the checker. For ordinary loop families, the pool is the set
-of traces observed in process-tree playout. The current run creates one log view
-per behavior family and stores 128 traces in that log view.
+For the controlled families in the current data, the pool is the sorted exact
+visible language returned by the completed checker. For ordinary loop
+families, PM4Py performs $\max(256,4n)$ process-tree playouts for a requested
+log size $n$; the generator deduplicates and sorts the observed traces. Thus,
+for the current $n=128$ run, each ordinary trace pool is formed from 512
+playout traces. The current run creates one log view per behavior family and
+stores 128 traces in that log view.
 
 The default log sampling mode is \texttt{uniform\_variants}. In this mode, the
 generator cycles through the trace pool until it has 128 traces, then
@@ -258,6 +288,12 @@ The configuration also defines other sampling modes, such as sparse,
 long-tail, incomplete, resampled, and noisy modes. They are part of the codebase
 for other experiments, but the current persisted split uses one clean
 uniform-variants log view per behavior family.
+
+Family construction, quota order, and log-view shuffling use stable seeds
+derived from the global seed, split, family index, and pipeline stage. Ordinary
+loop trace pools additionally depend on PM4Py process-tree playout, so exact
+playout results can depend on the installed PM4Py version even when the Python
+seed and generator configuration are unchanged.
 
 \subsection{Step 6: Flatten Families into Training Rows}
 \label{app:flatten-rows}
@@ -282,6 +318,11 @@ Rows are written to:
 The generator also writes \texttt{data/metadata.json}, which records the seed,
 the full synthetic configuration, split sizes, motif counts, representation
 counts, average tree and trace statistics, and maximum Petri graph sizes.
+For each split it records both planned and actual motif quotas, per-motif
+representation-slot counts, any strict-coverage deficits, and whether the
+minimum-coverage check passed. During generation, \texttt{sample.py} reports
+completed flattened rows with a per-split progress bar on standard error;
+\texttt{--quiet} disables this display without changing the generated data.
 
 \subsection{How the Row Is Used During Training}
 \label{app:training-use}
