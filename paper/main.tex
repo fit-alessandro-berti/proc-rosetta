@@ -5,7 +5,9 @@
 \usepackage{booktabs}
 \usepackage{makecell}
 \usepackage{tikz}
+\usepackage{pgfplots}
 \usetikzlibrary{positioning,arrows.meta,shapes.geometric}
+\pgfplotsset{compat=1.18}
 
 % Relax float placement so tables/figures can share pages with text.
 \renewcommand{\topfraction}{0.95}
@@ -473,6 +475,67 @@ Table~\ref{tab:embedding} ranks the four learned ProcRosetta representations aga
 Second, ProcRosetta's learned log embedding is the strongest ProcRosetta view at $\rho = 0.747$, below the deterministic log features but above the fused, Petri, and tree views and the high-dimensional trace-variant baseline. Its nearest-neighbor behavior is nevertheless zero: under the family-based split, it retrieves an exact-equivalent alternate representation on average.
 
 Third, the Petri-net comparison exposes a global--local trade-off. PetriNet2Vec attains the stronger global correlation ($\rho = 0.817$ versus $0.671$ for ProcRosetta's Petri view) but much weaker nearest neighbors (NN behavior $0.632$ versus $0.000$). ProcRosetta therefore preserves same-family neighborhoods better even though it orders all test pairs less accurately.
+
+Figure~\ref{fig:embeddingpca} projects a fixed-seed, embedding-independent sample of 18 distinct held-out processes: one per controlled motif and 15 ordinary-tree families. PCA is fitted jointly after $L_2$ normalization. Corresponding views form short gray triangles: mean within-process distance is $0.130$, versus $0.728$ between processes; in the full normalized space, the corresponding cosine distances are $0.072$ and $0.667$. The components retain $51.3\%$ of variance, so Tables~\ref{tab:embedding} and~\ref{tab:agreement} remain the full-space evidence.
+
+\begin{figure}[t]
+\centering
+% Checkpoint epoch 36; selection seed 13; test family indices:
+% 0, 1, 3, 15, 50, 100, 142, 143, 160, 194, 227, 241, 244, 255, 280, 291, 297, 439.
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.54\textwidth,
+  height=0.29\textheight,
+  axis equal image,
+  xmin=-1.02, xmax=0.62,
+  ymin=-1.10, ymax=0.69,
+  xlabel={Principal component 1 (31.3\%)},
+  ylabel={Principal component 2 (20.0\%)},
+  tick label style={font=\scriptsize},
+  label style={font=\small},
+  grid=both,
+  major grid style={gray!25},
+  minor grid style={gray!12},
+  legend columns=3,
+  legend style={font=\small,draw=none,at={(0.5,1.03)},anchor=south},
+  clip=false,
+]
+% Each gray triangle joins the three modality views of one process.
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(-0.423154,-1.026432) (-0.469239,-0.986169) (-0.467942,-0.994468) (-0.423154,-1.026432)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(-0.944305,-0.042894) (-0.917045,0.002996) (-0.931072,-0.028958) (-0.944305,-0.042894)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(-0.637412,-0.438966) (-0.623336,-0.301200) (-0.634011,-0.336283) (-0.637412,-0.438966)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(0.365254,0.061222) (0.324651,0.018668) (0.279664,0.208544) (0.365254,0.061222)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(0.449689,-0.334508) (0.532096,-0.057217) (0.514104,-0.202407) (0.449689,-0.334508)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(0.380210,0.229255) (0.398216,0.229082) (0.251905,0.390623) (0.380210,0.229255)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(0.171127,0.205610) (0.402182,-0.077866) (0.349726,-0.032827) (0.171127,0.205610)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(0.373704,0.159011) (0.368683,0.329041) (0.429154,0.050420) (0.373704,0.159011)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(-0.052080,-0.130078) (-0.060009,0.152822) (-0.057970,-0.091273) (-0.052080,-0.130078)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(0.451101,-0.329357) (0.451674,-0.195239) (0.394186,-0.279641) (0.451101,-0.329357)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(0.414425,-0.186362) (0.367479,-0.008436) (0.392620,-0.128586) (0.414425,-0.186362)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(-0.139336,0.446016) (-0.009252,0.243939) (-0.065784,0.224708) (-0.139336,0.446016)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(0.238738,-0.309437) (0.269871,-0.268973) (0.244397,-0.416532) (0.238738,-0.309437)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(0.215957,0.320738) (0.155727,0.317629) (0.069750,0.276133) (0.215957,0.320738)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(0.449932,-0.224307) (0.548069,-0.010007) (0.444589,0.077943) (0.449932,-0.224307)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(-0.469358,0.298862) (-0.395607,0.321996) (-0.398681,0.266658) (-0.469358,0.298862)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(-0.524023,0.361340) (-0.561206,0.285316) (-0.570612,0.346595) (-0.524023,0.361340)};
+\addplot[gray!45,thin,no marks,forget plot] coordinates {(-0.447253,0.602687) (-0.457346,0.473771) (-0.442848,0.536801) (-0.447253,0.602687)};
+
+\addplot[only marks,mark=*,mark size=2.1pt,blue!75!black]
+coordinates {(-0.423154,-1.026432) (-0.944305,-0.042894) (-0.637412,-0.438966) (0.365254,0.061222) (0.449689,-0.334508) (0.380210,0.229255) (0.171127,0.205610) (0.373704,0.159011) (-0.052080,-0.130078) (0.451101,-0.329357) (0.414425,-0.186362) (-0.139336,0.446016) (0.238738,-0.309437) (0.215957,0.320738) (0.449932,-0.224307) (-0.469358,0.298862) (-0.524023,0.361340) (-0.447253,0.602687)};
+\addlegendentry{Event log}
+
+\addplot[only marks,mark=square*,mark size=2.0pt,red!75!black]
+coordinates {(-0.469239,-0.986169) (-0.917045,0.002996) (-0.623336,-0.301200) (0.324651,0.018668) (0.532096,-0.057217) (0.398216,0.229082) (0.402182,-0.077866) (0.368683,0.329041) (-0.060009,0.152822) (0.451674,-0.195239) (0.367479,-0.008436) (-0.009252,0.243939) (0.269871,-0.268973) (0.155727,0.317629) (0.548069,-0.010007) (-0.395607,0.321996) (-0.561206,0.285316) (-0.457346,0.473771)};
+\addlegendentry{Petri net}
+
+\addplot[only marks,mark=triangle*,mark size=2.5pt,green!55!black]
+coordinates {(-0.467942,-0.994468) (-0.931072,-0.028958) (-0.634011,-0.336283) (0.279664,0.208544) (0.514104,-0.202407) (0.251905,0.390623) (0.349726,-0.032827) (0.429154,0.050420) (-0.057970,-0.091273) (0.394186,-0.279641) (0.392620,-0.128586) (-0.065784,0.224708) (0.244397,-0.416532) (0.069750,0.276133) (0.444589,0.077943) (-0.398681,0.266658) (-0.570612,0.346595) (-0.442848,0.536801)};
+\addlegendentry{Process tree}
+\end{axis}
+\end{tikzpicture}
+\caption{Joint PCA of $L_2$-normalized latent means for 18 distinct held-out processes. Colors and shapes mark modalities; gray triangles join matching views. The subset was fixed before inspecting embeddings.}
+\label{fig:embeddingpca}
+\end{figure}
 
 \begin{table*}
 \centering
