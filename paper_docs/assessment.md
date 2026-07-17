@@ -875,54 +875,79 @@ Neural test losses are:
 
 | loss | tree | trace->tree | Petri->tree | contrastive | KL |
 |---:|---:|---:|---:|---:|---:|
-| 1.4158 | 0.4282 | 0.4495 | 0.4362 | 0.7995 | 19.9026 |
+| 2.4893 | 0.7942 | 0.8009 | 0.7970 | 0.8092 | 15.4451 |
 
-Greedy decoding succeeds structurally for every latent source:
+Greedy decoding succeeds structurally for all tree, Petri, and fused inputs and
+for 99.8% of trace-latent inputs:
 
 | latent source | ended | valid tree | exact tree | Petri ok | behavior L1 | norm edit |
 |---|---:|---:|---:|---:|---:|---:|
-| ProcRosetta tree | 100.0% | 100.0% | 85.9% | 100.0% | 0.322 | 0.063 |
-| ProcRosetta trace | 100.0% | 100.0% | 85.2% | 100.0% | 0.336 | 0.083 |
-| ProcRosetta Petri | 100.0% | 100.0% | 85.7% | 100.0% | 0.310 | 0.065 |
-| ProcRosetta fused | 100.0% | 100.0% | 85.9% | 100.0% | 0.320 | 0.066 |
+| ProcRosetta tree | 100.0% | 100.0% | 75.0% | 100.0% | 0.521 | 0.164 |
+| ProcRosetta trace | 99.8% | 99.8% | 75.0% | 99.8% | 0.511 | 0.165 |
+| ProcRosetta Petri | 100.0% | 100.0% | 75.0% | 100.0% | 0.513 | 0.163 |
+| ProcRosetta fused | 100.0% | 100.0% | 75.0% | 100.0% | 0.514 | 0.163 |
 
-Process-discovery quality against the source logs is:
+Process-discovery quality uses PM4Py footprints computed directly from each
+source log and discovered process tree, rather than from converted Petri nets:
 
-| method | model ok | align ok | fitness | precision | F1 |
+| method | model ok | footprint ok | fitness | precision | F1 |
 |---|---:|---:|---:|---:|---:|
-| ProcRosetta trace | 100.0% | 100.0% | 0.950 | 0.937 | 0.938 |
-| Inductive Miner | 100.0% | 100.0% | 1.000 | 0.969 | 0.980 |
+| ProcRosetta trace | 99.8% | 96.5% | 0.866 | 0.897 | 0.866 |
+| Inductive Miner | 100.0% | 100.0% | 1.000 | 0.936 | 0.958 |
 
-The mean pairwise behavior L1 among test logs is 1.2093 over 523,776 pairs.
+The mean pairwise behavior L1 among test logs is 1.2128 (minimum 0.0000,
+maximum 1.9980) over 523,776 pairs.
 
 The embedding-quality ranking by Spearman behavior correlation is:
 
 | method | behavior rho | NN behavior | improvement | dim |
 |---|---:|---:|---:|---:|
-| eventually-follows | 0.889 | 0.026 | 1.184 | 148 |
-| trace activity counts | 0.848 | 0.023 | 1.186 | 14 |
-| pm4py log features | 0.846 | 0.146 | 1.063 | 28 |
-| ProcRosetta trace | 0.841 | 0.000 | 1.209 | 256 |
-| directly-follows | 0.764 | 0.000 | 1.209 | 146 |
-| ProcRosetta fused | 0.757 | 0.000 | 1.209 | 256 |
-| pm4py Petri Node2Vec | 0.722 | 0.531 | 0.678 | 256 |
-| trace variants | 0.692 | 0.000 | 1.209 | 665 |
-| ProcRosetta Petri | 0.686 | 0.000 | 1.209 | 256 |
-| ProcRosetta tree | 0.673 | 0.000 | 1.209 | 256 |
-| Petri structural counts | 0.528 | 0.000 | 1.209 | 9 |
+| directly-follows | 0.927 | 0.000 | 1.213 | 624 |
+| pm4py log features | 0.923 | 0.000 | 1.213 | 50 |
+| eventually-follows | 0.922 | 0.000 | 1.213 | 625 |
+| trace activity counts | 0.896 | 0.000 | 1.213 | 25 |
+| pm4py Petri Node2Vec | 0.817 | 0.632 | 0.580 | 256 |
+| ProcRosetta trace | 0.747 | 0.000 | 1.213 | 256 |
+| ProcRosetta fused | 0.683 | 0.000 | 1.213 | 256 |
+| ProcRosetta Petri | 0.671 | 0.000 | 1.213 | 256 |
+| trace variants | 0.656 | 0.000 | 1.213 | 14385 |
+| ProcRosetta tree | 0.623 | 0.000 | 1.213 | 256 |
+| Petri structural counts | 0.577 | 0.000 | 1.213 | 9 |
+
+Agreement against the fused ProcRosetta encoding is:
+
+| method | pairwise rho | top1 NN overlap | behavior rho delta | NN behavior delta |
+|---|---:|---:|---:|---:|
+| pm4py Petri Node2Vec | 0.539 | 0.035 | +0.134 | +0.632 |
+| ProcRosetta Petri | 0.970 | 0.269 | -0.012 | +0.000 |
+| ProcRosetta tree | 0.957 | 0.254 | -0.060 | +0.000 |
+| ProcRosetta trace | 0.824 | 0.250 | +0.064 | +0.000 |
+| trace variants | 0.686 | 0.255 | -0.027 | +0.000 |
+| pm4py log features | 0.685 | 0.254 | +0.240 | +0.000 |
+| eventually-follows | 0.671 | 0.256 | +0.239 | +0.000 |
+| trace activity counts | 0.658 | 0.251 | +0.213 | +0.000 |
+| directly-follows | 0.657 | 0.254 | +0.244 | +0.000 |
+| Petri structural counts | 0.490 | 0.257 | -0.106 | +0.000 |
 
 Exact row-level cross-modal retrieval is above chance but remains the largest source of headroom:
 
 | query -> target | top1 | MRR | mean rank |
 |---|---:|---:|---:|
-| Petri -> trace | 0.029 | 0.076 | 102.382 |
-| Petri -> tree | 0.062 | 0.121 | 100.907 |
-| trace -> Petri | 0.028 | 0.075 | 102.301 |
-| trace -> tree | 0.020 | 0.066 | 102.281 |
-| tree -> Petri | 0.063 | 0.121 | 100.971 |
-| tree -> trace | 0.025 | 0.070 | 102.465 |
+| Petri -> trace | 0.029 | 0.084 | 100.416 |
+| Petri -> tree | 0.080 | 0.154 | 96.655 |
+| trace -> Petri | 0.035 | 0.090 | 100.762 |
+| trace -> tree | 0.046 | 0.104 | 99.457 |
+| tree -> Petri | 0.077 | 0.151 | 97.215 |
+| tree -> trace | 0.040 | 0.097 | 99.926 |
 
-The behavior-family equivalence check reports within-family cosine similarities of 0.995--1.000 across the four learned embeddings. Family top-1 retrieval is strongest for the trace encoder (0.881) and lower for fused, Petri, and tree embeddings (0.146, 0.136, and 0.154 respectively).
+The behavior-family equivalence results are:
+
+| embedding | within cosine | between cosine | margin | family top1 |
+|---|---:|---:|---:|---:|
+| ProcRosetta fused | 0.999 | 0.237 | 0.011 | 0.250 |
+| ProcRosetta Petri | 0.995 | 0.243 | 0.008 | 0.250 |
+| ProcRosetta trace | 1.000 | 0.234 | 0.017 | 0.746 |
+| ProcRosetta tree | 1.000 | 0.234 | 0.013 | 0.256 |
 
 ## BIBLIOGRAPHY
 
