@@ -374,6 +374,33 @@ Figure~\ref{fig:reconstructionexamples} contrasts a largest exact reconstruction
   \label{fig:reconstructionexamples}
 \end{figure*}
 
+Figure~\ref{fig:petrireconstructionexamples} makes the corresponding Petri-net translation concrete using the label-aware held-out evaluation path of Table~\ref{tab:decode}. The medium-complexity block-structured input in panel~(a) has eight places, eight visible transitions, and 16 arcs; it corresponds to a 15-node, depth-7 tree over the canonical labels $\mathrm{A0},\ldots,\mathrm{A6}$. Its Petri latent decodes to exactly the same tree prefix, so deterministic conversion produces a net that is identical up to internal node identifiers: labels, markings, and arcs are preserved by an isomorphism. Source and reconstruction are therefore shown once.
+
+Panels~(b)--(c) expose the boundary imposed by the tree decoder. The source is a non-free-choice M-pattern with ten places, seven visible and two silent transitions, 21 arcs, and two free-choice violations. Its decoded tree converts to a non-isomorphic block-structured net with 20 arcs and no free-choice violation. Nevertheless, exhaustive bounded reachability gives the same three complete visible traces for source and output. Thus the translation can preserve behavior while projecting an input outside the decoder's model class onto a different block-structured realization; grammar validity alone does not imply Petri-net structure preservation.
+
+\begin{figure*}[t]
+  \centering
+  \begin{minipage}[c]{0.58\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/petri_exact_source_and_reconstruction.pdf}
+    \par\smallskip\small (a) Exact block-structured source and reconstruction.
+  \end{minipage}
+
+  \smallskip
+  \begin{minipage}[c]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/petri_nonblock_source.pdf}
+    \par\smallskip\small (b) Non-free-choice source.
+  \end{minipage}\hfill
+  \begin{minipage}[c]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/petri_nonblock_decoded.pdf}
+    \par\smallskip\small (c) Decoded block-structured net.
+  \end{minipage}
+  \caption{Held-out Petri-net translations. The exact block-structured source and reconstruction coincide in (a); (b)--(c) show a non-block-structured M-pattern and its different block-structured decode. Black rectangles denote silent transitions. All canonical transition labels are shown in full.}
+  \label{fig:petrireconstructionexamples}
+\end{figure*}
+
 \subsection{Process-Discovery Quality (RQ3)}
 \label{sec:discoveryresults}
 

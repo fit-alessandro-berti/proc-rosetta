@@ -233,6 +233,7 @@ nohup.out
 !paper/figures/training_curves.pdf
 !paper/figures/reconstruction_*.pdf
 !paper/figures/discovery_*.pdf
+!paper/figures/petri_*.pdf
 
 *.nav
 *.snm
