@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import math
+import sys
 from collections import Counter
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Hashable, Iterable, Sequence
 
 import numpy as np
@@ -10,7 +12,7 @@ import pandas as pd
 import torch
 
 from proc_rosetta.behavior import behavioral_distance
-from proc_rosetta.data import ProcessBatchCollator
+from proc_rosetta.data import ProcessBatchCollator, progress_bar, progress_iterator
 from proc_rosetta.devices import resolve_device
 from proc_rosetta.pm4py_bridge import petri_graph_to_net, simulate_traces, tree_to_petri_net
 from proc_rosetta.synthetic import ProcessSample
@@ -49,35 +51,68 @@ def rich_test_report(
     device: str | None = None,
     include_pm4py_petri: bool = True,
     pm4py_petri_config: Pm4pyPetriEmbeddingConfig | None = None,
+    show_progress: bool = False,
 ) -> dict[str, object]:
+    started = perf_counter()
     torch_device = resolve_device(device)
     device_name = str(torch_device)
     pm4py_petri_config = pm4py_petri_config or Pm4pyPetriEmbeddingConfig()
+    stage_count = 8
+    test_debug(
+        f"[1/{stage_count}] Evaluating neural loss over "
+        f"{math.ceil(len(samples) / max(batch_size, 1))} batches",
+        enabled=show_progress,
+    )
     loss_metrics = evaluate_split_from_checkpoint(
         checkpoint_path=checkpoint_path,
         data_dir=data_dir,
         split="test",
         batch_size=batch_size,
         device=device_name,
+        show_progress=show_progress,
+    )
+    test_debug(
+        f"[2/{stage_count}] Loading checkpoint and computing neural embeddings",
+        enabled=show_progress,
     )
     model, _ = load_checkpoint(checkpoint_path, torch_device)
     neural_embeddings = proc_rosetta_embeddings(
-        model, samples, batch_size=batch_size, device=device_name
+        model,
+        samples,
+        batch_size=batch_size,
+        device=device_name,
+        show_progress=show_progress,
+    )
+    test_debug(
+        f"[3/{stage_count}] Evaluating {4 * len(samples)} greedy decodes",
+        enabled=show_progress,
     )
     decode_quality = decode_quality_report(
         model,
         samples,
         batch_size=batch_size,
         device=device_name,
+        show_progress=show_progress,
+    )
+    test_debug(
+        f"[4/{stage_count}] Running {2 * len(samples)} discovery replay evaluations "
+        "(fitness + precision each)",
+        enabled=show_progress,
     )
     discovery_quality = discovery_quality_report(
         model,
         samples,
         batch_size=batch_size,
         device=device_name,
+        show_progress=show_progress,
     )
 
-    behavior = behavior_matrices(samples)
+    pair_count = len(samples) * (len(samples) - 1) // 2
+    test_debug(
+        f"[5/{stage_count}] Computing {pair_count} pairwise behavioral distances",
+        enabled=show_progress,
+    )
+    behavior = behavior_matrices(samples, show_progress=show_progress)
     methods: dict[str, dict[str, object]] = {}
     method_embeddings: dict[str, np.ndarray] = {}
     for name, matrix in neural_embeddings.items():
@@ -85,41 +120,40 @@ def rich_test_report(
         methods[name] = evaluate_embedding_method(matrix, behavior["mean_l1"])
         methods[name]["kind"] = "learned_proc_rosetta_latent"
 
-    baselines = {
-        "trace_activity_counts": vectorize_feature_dicts(
-            [activity_count_features(sample.traces) for sample in samples]
-        ),
-        "trace_variant_distribution": vectorize_feature_dicts(
-            [trace_variant_features(sample.traces) for sample in samples]
-        ),
-        "trace_directly_follows": vectorize_feature_dicts(
-            [directly_follows_features(sample.traces) for sample in samples]
-        ),
-        "trace_eventually_follows": vectorize_feature_dicts(
-            [eventually_follows_features(sample.traces) for sample in samples]
-        ),
-        "pm4py_log_case_features_mean_std": vectorize_feature_dicts(
-            [pm4py_log_case_features(sample.traces) for sample in samples]
-        ),
-        "petri_structural_counts": vectorize_feature_dicts(
-            [petri_structural_features(sample) for sample in samples]
-        ),
-    }
+    test_debug(
+        f"[6/{stage_count}] Extracting {6 * len(samples)} deterministic baseline feature sets",
+        enabled=show_progress,
+    )
+    baselines = deterministic_baseline_embeddings(samples, show_progress=show_progress)
     for name, matrix in baselines.items():
         method_embeddings[name] = matrix
         methods[name] = evaluate_embedding_method(matrix, behavior["mean_l1"])
         methods[name]["kind"] = "deterministic_baseline"
 
     if include_pm4py_petri:
+        test_debug(
+            f"[7/{stage_count}] Computing {len(samples)} PM4Py Petri Node2Vec embeddings",
+            enabled=show_progress,
+        )
         pm4py_embeddings, pm4py_report = pm4py_petri_method_report(
             samples,
             behavior["mean_l1"],
             pm4py_petri_config,
+            show_progress=show_progress,
         )
         methods["pm4py_colonna_petri_node2vec"] = pm4py_report
         if pm4py_embeddings is not None:
             method_embeddings["pm4py_colonna_petri_node2vec"] = pm4py_embeddings
+    else:
+        test_debug(
+            f"[7/{stage_count}] Skipping PM4Py Petri Node2Vec embeddings",
+            enabled=show_progress,
+        )
 
+    test_debug(
+        f"[8/{stage_count}] Aggregating rankings, retrieval, and equivalence metrics",
+        enabled=show_progress,
+    )
     report = {
         "split": "test",
         "sample_count": len(samples),
@@ -134,7 +168,9 @@ def rich_test_report(
         "discovery_quality": discovery_quality,
         "cross_modal_retrieval": cross_modal_retrieval(neural_embeddings),
         "equivalence_families": equivalence_family_embedding_report(
-            samples, neural_embeddings
+            samples,
+            neural_embeddings,
+            show_progress=show_progress,
         ),
         "embedding_methods": methods,
         "method_ranking": rank_embedding_methods(methods),
@@ -153,12 +189,22 @@ def rich_test_report(
             "pm4py_log_case_features_mean_std": "pm4py.extract_features_dataframe aggregated per log",
         },
     }
+    test_debug(
+        f"Evaluation complete in {perf_counter() - started:.1f}s; formatting final report",
+        enabled=show_progress,
+    )
     return report
+
+
+def test_debug(message: str, enabled: bool = True) -> None:
+    if enabled:
+        print(f"[test] {message}", file=sys.stderr, flush=True)
 
 
 def equivalence_family_embedding_report(
     samples: Sequence[ProcessSample],
     embeddings: dict[str, np.ndarray],
+    show_progress: bool = False,
 ) -> dict[str, object]:
     """Measure representation invariance using explicit behavior-family IDs."""
 
@@ -167,7 +213,14 @@ def equivalence_family_embedding_report(
     family_sizes = Counter(family_ids)
     paired_indices = [index for index, value in enumerate(family_ids) if family_sizes[value] > 1]
     methods: dict[str, object] = {}
-    for method, matrix in embeddings.items():
+    iterator = progress_iterator(
+        embeddings.items(),
+        enabled=show_progress,
+        total=len(embeddings),
+        desc="Equivalence metrics",
+        unit="method",
+    )
+    for method, matrix in iterator:
         normalized = np.asarray(matrix, dtype=float)
         norms = np.linalg.norm(normalized, axis=1, keepdims=True)
         normalized = normalized / np.maximum(norms, 1e-12)
@@ -242,6 +295,7 @@ def discovery_quality_report(
     batch_size: int = 16,
     device: str | None = None,
     max_decode_length: int = 512,
+    show_progress: bool = False,
 ) -> dict[str, object]:
     model.eval()
     torch_device = resolve_device(device)
@@ -252,24 +306,52 @@ def discovery_quality_report(
         "inductive_miner": [],
     }
 
-    for start in range(0, len(samples), batch_size):
-        batch_samples = samples[start : start + batch_size]
-        batch = _move_batch_to_device(collator(batch_samples), torch_device)
-        trace_dist = model.encode_traces(batch["traces"])
-        decoded = model.tree_decoder.decode_greedy(
-            trace_dist.mu,
-            max_length=max_decode_length,
-            apply_grammar_mask=True,
-        )
-        for sample, token_ids in zip(batch_samples, decoded.detach().cpu().tolist()):
-            rows["proc_rosetta_trace_mu"].append(
-                evaluate_proc_rosetta_discovery(
+    with progress_bar(
+        total=2 * len(samples),
+        enabled=show_progress,
+        desc="Discovery replays",
+        unit="replay",
+    ) as progress:
+        replay_successes = 0
+        completed_replays = 0
+        total_replays = 2 * len(samples)
+        for start in range(0, len(samples), batch_size):
+            batch_samples = samples[start : start + batch_size]
+            batch = _move_batch_to_device(collator(batch_samples), torch_device)
+            trace_dist = model.encode_traces(batch["traces"])
+            decoded = model.tree_decoder.decode_greedy(
+                trace_dist.mu,
+                max_length=max_decode_length,
+                apply_grammar_mask=True,
+            )
+            for sample, token_ids in zip(batch_samples, decoded.detach().cpu().tolist()):
+                proc_rosetta_row = evaluate_proc_rosetta_discovery(
                     model,
                     sample,
                     token_ids,
                 )
-            )
-            rows["inductive_miner"].append(evaluate_inductive_miner_discovery(sample))
+                rows["proc_rosetta_trace_mu"].append(proc_rosetta_row)
+                replay_successes += int(proc_rosetta_row["token_replay_evaluable"])
+                completed_replays += 1
+                progress.update()
+                set_progress_postfix(
+                    progress,
+                    method="ProcRosetta",
+                    ok=replay_successes,
+                    remaining=total_replays - completed_replays,
+                )
+
+                inductive_miner_row = evaluate_inductive_miner_discovery(sample)
+                rows["inductive_miner"].append(inductive_miner_row)
+                replay_successes += int(inductive_miner_row["token_replay_evaluable"])
+                completed_replays += 1
+                progress.update()
+                set_progress_postfix(
+                    progress,
+                    method="Inductive Miner",
+                    ok=replay_successes,
+                    remaining=total_replays - completed_replays,
+                )
 
     return {
         "description": (
@@ -520,13 +602,22 @@ def proc_rosetta_embeddings(
     samples: Sequence[ProcessSample],
     batch_size: int = 16,
     device: str | None = None,
+    show_progress: bool = False,
 ) -> dict[str, np.ndarray]:
     model.eval()
     torch_device = resolve_device(device)
     model.to(torch_device)
     collator = ProcessBatchCollator(model.tree_tokenizer, model.activity_tokenizer)
     chunks: dict[str, list[np.ndarray]] = {"tree": [], "trace": [], "petri": []}
-    for start in range(0, len(samples), batch_size):
+    starts = range(0, len(samples), batch_size)
+    iterator = progress_iterator(
+        starts,
+        enabled=show_progress,
+        total=len(starts),
+        desc="Neural embeddings",
+        unit="batch",
+    )
+    for start in iterator:
         batch_samples = samples[start : start + batch_size]
         batch = collator(batch_samples)
         batch = _move_batch_to_device(batch, torch_device)
@@ -561,6 +652,7 @@ def decode_quality_report(
     device: str | None = None,
     max_decode_length: int = 512,
     behavior_traces_per_sample: int = 128,
+    show_progress: bool = False,
 ) -> dict[str, object]:
     model.eval()
     torch_device = resolve_device(device)
@@ -573,34 +665,49 @@ def decode_quality_report(
         "proc_rosetta_fused_mu": [],
     }
 
-    for start in range(0, len(samples), batch_size):
-        batch_samples = samples[start : start + batch_size]
-        batch = _move_batch_to_device(collator(batch_samples), torch_device)
-        tree_dist = model.encode_tree(batch["tree_tokens"])
-        trace_dist = model.encode_traces(batch["traces"])
-        petri_dist = model.encode_petri(batch["petri"])
-        latents = {
-            "proc_rosetta_tree_mu": tree_dist.mu,
-            "proc_rosetta_trace_mu": trace_dist.mu,
-            "proc_rosetta_petri_mu": petri_dist.mu,
-        }
-        latents["proc_rosetta_fused_mu"] = torch.stack(tuple(latents.values()), dim=0).mean(dim=0)
-
-        for name, latent in latents.items():
-            decoded = model.tree_decoder.decode_greedy(
-                latent,
-                max_length=max_decode_length,
-                apply_grammar_mask=True,
+    with progress_bar(
+        total=4 * len(samples),
+        enabled=show_progress,
+        desc="Decode quality",
+        unit="decode",
+    ) as progress:
+        successful_decodes = 0
+        for start in range(0, len(samples), batch_size):
+            batch_samples = samples[start : start + batch_size]
+            batch = _move_batch_to_device(collator(batch_samples), torch_device)
+            tree_dist = model.encode_tree(batch["tree_tokens"])
+            trace_dist = model.encode_traces(batch["traces"])
+            petri_dist = model.encode_petri(batch["petri"])
+            latents = {
+                "proc_rosetta_tree_mu": tree_dist.mu,
+                "proc_rosetta_trace_mu": trace_dist.mu,
+                "proc_rosetta_petri_mu": petri_dist.mu,
+            }
+            latents["proc_rosetta_fused_mu"] = torch.stack(tuple(latents.values()), dim=0).mean(
+                dim=0
             )
-            for sample, token_ids in zip(batch_samples, decoded.detach().cpu().tolist()):
-                rows[name].append(
-                    evaluate_single_decode(
+
+            for name, latent in latents.items():
+                decoded = model.tree_decoder.decode_greedy(
+                    latent,
+                    max_length=max_decode_length,
+                    apply_grammar_mask=True,
+                )
+                for sample, token_ids in zip(batch_samples, decoded.detach().cpu().tolist()):
+                    row = evaluate_single_decode(
                         model,
                         sample,
                         token_ids,
                         behavior_traces_per_sample=behavior_traces_per_sample,
                     )
-                )
+                    rows[name].append(row)
+                    successful_decodes += int(row["behavior_evaluable"])
+                    progress.update()
+                    set_progress_postfix(
+                        progress,
+                        source=name.removeprefix("proc_rosetta_").removesuffix("_mu"),
+                        ok=successful_decodes,
+                    )
 
     return {
         "description": (
@@ -730,7 +837,10 @@ def mean(values: Iterable[object]) -> float:
     return float(np.mean(numeric))
 
 
-def behavior_matrices(samples: Sequence[ProcessSample]) -> dict[str, np.ndarray]:
+def behavior_matrices(
+    samples: Sequence[ProcessSample],
+    show_progress: bool = False,
+) -> dict[str, np.ndarray]:
     n = len(samples)
     matrices = {
         "mean_l1": np.zeros((n, n), dtype=float),
@@ -738,12 +848,48 @@ def behavior_matrices(samples: Sequence[ProcessSample]) -> dict[str, np.ndarray]
         "directly_follows_l1": np.zeros((n, n), dtype=float),
         "length_l1": np.zeros((n, n), dtype=float),
     }
-    for i in range(n):
-        for j in range(i + 1, n):
-            distance = behavioral_distance(samples[i].traces, samples[j].traces)
-            for key, matrix in matrices.items():
-                matrix[i, j] = matrix[j, i] = float(distance[key])
+    with progress_bar(
+        total=n * (n - 1) // 2,
+        enabled=show_progress,
+        desc="Behavior distances",
+        unit="pair",
+    ) as progress:
+        for i in range(n):
+            for j in range(i + 1, n):
+                distance = behavioral_distance(samples[i].traces, samples[j].traces)
+                for key, matrix in matrices.items():
+                    matrix[i, j] = matrix[j, i] = float(distance[key])
+                progress.update()
     return matrices
+
+
+def deterministic_baseline_embeddings(
+    samples: Sequence[ProcessSample],
+    show_progress: bool = False,
+) -> dict[str, np.ndarray]:
+    extractors = {
+        "trace_activity_counts": lambda sample: activity_count_features(sample.traces),
+        "trace_variant_distribution": lambda sample: trace_variant_features(sample.traces),
+        "trace_directly_follows": lambda sample: directly_follows_features(sample.traces),
+        "trace_eventually_follows": lambda sample: eventually_follows_features(sample.traces),
+        "pm4py_log_case_features_mean_std": lambda sample: pm4py_log_case_features(sample.traces),
+        "petri_structural_counts": petri_structural_features,
+    }
+    baselines: dict[str, np.ndarray] = {}
+    with progress_bar(
+        total=len(extractors) * len(samples),
+        enabled=show_progress,
+        desc="Baseline features",
+        unit="sample-method",
+    ) as progress:
+        for name, extractor in extractors.items():
+            features = []
+            for sample in samples:
+                features.append(extractor(sample))
+                progress.update()
+            baselines[name] = vectorize_feature_dicts(features)
+            set_progress_postfix(progress, method=name)
+    return baselines
 
 
 def evaluate_embedding_method(embeddings: np.ndarray, behavior_distance: np.ndarray) -> dict[str, object]:
@@ -791,6 +937,7 @@ def pm4py_petri_method_report(
     samples: Sequence[ProcessSample],
     behavior_distance: np.ndarray,
     config: Pm4pyPetriEmbeddingConfig,
+    show_progress: bool = False,
 ) -> tuple[np.ndarray | None, dict[str, object]]:
     try:
         from pm4py.objects.petri_net.utils import embeddings_similarity
@@ -807,7 +954,14 @@ def pm4py_petri_method_report(
 
     vectors: list[np.ndarray] = []
     try:
-        for sample in samples:
+        iterator = progress_iterator(
+            samples,
+            enabled=show_progress,
+            total=len(samples),
+            desc="PM4Py Petri embeddings",
+            unit="net",
+        )
+        for sample in iterator:
             bundle = petri_graph_to_net(
                 sample.petri_graph,
                 name=sample.model_variant_id or sample.equivalence_id,
@@ -839,6 +993,11 @@ def pm4py_petri_method_report(
     report["kind"] = "pm4py_petri_net_embedding"
     report["config"] = config.to_dict()
     return matrix, report
+
+
+def set_progress_postfix(progress, **values: object) -> None:
+    if hasattr(progress, "set_postfix"):
+        progress.set_postfix(values, refresh=False)
 
 
 def rank_embedding_methods(methods: dict[str, dict[str, object]]) -> list[dict[str, object]]:

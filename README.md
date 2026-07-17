@@ -289,6 +289,11 @@ Evaluate the held-out synthetic test split:
   --checkpoint checkpoints/proc_rosetta.best.pt
 ```
 
+The command prints its evaluation plan and `tqdm` progress bars to stderr,
+including the total/completed discovery replays, decode evaluations, behavioral
+pairs, baseline feature sets, and optional Petri embeddings. This keeps stdout
+available for the final report. Use `--quiet` to disable progress output.
+
 For machine-readable output:
 
 ```bash

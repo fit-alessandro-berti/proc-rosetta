@@ -117,13 +117,17 @@ def evaluate_epoch(
     weights: LossWeights | None = None,
     epoch: int | None = None,
     show_progress: bool = False,
+    progress_desc: str | None = None,
 ) -> dict[str, float]:
     model.eval()
     totals: dict[str, float] = {}
     batches = 0
     iterator = progress_dataloader(
         dataloader,
-        desc=f"Epoch {epoch} validation" if epoch is not None else "Validation",
+        desc=(
+            progress_desc
+            or (f"Epoch {epoch} validation" if epoch is not None else "Validation")
+        ),
         enabled=show_progress,
     )
     for batch in iterator:
@@ -490,6 +494,7 @@ def evaluate_split_from_checkpoint(
     split: str = "test",
     batch_size: int = 16,
     device: str | None = None,
+    show_progress: bool = False,
 ) -> dict[str, float]:
     torch_device = resolve_device(device)
     model, _ = load_checkpoint(checkpoint_path, torch_device)
@@ -500,7 +505,13 @@ def evaluate_split_from_checkpoint(
         batch_size=batch_size,
         shuffle=False,
     )
-    return evaluate_epoch(model, loader, torch_device)
+    return evaluate_epoch(
+        model,
+        loader,
+        torch_device,
+        show_progress=show_progress,
+        progress_desc=f"{split.title()} loss",
+    )
 
 
 def progress_dataloader(dataloader: DataLoader, desc: str, enabled: bool):

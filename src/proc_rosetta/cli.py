@@ -4,6 +4,7 @@ import argparse
 from dataclasses import replace
 import json
 from pathlib import Path
+import sys
 
 from proc_rosetta.benchmarks import (
     Pm4pyPetriEmbeddingConfig,
@@ -152,6 +153,11 @@ def build_parser() -> argparse.ArgumentParser:
     test.add_argument("--petri-epochs", type=int, default=5)
     test.add_argument("--petri-seed", type=int, default=42)
     test.add_argument("--json", action="store_true", help="print the full machine-readable JSON report")
+    test.add_argument(
+        "--quiet",
+        action="store_true",
+        help="disable stderr status messages and progress bars",
+    )
 
     return parser
 
@@ -264,7 +270,19 @@ def run_train(args: argparse.Namespace) -> int:
 
 
 def run_test(args: argparse.Namespace) -> int:
-    samples = read_samples_jsonl(split_samples_path(args.data_dir, "test"))
+    show_progress = not args.quiet
+    sample_path = split_samples_path(args.data_dir, "test")
+    test_debug(f"Loading test samples from {sample_path}", enabled=show_progress)
+    samples = read_samples_jsonl(sample_path, show_progress=show_progress)
+    sample_count = len(samples)
+    sample_label = "sample" if sample_count == 1 else "samples"
+    test_debug(
+        f"Plan: {sample_count} {sample_label}, batch_size={args.batch_size}, device={args.device}; "
+        f"{2 * sample_count} discovery replay evaluations, {4 * sample_count} decodes, "
+        f"{sample_count * (sample_count - 1) // 2} behavioral pairs, "
+        f"{'no' if args.skip_pm4py_petri_embedding else sample_count} PM4Py Petri embeddings",
+        enabled=show_progress,
+    )
     report = rich_test_report(
         checkpoint_path=args.checkpoint,
         data_dir=args.data_dir,
@@ -280,12 +298,18 @@ def run_test(args: argparse.Namespace) -> int:
             epochs=args.petri_epochs,
             seed=args.petri_seed,
         ),
+        show_progress=show_progress,
     )
     if args.json:
         print(json.dumps(report, sort_keys=True))
     else:
         print(format_human_test_report(report))
     return 0
+
+
+def test_debug(message: str, enabled: bool = True) -> None:
+    if enabled:
+        print(f"[test] {message}", file=sys.stderr, flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:

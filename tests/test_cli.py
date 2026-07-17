@@ -42,6 +42,29 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert train_args.early_stopping_patience == 4
     assert train_args.activity_remap_probability == 0.5
     assert test_args.device == default_device()
+    assert not test_args.quiet
+
+
+def test_test_quiet_disables_progress_output(monkeypatch, capsys):
+    calls = {}
+
+    def read_samples(path, show_progress=False):
+        calls["read_progress"] = show_progress
+        return [object()]
+
+    def report(**kwargs):
+        calls["report_progress"] = kwargs["show_progress"]
+        return {"split": "test"}
+
+    monkeypatch.setattr("proc_rosetta.cli.read_samples_jsonl", read_samples)
+    monkeypatch.setattr("proc_rosetta.cli.rich_test_report", report)
+
+    assert main(["test", "--quiet", "--json"]) == 0
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {"split": "test"}
+    assert captured.err == ""
+    assert calls == {"read_progress": False, "report_progress": False}
 
 
 def test_sample_progress_reports_generated_triplets(tmp_path, monkeypatch):
@@ -273,6 +296,10 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     ) == 0
     captured = capsys.readouterr()
     test_row = json.loads(captured.out.strip().splitlines()[-1])
+    assert "[test] Plan: 1 sample" in captured.err
+    assert "2 discovery replay evaluations" in captured.err
+    assert "[test] [4/8] Running 2 discovery replay evaluations" in captured.err
+    assert "Discovery replays" in captured.err
     assert test_row["split"] == "test"
     assert test_row["loss_metrics"]["loss"] > 0
     assert "cross_modal_retrieval" in test_row

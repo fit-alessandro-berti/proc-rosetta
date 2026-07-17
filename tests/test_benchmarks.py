@@ -2,10 +2,12 @@ import sys
 from types import SimpleNamespace
 
 import numpy as np
+import torch
 
 from proc_rosetta.benchmarks import (
     activity_count_features,
     alignment_f1_score,
+    discovery_quality_report,
     evaluate_embedding_method,
     fitness_precision_f1_score,
     format_human_test_report,
@@ -132,6 +134,89 @@ def test_token_based_replay_fitness_and_precision_use_pm4py_token_apis(monkeypat
         "case_id_key": "case:concept:name",
     }
     assert calls[1][5] == calls[0][5]
+
+
+def test_discovery_progress_counts_both_methods_for_every_sample(monkeypatch):
+    progress_details = {}
+    updates = []
+    postfixes = []
+
+    class RecordingProgress:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def update(self, count=1):
+            updates.append(count)
+
+        def set_postfix(self, *args, **kwargs):
+            postfixes.append(args[0])
+
+    def recording_progress_bar(total, enabled, **kwargs):
+        progress_details.update(total=total, enabled=enabled, **kwargs)
+        return RecordingProgress()
+
+    class Model:
+        tree_tokenizer = object()
+        activity_tokenizer = object()
+
+        class tree_decoder:
+            @staticmethod
+            def decode_greedy(latent, **kwargs):
+                return torch.ones((len(latent), 1), dtype=torch.long)
+
+        def eval(self):
+            return None
+
+        def to(self, device):
+            return None
+
+        def encode_traces(self, traces):
+            return SimpleNamespace(mu=torch.zeros((len(traces), 1)))
+
+    successful_row = {
+        "model_discovered": True,
+        "token_replay_evaluable": True,
+        "fitness": 1.0,
+        "precision": 1.0,
+        "f1": 1.0,
+        "error": None,
+    }
+    monkeypatch.setattr("proc_rosetta.benchmarks.progress_bar", recording_progress_bar)
+    monkeypatch.setattr(
+        "proc_rosetta.benchmarks.ProcessBatchCollator",
+        lambda *args: lambda samples: {"traces": torch.zeros((len(samples), 1))},
+    )
+    monkeypatch.setattr(
+        "proc_rosetta.benchmarks.evaluate_proc_rosetta_discovery",
+        lambda *args: successful_row.copy(),
+    )
+    monkeypatch.setattr(
+        "proc_rosetta.benchmarks.evaluate_inductive_miner_discovery",
+        lambda *args: successful_row.copy(),
+    )
+
+    report = discovery_quality_report(
+        Model(),
+        [object(), object(), object()],
+        batch_size=2,
+        device="cpu",
+        show_progress=True,
+    )
+
+    assert progress_details == {
+        "total": 6,
+        "enabled": True,
+        "desc": "Discovery replays",
+        "unit": "replay",
+    }
+    assert sum(updates) == 6
+    assert postfixes[0]["remaining"] == 5
+    assert postfixes[-1]["remaining"] == 0
+    assert report["methods"]["proc_rosetta_trace_mu"]["count"] == 3
+    assert report["methods"]["inductive_miner"]["count"] == 3
 
 
 def test_human_report_mentions_method_comparison():
