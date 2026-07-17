@@ -62,14 +62,14 @@ Process mining revolves around heterogeneous artifacts: event logs record observ
 \section{Introduction}
 \label{sec:introduction}
 
-Process mining connects observed event data with formal process models~\cite{vanDerAalst2016} and constantly moves between different \emph{representations} of the same behavior: an event log is a finite sample of executed traces, a process tree is a block-structured hierarchical specification, and a Petri net is a graph-based execution model with explicit states and concurrency. The bridges between these views are dedicated, hand-designed algorithms, each for one direction of one artifact pair: discovery maps logs to models~\cite{Aalst2004,Leemans2013,Augusto2019Split}, conformance checking relates logs and models through alignments~\cite{Adriansyah2012}, and model-to-model transformations connect notations such as workflow nets and process trees~\cite{VanZelst2020}. What is missing is a common \emph{computational representation} in which a log, a process tree, and a Petri net describing the same behavior are simply \emph{the same point}. Such a representation would enable similarity search and clustering across artifact types, provide fixed-length behavioral feature vectors for downstream machine learning, and turn translation between artifact types into a decode operation. In machine learning, embedding heterogeneous modalities such as images and text into one shared vector space has proven remarkably effective~\cite{Radford2021,Baltrusaitis2019}; process mining has adopted representation learning for traces and logs~\cite{DeKoninck2018,Barbon2023} and for Petri nets~\cite{Colonna2024}, but these efforts remain \emph{single-modality}, and none of them can generate a process model back from the learned space.
+Process mining connects observed event data with formal models~\cite{vanDerAalst2016} and moves between different \emph{representations} of the same behavior: logs sample executed traces, process trees specify block-structured behavior, and Petri nets make states and concurrency explicit. Existing bridges are direction-specific algorithms: discovery maps logs to models~\cite{Aalst2004,Leemans2013}, conformance checking relates logs and models, and transformations connect model notations. What is missing is a common \emph{computational representation} in which equivalent artifacts are nearby regardless of type. Such a space would support cross-artifact search, clustering, machine learning, and translation by decoding. Shared embeddings are effective in multimodal learning~\cite{Radford2021}; process mining has learned representations for traces and logs~\cite{DeKoninck2018,Barbon2023} and Petri nets~\cite{Colonna2024}, but these remain single-modality and do not generate models from the learned space.
 
-This paper presents \textbf{ProcRosetta}, a multimodal neural framework that treats event logs, process trees, and Petri nets as three views of one process behavior. ProcRosetta trains three artifact-specific encoders into a shared latent space, aligns the views of the same process through explicit alignment and contrastive objectives, and attaches a single shared decoder that maps any latent vector back to a process tree. The decoder is \emph{grammar-masked}: at every generation step, only tokens that keep the partial output a syntactically valid process tree are allowed, following the philosophy of grammar-constrained decoding~\cite{Kusner2017,Geng2023}; every completed tree is converted to a Petri net deterministically using PM4Py~\cite{Berti2023PM4Py}, so successfully terminated outputs are well-formed and sound by construction. The name is an analogy to the Rosetta stone: the training data is the same content in three ``languages'', and the model learns the correspondence.
+ProcRosetta treats logs, process trees, and Petri nets as three views of one behavior. Artifact-specific encoders map them into a shared latent space, alignment and contrastive objectives align matching views, and one decoder maps any latent vector to a process tree. The decoder is \emph{grammar-masked}: only tokens that keep the partial output syntactically valid are allowed~\cite{Geng2023}. Every completed tree converts deterministically to a Petri net with PM4Py~\cite{Berti2023PM4Py}, making successfully terminated outputs well-formed and sound by construction. The name evokes the Rosetta stone: training presents the same content in three ``languages'' and learns their correspondence.
 
 \begin{figure*}
   \centering
   \includegraphics[width=0.92\textwidth]{figures/outline.png}
-  \caption{Overview of ProcRosetta. \emph{Stage 1 (encoding):} three views of one process behavior are mapped by artifact-specific encoders into a shared latent space, where alignment and contrastive objectives pull views of the same process together and push different processes apart; the embeddings support cross-artifact similarity search, clustering, and downstream machine learning. \emph{Stage 2 (decoding):} a shared grammar-masked decoder maps any latent vector to a syntactically valid process tree, deterministically convertible to a Petri net---realizing auto-encoding (tree$\to$tree), process discovery (log$\to$tree), or model translation (net$\to$tree).}
+  \caption{ProcRosetta aligns encoded logs, process trees, and Petri nets in one latent space. A shared grammar-masked decoder realizes tree reconstruction, log-to-tree discovery, and net-to-tree translation; completed trees convert deterministically to Petri nets.}
   \label{fig:outline}
 \end{figure*}
 
@@ -88,20 +88,16 @@ Section~\ref{sec:relatedWork} reviews related work; Section~\ref{sec:preliminari
 \section{Related Work}
 \label{sec:relatedWork}
 
-\paragraph{Process discovery and block-structured models.}
-Automated process discovery derives a process model from an event log~\cite{Aalst2004}; a large benchmark over real-life logs showed that no single algorithm dominates across fitness, precision, generalization, and simplicity~\cite{Augusto2019Review}. The Inductive Miner~\cite{Leemans2013} discovers \emph{process trees} by recursive log decomposition, yielding block-structured models that are sound by construction; process trees are a standard pivot representation with formal conversions to Petri nets and BPMN~\cite{Leemans2026}, and workflow nets can be translated back to process trees when possible~\cite{VanZelst2020}. Beyond strict block structure, Split Miner~\cite{Augusto2019Split} balances accuracy and simplicity, and the POWL family~\cite{Kourani2023POWL,Kourani2026} discovers partially ordered workflow models that are more expressive than process trees while preserving soundness. ProcRosetta shares the Inductive Miner's process-tree bias---the decoder emits process trees because their grammar guarantees well-formedness and their Petri-net conversion is deterministic---but instead of a deterministic log-to-model algorithm, it learns a shared representation over logs, trees, and nets from which models can be decoded.
+\paragraph{Discovery and model generation.}
+Classical discovery maps logs to models~\cite{Aalst2004}. The Inductive Miner recursively decomposes logs into sound, block-structured process trees~\cite{Leemans2013}; more expressive sound targets such as POWL relax strict block structure~\cite{Kourani2026}. Neural discovery has learned a direct log-to-Petri-net mapping from synthetic pairs~\cite{Sommers2021}. ProcRosetta retains the process-tree bias for validity and deterministic Petri conversion, but learns a tri-modal space rather than one log-to-model direction.
 
-\paragraph{Model similarity, conformance, and behavioral distances.}
-Similarity of process models has been measured over labels, structure, and behavior~\cite{Dijkman2011}, with the recurring insight that behavioral closeness cannot be reduced to structural resemblance; alignment-based conformance checking~\cite{Adriansyah2012} provides exact, interpretable comparisons between logs and models. ProcRosetta learns a \emph{continuous proxy} for such comparisons---attractive for scalable retrieval and clustering, but without formal guarantees---so the assessment measures explicitly how well the learned geometry agrees with a behavioral distance (Section~\ref{sec:embeddingresults}).
+\paragraph{Representation learning.}
+Prior process embeddings cover traces and logs~\cite{DeKoninck2018,Barbon2023} or Petri nets~\cite{Colonna2024}; PetriNet2Vec is therefore a baseline below. They encode one artifact family and do not decode models from a shared space. ProcRosetta instead aligns three artifact types and evaluates both latent geometry and generated-model behavior.
 
-\paragraph{Representation learning for process-mining artifacts.}
-Representation learning entered process mining chiefly through single-modality embeddings: act2vec, trace2vec, log2vec, and model2vec~\cite{DeKoninck2018} and a rich design space of trace encodings~\cite{Barbon2023}. Deep sequence models for predictive monitoring~\cite{RamaManeiro2023} learn powerful trace representations but target prediction over running cases rather than model generation or cross-artifact alignment. On the model side, Petri nets are graphs, making random-walk embeddings such as node2vec~\cite{Grover2016} and graph neural networks~\cite{Kipf2017} relevant. Most directly related is PetriNet2Vec by Colonna et al.~\cite{Colonna2024}, which learns unsupervised vector representations of Petri nets and serves as a baseline in our assessment. All of these approaches embed \emph{one} artifact family; ProcRosetta's distinctive step is to align three artifact families in one space and to couple the space with a generative decoder.
+Model comparison distinguishes label, structural, and behavioral similarity~\cite{Dijkman2011}, while alignment-based conformance provides exact log--model diagnostics~\cite{Adriansyah2012}. ProcRosetta's latent distance is a scalable but approximate proxy, so the assessment separately measures behavioral-distance agreement and discovered-model conformance.
 
-\paragraph{Neural and LLM-based process-model generation.}
-Sommers et al.~\cite{Sommers2021} train graph neural networks on synthetic log--model pairs to discover sound Petri nets; this is the closest neural predecessor, though it addresses one direction (log$\to$net) rather than a tri-modal space. More recently, large language models have been used to generate process models from natural-language descriptions~\cite{Kourani2024LLM}, also specialized via reinforcement learning with verifiable rewards~\cite{Berti2025RL}. These approaches are language-native, whereas ProcRosetta is artifact-native---its inputs are logs, trees, and nets themselves---so the directions are complementary.
-
-\paragraph{Multimodal learning and grammar-constrained decoding.}
-Outside process mining, multimodal learning studies shared representations across modalities~\cite{Baltrusaitis2019}; CLIP~\cite{Radford2021} demonstrated contrastive alignment of paired images and captions at scale. ProcRosetta transfers this recipe to process mining, with the twist that its ``modalities'' are formal artifacts whose equivalence is behavioral rather than perceptual. For generation, grammar-constrained decoding guarantees syntactic validity of structured outputs, as in grammar variational autoencoders~\cite{Kusner2017} and grammar-constrained LLM decoding~\cite{Geng2023}; ProcRosetta applies this principle to process trees, combining ideas that have so far been separate---process-tree soundness, graph encoders for Petri nets, log encoders, contrastive multimodal alignment, and grammar-constrained decoding---in a single trainable framework.
+\paragraph{Shared representations and constrained decoding.}
+CLIP established contrastive alignment of paired modalities~\cite{Radford2021}, while grammar-constrained decoding enforces structured outputs~\cite{Geng2023}. ProcRosetta combines these ideas for formal artifacts: equivalence is behavioral, and the shared decoder emits grammar-valid process trees. Tri-modal alignment, behavioral evaluation, and validity-preserving generation distinguish it from both single-modality embeddings and direct neural discovery.
 
 \section{Preliminaries}
 \label{sec:preliminaries}
@@ -109,10 +105,10 @@ Outside process mining, multimodal learning studies shared representations acros
 We fix a finite alphabet of activity labels $\Sigma$. Throughout the paper, activity labels are \emph{canonicalized} to $\mathrm{A0}, \mathrm{A1}, \ldots$ in order of first occurrence, making all representations invariant to arbitrary activity naming while preserving repeated-activity identity.
 
 \paragraph{Event logs.}
-A \emph{trace} is a finite word $\sigma = \langle a_1, \ldots, a_m \rangle$ with $a_j \in \Sigma$; an \emph{event log} is a finite multiset of traces, $L = [\sigma_1, \ldots, \sigma_n] \in \mathcal{B}(\Sigma^*)$, preserving trace frequencies. Logs carry only control-flow information here, the classical control-flow abstraction of richer formats such as XES~\cite{IEEE1849-2023}.
+A \emph{trace} is a finite word $\sigma = \langle a_1, \ldots, a_m \rangle$ with $a_j \in \Sigma$; an \emph{event log} is a finite multiset of traces, $L = [\sigma_1, \ldots, \sigma_n] \in \mathcal{B}(\Sigma^*)$, preserving trace frequencies. Logs carry only control-flow information here, abstracting from richer event attributes.
 
 \paragraph{Process trees.}
-A \emph{process tree}~\cite{Leemans2013,Leemans2026} is a block-structured process model generated by the grammar
+A \emph{process tree}~\cite{Leemans2013} is a block-structured process model generated by the grammar
 \begin{equation}
 \begin{split}
 T \;::=\;& a \;\mid\; \tau \;\mid\; \operatorname{SEQ}(T_1,\ldots,T_k) \;\mid\; \operatorname{XOR}(T_1,\ldots,T_k)\\
@@ -217,7 +213,7 @@ Each encoder maps its artifact to a diagonal Gaussian $q_m(z \mid x) = \mathcal{
 
 \emph{Log encoder.} The event-log encoder is \emph{hierarchical}, mirroring the log/trace/event structure: a GRU first encodes each trace into a trace vector; an attention mechanism then computes a data-dependent weight for every trace---emphasizing informative trace variants rather than averaging uniformly---and pools the trace vectors into a single log vector, projected to $(\mu_{\mathit{trace}}, \sigma_{\mathit{trace}})$.
 
-\emph{Petri-net encoder.} The Petri-net encoder is a message-passing graph network~\cite{Kipf2017}. Each node starts from an embedding of its type (place / visible transition / invisible transition), its visible transition label when present, and a linear encoding of its marking feature; in each of three message-passing rounds, every node updates its vector from its own state and its incoming and outgoing neighbors, followed by a nonlinearity and layer normalization. Mean-pooling over nodes yields the graph vector, projected to $(\mu_{\mathit{petri}}, \sigma_{\mathit{petri}})$.
+\emph{Petri-net encoder.} The Petri-net encoder is a message-passing graph network. Each node starts from an embedding of its type (place / visible transition / invisible transition), its visible transition label when present, and a linear encoding of its marking feature; in each of three rounds, every node updates from its own state and its incoming and outgoing neighbors, followed by a nonlinearity and layer normalization. Mean-pooling yields the graph vector, projected to $(\mu_{\mathit{petri}}, \sigma_{\mathit{petri}})$.
 
 When several views are available, ProcRosetta also defines a \emph{fused} embedding, the mean $\mu_{\mathit{fused}} = \tfrac{1}{3}(\mu_{\mathit{tree}} + \mu_{\mathit{trace}} + \mu_{\mathit{petri}})$.
 
@@ -226,7 +222,7 @@ When several views are available, ProcRosetta also defines a \emph{fused} embedd
 
 A single decoder, shared by all three modalities, is an autoregressive GRU: the latent vector $z$ initializes its hidden state, and tokens are generated one at a time, each step predicting a distribution over the vocabulary given the tokens so far.
 
-An unconstrained decoder could produce malformed sequences (e.g., an operator without children). ProcRosetta therefore applies a \emph{grammar mask} derived from a prefix grammar of process trees. The decoding state tracks the number of open node slots and whether an arity token is pending: after $\texttt{<bos>}$, exactly one node is open; an activity or $\tau$ closes one slot; an operator token must be followed by an arity token $\mathrm{ARITY}\_k$, which opens $k$ child slots; when no slots remain open, only $\texttt{<eos>}$ is valid. At every step, the logits (pre-softmax scores) of all grammar-invalid tokens are set to $-10^9$, so invalid continuations receive zero probability during training and greedy decoding. Consequently, \emph{every} terminated output parses into a process tree of grammar~(\ref{eq:grammar}), and PM4Py's deterministic conversion turns it into a sound Petri net---transferring the validity-by-construction philosophy of grammar-based molecular and program generation~\cite{Kusner2017,Geng2023} to process models.
+An unconstrained decoder could produce malformed sequences. ProcRosetta therefore masks tokens using the prefix grammar. The state tracks open node slots and pending arity: after $\texttt{<bos>}$ one node is open; an activity or $\tau$ closes a slot; an operator must be followed by $\mathrm{ARITY}\_k$, which opens $k$ child slots; when none remain, only $\texttt{<eos>}$ is valid. Grammar-invalid logits are set to $-10^9$, giving invalid continuations zero probability. Consequently, every terminated output parses into a tree of grammar~(\ref{eq:grammar}) and converts deterministically to a sound Petri net~\cite{Geng2023}.
 
 \subsection{Training Objective}
 \label{sec:training}
@@ -355,33 +351,26 @@ Inductive Miner & \textbf{100\%} & \textbf{100\%} & \textbf{1.000} & \textbf{0.9
 
 The decoded tree \emph{exactly} equals the canonical target in 75.0\% of cases from every latent source. Exact match is demanding (a single differing leaf counts as failure); the error-tolerant metrics show similar behavior across sources: normalized token edit distance is $0.163$--$0.165$, and the behavioral distance between the original log and traces simulated from the decoded model is $0.511$--$0.521$. The latter is roughly 42\% of the $1.213$ mean distance between unrelated test rows (Section~\ref{sec:embeddingresults}), so decoded models remain substantially closer to their sources than a random model from the same distribution.
 
-Figure~\ref{fig:reconstructionexamples} makes the exact-match boundary concrete. We ranked all tree-to-tree decodes in the default test split by source-tree size and depth. The first row is a largest exact reconstruction (15 nodes, depth 7; tied with other controlled cases): it preserves both occurrences of $\mathrm{A0}$ in the exclusive-choice branches and the complete sequential suffix. For contrast, the second row is the closest non-exact reconstruction among cases at least this large, rather than a worst-case failure. The decoder retains the two upper exclusive-choice layers and one parallel block, but reduces a 23-node, depth-9 source to 13 nodes and depth 5, replacing its deep sequence--parallel--loop continuation with a shallow choice. Thus grammar masking still guarantees a valid model, but does not prevent semantic simplification near the upper end of the learned complexity distribution.
+Figure~\ref{fig:reconstructionexamples} contrasts a largest exact reconstruction (15 nodes, depth 7; source and output are identical) with a large non-exact case. In the latter, the decoder preserves two upper choice layers and a parallel block but reduces a 23-node, depth-9 source to 13 nodes and depth 5, replacing a deep sequence--parallel--loop continuation with a shallow choice. Grammar masking ensures validity, not semantic completeness at the upper end of the learned complexity range.
 
 \begin{figure*}[t]
   \centering
-  \begin{minipage}[c]{0.49\textwidth}
+  \begin{minipage}[c]{0.31\textwidth}
     \centering
-    \includegraphics[width=\linewidth,height=0.23\textheight,keepaspectratio]{figures/reconstruction_exact_original.pdf}
-    \par\smallskip\small (a) Exact case: original tree.
+    \includegraphics[width=\linewidth,height=0.22\textheight,keepaspectratio]{figures/reconstruction_exact_original.pdf}
+    \par\smallskip\small (a) Exact source and reconstruction.
   \end{minipage}\hfill
-  \begin{minipage}[c]{0.49\textwidth}
+  \begin{minipage}[c]{0.34\textwidth}
     \centering
-    \includegraphics[width=\linewidth,height=0.23\textheight,keepaspectratio]{figures/reconstruction_exact_reconstructed.pdf}
-    \par\smallskip\small (b) Exact case: reconstructed tree.
-  \end{minipage}
-
-  \medskip
-  \begin{minipage}[c]{0.49\textwidth}
-    \centering
-    \includegraphics[width=\linewidth,height=0.27\textheight,keepaspectratio]{figures/reconstruction_mismatch_original.pdf}
-    \par\smallskip\small (c) Non-exact case: original tree.
+    \includegraphics[width=\linewidth,height=0.22\textheight,keepaspectratio]{figures/reconstruction_mismatch_original.pdf}
+    \par\smallskip\small (b) Non-exact source.
   \end{minipage}\hfill
-  \begin{minipage}[c]{0.49\textwidth}
+  \begin{minipage}[c]{0.31\textwidth}
     \centering
-    \includegraphics[width=\linewidth,height=0.27\textheight,keepaspectratio]{figures/reconstruction_mismatch_reconstructed.pdf}
-    \par\smallskip\small (d) Non-exact case: reconstructed tree.
+    \includegraphics[width=\linewidth,height=0.22\textheight,keepaspectratio]{figures/reconstruction_mismatch_reconstructed.pdf}
+    \par\smallskip\small (c) Non-exact reconstruction.
   \end{minipage}
-  \caption{Qualitative tree reconstruction examples from the default held-out test split. The top row is intentionally identical: it is a largest source tree reconstructed exactly. The bottom row shows a relatively complex, non-exact case selected to expose a representative simplification rather than the largest observed error. All panels are PM4Py process-tree visualizations imported as PDF.}
+  \caption{Held-out tree reconstructions. In (a), source and output are identical; (b)--(c) show a large source and its simplified, non-exact reconstruction.}
   \label{fig:reconstructionexamples}
 \end{figure*}
 
@@ -525,14 +514,14 @@ ProcRosetta is implemented in Python on top of PyTorch and PM4Py~\cite{Berti2023
 Four threats qualify these findings. \emph{(i) Synthetic data.} Training and evaluation use synthetic behavior families with controlled alternate Petri-net representations and synthetic trace edits; this noise does not reproduce the incompleteness, deviating behavior, attributes, and long-tail variants of real logs, so the conclusions concern in-distribution artifacts (out-of-distribution quality is not claimed here). \emph{(ii) Metric circularity.} The behavioral distance used for embedding evaluation shares two of its three components with the directly-follows and trace-variant baselines, inflating their scores; Table~\ref{tab:embedding} marks them, and the less affected nearest-neighbor quality is reported alongside correlation. \emph{(iii) Duplicate behavior across splits.} Splits are family-wise, but the generator does not explicitly deduplicate visible languages across splits, so a fraction of test behaviors may resemble training behaviors; the exact-match rates of Table~\ref{tab:decode} should be read with this in mind. \emph{(iv) Single configuration.} All results come from one seeded data configuration and one trained model; variance across seeds and hyperparameter sensitivity are not quantified.
 
 \paragraph{Scope of the model class.}
-The canonical target trees used in the experiments cover sequence, exclusive choice, concurrency, and two-child loops. Some Petri inputs are non-block or non-free-choice variants, but the decoder still emits process trees. More fundamentally, the process-tree target restricts outputs to block-structured behavior---the restriction the Inductive Miner accepts in exchange for soundness---and is less expressive than partially ordered formalisms such as POWL~\cite{Kourani2023POWL,Kourani2026}. The architecture is modular here: any target language with a prefix grammar, a canonical form, and a deterministic conversion to Petri nets could replace the process-tree decoder.
+The target trees cover sequence, choice, concurrency, and two-child loops. Some Petri inputs are non-block or non-free-choice variants, but the decoder still emits block-structured process trees, which are less expressive than partially ordered formalisms such as POWL~\cite{Kourani2026}. Any target language with a prefix grammar, canonical form, and deterministic Petri conversion could replace the decoder.
 
 \section{Conclusion}
 \label{sec:conclusion}
 
 This paper introduced ProcRosetta, a multimodal neural framework that embeds the three central artifact types of process mining---event logs, process trees, and Petri nets---into a single latent space of process behavior and decodes points of that space into grammar-valid process trees that convert deterministically into sound Petri nets. The assessment answers the three research questions with qualifications: modality-specific geometries correlate $0.824$--$0.970$ with the fused geometry, and all exact-row retrieval directions exceed chance (RQ1); at least 99.8\% of decodes from every source terminate as valid, Petri-convertible trees, with 75.0\% exact match and decoded behavior substantially closer to the source than unrelated rows (RQ2); and ProcRosetta's log embedding preserves exact-equivalent nearest neighbors while deterministic features remain stronger in global rank correlation, whereas learned log-to-tree translation reaches about 90\% of the Inductive Miner's footprint F1 (RQ3).
 
-Future work follows directly from the assessment. On the data side: larger and more diverse tree distributions with richer loop patterns, more realistic incomplete and noisy logs, quantified near-duplicate behavior across splits, and validation on real-life logs and model collections. On the model side: stronger cross-modal retrieval objectives, beam or sampling-based decoding, multi-seed robustness studies, and scaling the encoders. On the representation side: richer sound target languages such as POWL~\cite{Kourani2026} as decoder output, an exact-conformance-based evaluation distance, and attaching further encoders---including natural-language process descriptions~\cite{Kourani2024LLM}---to the same latent space, moving closer to a true Rosetta stone for process representations.
+Future work should scale data and encoders, add realistic incomplete and noisy logs, quantify cross-split near-duplicates, validate on real artifacts, strengthen retrieval and decoding, and measure multi-seed robustness. Richer sound targets such as POWL~\cite{Kourani2026}, exact-conformance distances, and further modalities such as natural-language descriptions would move closer to a true Rosetta stone for process representations.
 
 \section*{Acknowledgements}
 
