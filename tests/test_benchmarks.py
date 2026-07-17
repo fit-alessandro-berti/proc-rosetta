@@ -1,13 +1,18 @@
+import sys
+from types import SimpleNamespace
+
 import numpy as np
 
 from proc_rosetta.benchmarks import (
     activity_count_features,
     alignment_f1_score,
     evaluate_embedding_method,
+    fitness_precision_f1_score,
     format_human_test_report,
     levenshtein_distance,
     retrieval_metrics,
     summarize_discovery_quality,
+    token_based_replay_fitness_precision,
     trim_tree_token_sequence,
 )
 from proc_rosetta.tokenizers import TreeTokenizer
@@ -61,7 +66,7 @@ def test_discovery_quality_summary_helpers():
     rows = [
         {
             "model_discovered": True,
-            "alignment_evaluable": True,
+            "token_replay_evaluable": True,
             "fitness": 1.0,
             "precision": 0.5,
             "f1": alignment_f1_score(1.0, 0.5),
@@ -69,7 +74,7 @@ def test_discovery_quality_summary_helpers():
         },
         {
             "model_discovered": False,
-            "alignment_evaluable": False,
+            "token_replay_evaluable": False,
             "fitness": None,
             "precision": None,
             "f1": None,
@@ -80,13 +85,53 @@ def test_discovery_quality_summary_helpers():
     summary = summarize_discovery_quality(rows)
 
     assert alignment_f1_score(1.0, 0.5) == 0.666667
+    assert fitness_precision_f1_score(1.0, 0.5) == 0.666667
     assert summary["count"] == 2
     assert summary["model_discovered_rate"] == 0.5
-    assert summary["alignment_evaluable_rate"] == 0.5
+    assert summary["token_replay_evaluable_rate"] == 0.5
     assert summary["mean_fitness"] == 1.0
     assert summary["mean_precision"] == 0.5
     assert summary["mean_f1"] == 0.666667
-    assert summary["alignment_error_count"] == 1
+    assert summary["token_replay_error_count"] == 1
+
+
+def test_token_based_replay_fitness_and_precision_use_pm4py_token_apis(monkeypatch):
+    calls = []
+
+    def fitness(log, net, initial_marking, final_marking, **kwargs):
+        calls.append(("fitness", log, net, initial_marking, final_marking, kwargs))
+        return {"log_fitness": 0.8}
+
+    def precision(log, net, initial_marking, final_marking, **kwargs):
+        calls.append(("precision", log, net, initial_marking, final_marking, kwargs))
+        return 0.6
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pm4py",
+        SimpleNamespace(
+            fitness_token_based_replay=fitness,
+            precision_token_based_replay=precision,
+        ),
+    )
+
+    result = token_based_replay_fitness_precision(
+        [["A", "B"]],
+        net="net",
+        initial_marking="initial",
+        final_marking="final",
+    )
+
+    assert result == (0.8, 0.6)
+    assert [call[0] for call in calls] == ["fitness", "precision"]
+    assert list(calls[0][1]["concept:name"]) == ["A", "B"]
+    assert calls[0][2:5] == ("net", "initial", "final")
+    assert calls[0][5] == {
+        "activity_key": "concept:name",
+        "timestamp_key": "time:timestamp",
+        "case_id_key": "case:concept:name",
+    }
+    assert calls[1][5] == calls[0][5]
 
 
 def test_human_report_mentions_method_comparison():
@@ -158,14 +203,14 @@ def test_human_report_mentions_method_comparison():
             "methods": {
                 "proc_rosetta_trace_mu": {
                     "model_discovered_rate": 1.0,
-                    "alignment_evaluable_rate": 1.0,
+                    "token_replay_evaluable_rate": 1.0,
                     "mean_fitness": 0.8,
                     "mean_precision": 0.6,
                     "mean_f1": 0.685714,
                 },
                 "inductive_miner": {
                     "model_discovered_rate": 1.0,
-                    "alignment_evaluable_rate": 1.0,
+                    "token_replay_evaluable_rate": 1.0,
                     "mean_fitness": 1.0,
                     "mean_precision": 0.9,
                     "mean_f1": 0.947368,

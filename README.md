@@ -28,7 +28,7 @@ The code is organized around three practical research questions.
 3. How do learned models compare with classical process-mining baselines?
    `test.py` reports embedding-quality metrics, decode-quality metrics, and a
    process-discovery comparison against PM4Py Inductive Miner using
-   alignment-based fitness, alignment-based precision, and F1.
+   token-based replay fitness, token-based replay precision, and F1.
 
 The implementation should be read as a first-stage feasibility study, not as a
 claim that the neural model replaces mature discovery algorithms on real logs.
@@ -303,7 +303,7 @@ The test report includes:
 - neural test losses;
 - greedy decode quality from tree, trace, Petri, and fused latent vectors;
 - process-discovery quality comparing `proc_rosetta_trace_mu` with PM4Py
-  Inductive Miner using alignment fitness, precision, and F1;
+  Inductive Miner using token-based replay fitness, precision, and F1;
 - behavioral distance summaries over the test logs;
 - cross-modal retrieval metrics;
 - behavior-family cosine, retrieval, equivalence margin, and distance by

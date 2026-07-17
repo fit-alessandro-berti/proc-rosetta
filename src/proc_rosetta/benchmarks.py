@@ -273,12 +273,13 @@ def discovery_quality_report(
 
     return {
         "description": (
-            "Alignment-based discovery quality on each test log. ProcRosetta uses "
+            "Token-based-replay discovery quality on each test log. ProcRosetta uses "
             "the trace encoder and grammar-masked process-tree decoder; the "
             "baseline uses PM4Py Inductive Miner. Each discovered process tree is "
-            "converted to a Petri net and scored by alignment fitness, alignment "
-            "precision, and their harmonic-mean F1."
+            "converted to a Petri net and scored by token-based replay fitness, "
+            "token-based replay precision, and their harmonic-mean F1."
         ),
+        "conformance_method": "token_based_replay",
         "max_decode_length": int(max_decode_length),
         "methods": {name: summarize_discovery_quality(values) for name, values in rows.items()},
     }
@@ -339,7 +340,7 @@ def evaluate_inductive_miner_discovery(sample: ProcessSample) -> dict[str, objec
 def discovery_quality_row() -> dict[str, object]:
     return {
         "model_discovered": False,
-        "alignment_evaluable": False,
+        "token_replay_evaluable": False,
         "fitness": None,
         "precision": None,
         "f1": None,
@@ -356,7 +357,7 @@ def score_discovered_petri_net(
 ) -> dict[str, object]:
     row = row or discovery_quality_row()
     try:
-        fitness, precision = alignment_fitness_precision(
+        fitness, precision = token_based_replay_fitness_precision(
             sample.traces,
             net,
             initial_marking,
@@ -364,11 +365,45 @@ def score_discovered_petri_net(
         )
         row["fitness"] = round_float(fitness)
         row["precision"] = round_float(precision)
-        row["f1"] = alignment_f1_score(fitness, precision)
-        row["alignment_evaluable"] = True
+        row["f1"] = fitness_precision_f1_score(fitness, precision)
+        row["token_replay_evaluable"] = True
     except Exception as exc:
-        row["error"] = f"alignment:{type(exc).__name__}: {exc}"
+        row["error"] = f"token_replay:{type(exc).__name__}: {exc}"
     return row
+
+
+def token_based_replay_fitness_precision(
+    traces: Sequence[Trace],
+    net,
+    initial_marking,
+    final_marking,
+) -> tuple[float, float]:
+    import pm4py
+
+    log = traces_to_event_dataframe(traces)
+    fitness = extract_token_based_replay_fitness(
+        pm4py.fitness_token_based_replay(
+            log,
+            net,
+            initial_marking,
+            final_marking,
+            activity_key="concept:name",
+            timestamp_key="time:timestamp",
+            case_id_key="case:concept:name",
+        )
+    )
+    precision = float(
+        pm4py.precision_token_based_replay(
+            log,
+            net,
+            initial_marking,
+            final_marking,
+            activity_key="concept:name",
+            timestamp_key="time:timestamp",
+            case_id_key="case:concept:name",
+        )
+    )
+    return fitness, precision
 
 
 def alignment_fitness_precision(
@@ -420,8 +455,18 @@ def traces_to_event_dataframe(traces: Sequence[Trace]) -> pd.DataFrame:
                 }
             )
     if not rows:
-        raise ValueError("alignment-based discovery quality requires at least one event")
+        raise ValueError("conformance evaluation requires at least one event")
     return pd.DataFrame(rows)
+
+
+def extract_token_based_replay_fitness(value: object) -> float:
+    if isinstance(value, dict):
+        for key in ("log_fitness", "average_trace_fitness"):
+            if key in value:
+                return float(value[key])
+    if isinstance(value, (int, float)):
+        return float(value)
+    raise ValueError(f"unsupported token-based replay fitness result: {value!r}")
 
 
 def extract_alignment_fitness(value: object) -> float:
@@ -434,11 +479,17 @@ def extract_alignment_fitness(value: object) -> float:
     raise ValueError(f"unsupported alignment fitness result: {value!r}")
 
 
-def alignment_f1_score(fitness: float, precision: float) -> float:
+def fitness_precision_f1_score(fitness: float, precision: float) -> float:
     denominator = fitness + precision
     if denominator <= 0.0:
         return 0.0
     return round_float(2.0 * fitness * precision / denominator)
+
+
+def alignment_f1_score(fitness: float, precision: float) -> float:
+    """Backward-compatible name for the generic fitness/precision F1 calculation."""
+
+    return fitness_precision_f1_score(fitness, precision)
 
 
 def summarize_discovery_quality(rows: Sequence[dict[str, object]]) -> dict[str, object]:
@@ -449,12 +500,12 @@ def summarize_discovery_quality(rows: Sequence[dict[str, object]]) -> dict[str, 
     return {
         "count": int(len(rows)),
         "model_discovered_rate": rate(rows, "model_discovered"),
-        "alignment_evaluable_rate": rate(rows, "alignment_evaluable"),
+        "token_replay_evaluable_rate": rate(rows, "token_replay_evaluable"),
         "mean_fitness": round_float(mean(fitness_values)),
         "mean_precision": round_float(mean(precision_values)),
         "mean_f1": round_float(mean(f1_values)),
         "median_f1": round_float(float(np.median(f1_values))) if f1_values else 0.0,
-        "alignment_error_count": count_false(rows, "alignment_evaluable"),
+        "token_replay_error_count": count_false(rows, "token_replay_evaluable"),
         "first_error": first_error,
     }
 
@@ -946,12 +997,12 @@ def format_human_test_report(report: dict[str, object]) -> str:
             lines.append("Process discovery quality")
             lines.append("-------------------------")
             lines.append(
-                "Alignment-based quality compares the trace-decoded ProcRosetta model "
+                "Token-based replay compares the trace-decoded ProcRosetta model "
                 "with PM4Py Inductive Miner on each test log."
             )
             lines.append(
                 format_table(
-                    ["method", "model ok", "align ok", "fitness", "precision", "F1"],
+                    ["method", "model ok", "replay ok", "fitness", "precision", "F1"],
                     discovery_quality_rows(discovery_methods),
                 )
             )
@@ -1099,7 +1150,7 @@ def format_human_test_report(report: dict[str, object]) -> str:
     lines.append("- NN behavior delta: method NN behavior minus ProcRosetta fused NN behavior; negative is better.")
     lines.append("- decode behavior L1: original traces vs traces simulated from the decoded tree; lower is better.")
     lines.append(
-        "- discovery F1: harmonic mean of alignment fitness and alignment precision; "
+        "- discovery F1: harmonic mean of token-based replay fitness and precision; "
         "higher is better."
     )
     return "\n".join(lines)
@@ -1141,7 +1192,7 @@ def discovery_quality_rows(methods: dict[str, object]) -> list[list[str]]:
             [
                 human_method_name(name),
                 format_rate(method.get("model_discovered_rate", 0.0)),
-                format_rate(method.get("alignment_evaluable_rate", 0.0)),
+                format_rate(method.get("token_replay_evaluable_rate", 0.0)),
                 format_metric(method.get("mean_fitness", 0.0)),
                 format_metric(method.get("mean_precision", 0.0)),
                 format_metric(method.get("mean_f1", 0.0)),
