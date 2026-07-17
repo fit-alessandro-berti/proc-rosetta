@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 
 from proc_rosetta.benchmarks import (
+    CONFORMANCE_METHODS,
     Pm4pyPetriEmbeddingConfig,
     format_human_test_report,
     rich_test_report,
@@ -152,6 +153,15 @@ def build_parser() -> argparse.ArgumentParser:
     test.add_argument("--petri-window", type=int, default=5)
     test.add_argument("--petri-epochs", type=int, default=5)
     test.add_argument("--petri-seed", type=int, default=42)
+    test.add_argument(
+        "--conformance-method",
+        choices=CONFORMANCE_METHODS,
+        default="token_based_replay",
+        help=(
+            "Discovery fitness/precision method: token replay on converted Petri nets "
+            "(default), or footprints computed directly on process trees."
+        ),
+    )
     test.add_argument("--json", action="store_true", help="print the full machine-readable JSON report")
     test.add_argument(
         "--quiet",
@@ -276,9 +286,13 @@ def run_test(args: argparse.Namespace) -> int:
     samples = read_samples_jsonl(sample_path, show_progress=show_progress)
     sample_count = len(samples)
     sample_label = "sample" if sample_count == 1 else "samples"
+    conformance_label = (
+        "token-replay" if args.conformance_method == "token_based_replay" else "footprint"
+    )
     test_debug(
         f"Plan: {sample_count} {sample_label}, batch_size={args.batch_size}, device={args.device}; "
-        f"{2 * sample_count} discovery replay evaluations, {4 * sample_count} decodes, "
+        f"{2 * sample_count} {conformance_label} conformance evaluations, "
+        f"{4 * sample_count} decodes, "
         f"{sample_count * (sample_count - 1) // 2} behavioral pairs, "
         f"{'no' if args.skip_pm4py_petri_embedding else sample_count} PM4Py Petri embeddings",
         enabled=show_progress,
@@ -299,6 +313,7 @@ def run_test(args: argparse.Namespace) -> int:
             seed=args.petri_seed,
         ),
         show_progress=show_progress,
+        conformance_method=args.conformance_method,
     )
     if args.json:
         print(json.dumps(report, sort_keys=True))

@@ -8,8 +8,11 @@ from proc_rosetta.benchmarks import (
     activity_count_features,
     alignment_f1_score,
     discovery_quality_report,
+    evaluate_inductive_miner_discovery,
+    evaluate_proc_rosetta_discovery,
     evaluate_embedding_method,
     fitness_precision_f1_score,
+    footprint_fitness_precision,
     format_human_test_report,
     levenshtein_distance,
     retrieval_metrics,
@@ -68,7 +71,7 @@ def test_discovery_quality_summary_helpers():
     rows = [
         {
             "model_discovered": True,
-            "token_replay_evaluable": True,
+            "conformance_evaluable": True,
             "fitness": 1.0,
             "precision": 0.5,
             "f1": alignment_f1_score(1.0, 0.5),
@@ -76,7 +79,7 @@ def test_discovery_quality_summary_helpers():
         },
         {
             "model_discovered": False,
-            "token_replay_evaluable": False,
+            "conformance_evaluable": False,
             "fitness": None,
             "precision": None,
             "f1": None,
@@ -90,11 +93,139 @@ def test_discovery_quality_summary_helpers():
     assert fitness_precision_f1_score(1.0, 0.5) == 0.666667
     assert summary["count"] == 2
     assert summary["model_discovered_rate"] == 0.5
+    assert summary["conformance_evaluable_rate"] == 0.5
     assert summary["token_replay_evaluable_rate"] == 0.5
     assert summary["mean_fitness"] == 1.0
     assert summary["mean_precision"] == 0.5
     assert summary["mean_f1"] == 0.666667
     assert summary["token_replay_error_count"] == 1
+
+    footprint_summary = summarize_discovery_quality(rows, conformance_method="footprints")
+    assert footprint_summary["footprint_evaluable_rate"] == 0.5
+    assert footprint_summary["footprint_error_count"] == 1
+
+
+def test_footprint_fitness_and_precision_use_log_and_process_tree_footprints(monkeypatch):
+    import pm4py
+    from pm4py.algo.conformance.footprints import algorithm as footprint_conformance
+    from pm4py.algo.conformance.footprints.util import evaluation as footprint_evaluation
+
+    process_tree = object()
+    discovered_from = []
+    conformance_calls = []
+    fitness_calls = []
+    precision_calls = []
+
+    def discover_footprints(value):
+        discovered_from.append(value)
+        return {"source": "log" if len(discovered_from) == 1 else "tree"}
+
+    def conformance(log_footprints, tree_footprints, variant):
+        conformance_calls.append((log_footprints, tree_footprints, variant))
+        return {"result": "conformance"}
+
+    def fitness(log_footprints, tree_footprints, conformance_result):
+        fitness_calls.append((log_footprints, tree_footprints, conformance_result))
+        return 0.75
+
+    def precision(log_footprints, tree_footprints):
+        precision_calls.append((log_footprints, tree_footprints))
+        return 0.5
+
+    monkeypatch.setattr(pm4py, "discover_footprints", discover_footprints)
+    monkeypatch.setattr(footprint_conformance, "apply", conformance)
+    monkeypatch.setattr(footprint_evaluation, "fp_fitness", fitness)
+    monkeypatch.setattr(footprint_evaluation, "fp_precision", precision)
+
+    result = footprint_fitness_precision([["A", "B"]], process_tree)
+
+    assert result == (0.75, 0.5)
+    assert list(discovered_from[0]["concept:name"]) == ["A", "B"]
+    assert discovered_from[1] is process_tree
+    assert conformance_calls == [
+        (
+            {"source": "log"},
+            {"source": "tree"},
+            footprint_conformance.Variants.LOG_EXTENSIVE,
+        )
+    ]
+    assert fitness_calls == [
+        ({"source": "log"}, {"source": "tree"}, {"result": "conformance"})
+    ]
+    assert precision_calls == [({"source": "log"}, {"source": "tree"})]
+
+
+def test_proc_rosetta_footprints_score_the_process_tree_without_petri_conversion(monkeypatch):
+    decoded_tree = object()
+    pm4py_tree = object()
+    scored_trees = []
+
+    class Tokenizer:
+        eos_id = 2
+
+        def decode_tree(self, token_ids):
+            return decoded_tree
+
+    def score_footprints(traces, tree):
+        scored_trees.append(tree)
+        return 0.8, 0.6
+
+    monkeypatch.setattr("proc_rosetta.benchmarks.to_pm4py_tree", lambda tree: pm4py_tree)
+    monkeypatch.setattr(
+        "proc_rosetta.benchmarks.tree_to_petri_net",
+        lambda tree: (_ for _ in ()).throw(AssertionError("Petri conversion must not run")),
+    )
+    monkeypatch.setattr(
+        "proc_rosetta.benchmarks.footprint_fitness_precision",
+        score_footprints,
+    )
+
+    row = evaluate_proc_rosetta_discovery(
+        SimpleNamespace(tree_tokenizer=Tokenizer()),
+        SimpleNamespace(traces=[["A", "B"]]),
+        [1, 2],
+        conformance_method="footprints",
+    )
+
+    assert scored_trees == [pm4py_tree]
+    assert row["model_discovered"] is True
+    assert row["conformance_evaluable"] is True
+    assert row["fitness"] == 0.8
+    assert row["precision"] == 0.6
+    assert row["f1"] == 0.685714
+
+
+def test_inductive_miner_footprints_score_its_tree_without_petri_conversion(monkeypatch):
+    pm4py_tree = object()
+    scored_trees = []
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pm4py",
+        SimpleNamespace(
+            discover_process_tree_inductive=lambda log, **kwargs: pm4py_tree,
+        ),
+    )
+
+    def score_footprints(traces, tree):
+        scored_trees.append(tree)
+        return 0.9, 0.7
+
+    monkeypatch.setattr(
+        "proc_rosetta.benchmarks.footprint_fitness_precision",
+        score_footprints,
+    )
+
+    row = evaluate_inductive_miner_discovery(
+        SimpleNamespace(traces=[["A", "B"]]),
+        conformance_method="footprints",
+    )
+
+    assert scored_trees == [pm4py_tree]
+    assert row["model_discovered"] is True
+    assert row["conformance_evaluable"] is True
+    assert row["fitness"] == 0.9
+    assert row["precision"] == 0.7
 
 
 def test_token_based_replay_fitness_and_precision_use_pm4py_token_apis(monkeypatch):
@@ -178,7 +309,7 @@ def test_discovery_progress_counts_both_methods_for_every_sample(monkeypatch):
 
     successful_row = {
         "model_discovered": True,
-        "token_replay_evaluable": True,
+        "conformance_evaluable": True,
         "fitness": 1.0,
         "precision": 1.0,
         "f1": 1.0,
@@ -191,11 +322,11 @@ def test_discovery_progress_counts_both_methods_for_every_sample(monkeypatch):
     )
     monkeypatch.setattr(
         "proc_rosetta.benchmarks.evaluate_proc_rosetta_discovery",
-        lambda *args: successful_row.copy(),
+        lambda *args, **kwargs: successful_row.copy(),
     )
     monkeypatch.setattr(
         "proc_rosetta.benchmarks.evaluate_inductive_miner_discovery",
-        lambda *args: successful_row.copy(),
+        lambda *args, **kwargs: successful_row.copy(),
     )
 
     report = discovery_quality_report(

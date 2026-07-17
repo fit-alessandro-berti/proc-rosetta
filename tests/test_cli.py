@@ -43,6 +43,7 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert train_args.activity_remap_probability == 0.5
     assert test_args.device == default_device()
     assert not test_args.quiet
+    assert test_args.conformance_method == "token_based_replay"
 
 
 def test_test_quiet_disables_progress_output(monkeypatch, capsys):
@@ -54,6 +55,7 @@ def test_test_quiet_disables_progress_output(monkeypatch, capsys):
 
     def report(**kwargs):
         calls["report_progress"] = kwargs["show_progress"]
+        calls["conformance_method"] = kwargs["conformance_method"]
         return {"split": "test"}
 
     monkeypatch.setattr("proc_rosetta.cli.read_samples_jsonl", read_samples)
@@ -64,7 +66,11 @@ def test_test_quiet_disables_progress_output(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert json.loads(captured.out) == {"split": "test"}
     assert captured.err == ""
-    assert calls == {"read_progress": False, "report_progress": False}
+    assert calls == {
+        "read_progress": False,
+        "report_progress": False,
+        "conformance_method": "token_based_replay",
+    }
 
 
 def test_sample_progress_reports_generated_triplets(tmp_path, monkeypatch):
@@ -297,8 +303,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     captured = capsys.readouterr()
     test_row = json.loads(captured.out.strip().splitlines()[-1])
     assert "[test] Plan: 1 sample" in captured.err
-    assert "2 discovery replay evaluations" in captured.err
-    assert "[test] [4/8] Running 2 discovery replay evaluations" in captured.err
+    assert "2 token-replay conformance evaluations" in captured.err
+    assert "[test] [4/8] Running 2 token-replay evaluations" in captured.err
     assert "Discovery replays" in captured.err
     assert test_row["split"] == "test"
     assert test_row["loss_metrics"]["loss"] > 0
@@ -333,11 +339,15 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
             "6",
             "--petri-epochs",
             "2",
+            "--conformance-method",
+            "footprints",
         ]
     ) == 0
     captured = capsys.readouterr()
     assert "ProcRosetta Test Report" in captured.out
     assert "Decode quality" in captured.out
     assert "Process discovery quality" in captured.out
+    assert "Footprint conformance" in captured.out
+    assert "directly on the discovered process trees (not Petri nets)" in captured.out
     assert "pm4py Petri Node2Vec vs ProcRosetta fused" in captured.out
     assert "Agreement against ProcRosetta fused encoding" in captured.out

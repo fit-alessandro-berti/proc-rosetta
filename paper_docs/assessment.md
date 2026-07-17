@@ -317,20 +317,23 @@ proc_rosetta_trace_mu
 inductive_miner
 ```
 
-For `proc_rosetta_trace_mu`, the trace encoder maps \(L_i\) to its deterministic latent mean, the grammar-masked decoder greedily decodes a process tree, and PM4Py converts the decoded tree to a Petri net. For `inductive_miner`, PM4Py's Inductive Miner discovers a process tree from the same log, and that tree is also converted to a Petri net. Both Petri nets are then evaluated against the original log using PM4Py's alignment-based conformance functions.
+For `proc_rosetta_trace_mu`, the trace encoder maps \(L_i\) to its deterministic latent mean and the grammar-masked decoder greedily decodes a process tree. For `inductive_miner`, PM4Py's Inductive Miner discovers a process tree from the same log. The `--conformance-method` option then selects one of two scoring paths:
+
+- `token_based_replay` (the default) converts each discovered tree to a Petri net and applies PM4Py token-based replay fitness and precision;
+- `footprints` computes PM4Py footprints directly from the event log and discovered process tree, then applies footprint fitness and precision. This path does not compute footprints from a Petri net.
 
 The per-sample fields are:
 
 ```text
 model_discovered
-alignment_evaluable
+conformance_evaluable
 fitness
 precision
 f1
 error
 ```
 
-`fitness` is the alignment fitness reported by `pm4py.fitness_alignments`. It measures how much of the observed log behavior can be replayed by the discovered model. `precision` is the alignment precision reported by `pm4py.precision_alignments`. It penalizes models that allow too much behavior beyond what is observed in the log. The F1 score combines them as the harmonic mean:
+`fitness` and `precision` come from the selected token-based replay or footprint conformance functions. The F1 score combines them as the harmonic mean:
 
 \[
 F1 = \frac{2 \cdot fitness \cdot precision}{fitness + precision},
@@ -341,16 +344,18 @@ with \(F1 = 0\) when the denominator is zero. The report aggregates these rows b
 ```text
 count
 model_discovered_rate
-alignment_evaluable_rate
+conformance_evaluable_rate
 mean_fitness
 mean_precision
 mean_f1
 median_f1
-alignment_error_count
+conformance_error_count
 first_error
 ```
 
-This block is the classical process-discovery comparison in the test report. It differs from `decode_quality`: decode quality checks whether neural outputs are valid and behaviorally close under sampled-log simulation, whereas discovery quality asks how well the log-derived model scores under alignment fitness and precision against the source log.
+For compatibility and method-specific inspection, token replay reports also include `token_replay_evaluable_rate` and `token_replay_error_count`, while footprint reports include `footprint_evaluable_rate` and `footprint_error_count`.
+
+This block is the classical process-discovery comparison in the test report. It differs from `decode_quality`: decode quality checks whether neural outputs are valid and behaviorally close under sampled-log simulation, whereas discovery quality asks how well the log-derived model scores under the selected conformance method against the source log.
 
 ### 2.4 Behavioral distance metrics
 
@@ -699,7 +704,7 @@ The following metrics or metric combinations are introduced by the project for t
 | `mean_l1` behavioral distance | Average of L1 distances over trace-variant, directly-follows, and trace-length distributions. It provides a fast behavioral proxy for comparing two sampled logs. |
 | Decode validity package | `terminated_rate`, `valid_tree_rate`, `exact_tree_match_rate`, `petri_conversion_rate`, and `behavior_eval_success_rate` jointly evaluate whether a latent decodes into a syntactically valid, semantically usable process-tree/Petri-net artifact. |
 | Decode behavioral distance | Behavioral L1 between the original log and traces simulated from the decoded tree. It measures behavioral preservation after neural decoding and deterministic Petri conversion. |
-| ProcRosetta-vs-Inductive-Miner discovery summary | Per-log comparison of the trace-decoded ProcRosetta process model and the Inductive Miner process model using alignment fitness, alignment precision, and F1. |
+| ProcRosetta-vs-Inductive-Miner discovery summary | Per-log comparison of the trace-decoded ProcRosetta process model and the Inductive Miner process model using selectable token-based replay or process-tree footprint fitness, precision, and F1. |
 | Cross-modal retrieval over paired process artifacts | Top-1 accuracy, mean rank, and MRR for retrieving the matching tree, trace, or Petri representation of the same synthetic process. |
 | Nearest-neighbor behavioral distance | Mean behavioral distance from each sample to its nearest embedding neighbor. It evaluates whether local neighborhoods in the embedding space correspond to behaviorally similar logs. |
 | Improvement over random | Difference between random-pair behavioral distance and nearest-neighbor behavioral distance. It quantifies the behavioral advantage of embedding-based retrieval. |
@@ -708,11 +713,11 @@ The following metrics or metric combinations are introduced by the project for t
 | Behavior deltas against fused reference | Differences in behavior Spearman and nearest-neighbor behavioral L1 relative to the fused ProcRosetta representation. |
 | Petri structural-count baseline | Coarse Petri graph statistics used as a deterministic process-model baseline. |
 
-These introduced summaries complement classical process-discovery and conformance metrics. The report now includes alignment fitness and precision for the log-to-model discovery setting, while the other metrics evaluate the specific claims of the project: cross-modal representation learning, grammar-valid process-tree decoding, deterministic conversion of decoded trees to Petri nets, and behavioral preservation in a synthetic paired-triple setting.
+These introduced summaries complement classical process-discovery and conformance metrics. The report includes selectable token-based replay or footprint fitness and precision for the log-to-model discovery setting, while the other metrics evaluate the specific claims of the project: cross-modal representation learning, grammar-valid process-tree decoding, deterministic conversion of decoded trees to Petri nets, and behavioral preservation in a synthetic paired-triple setting.
 
 ## 4. Relation to classical process-discovery quality metrics
 
-Classical process-discovery evaluation often discusses four quality dimensions: fitness, precision, generalization, and simplicity [Buijs2012]. These dimensions are important when a discovered model is compared with an event log through replay or alignment-based conformance checking. The current test suite computes alignment-based fitness and precision, plus their F1 score, for the specific log-to-model discovery comparison between ProcRosetta and PM4Py's Inductive Miner. It does not yet compute generalization, simplicity, token-based replay scores, or broader real-life benchmark suites.
+Classical process-discovery evaluation often discusses four quality dimensions: fitness, precision, generalization, and simplicity [Buijs2012]. These dimensions are important when a discovered model is compared with an event log through replay or footprint-based conformance checking. The current test suite computes selectable token-based replay or footprint fitness and precision, plus their F1 score, for the specific log-to-model discovery comparison between ProcRosetta and PM4Py's Inductive Miner. It does not yet compute generalization, simplicity, alignment-based scores, or broader real-life benchmark suites.
 
 Consequently, `discovery_quality` should be interpreted as the classical conformance-oriented discovery comparison in the report, while `behavior_l1`, `mean_l1`, nearest-neighbor behavioral distance, and cross-modal retrieval remain representation-learning and sampled-behavior metrics. A broader evaluation should still add generalization, simplicity, runtime, and real-life log benchmarks before making strong process-discovery performance claims.
 
@@ -787,14 +792,16 @@ Each discovery-quality summary contains:
 ```text
 count
 model_discovered_rate
-alignment_evaluable_rate
+conformance_evaluable_rate
 mean_fitness
 mean_precision
 mean_f1
 median_f1
-alignment_error_count
+conformance_error_count
 first_error
 ```
+
+The summary additionally contains the method-specific evaluable-rate and error-count aliases described in Section 2.3.
 
 The `cross_modal_retrieval` field contains:
 

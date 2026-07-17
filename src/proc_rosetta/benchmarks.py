@@ -14,13 +14,19 @@ import torch
 from proc_rosetta.behavior import behavioral_distance
 from proc_rosetta.data import ProcessBatchCollator, progress_bar, progress_iterator
 from proc_rosetta.devices import resolve_device
-from proc_rosetta.pm4py_bridge import petri_graph_to_net, simulate_traces, tree_to_petri_net
+from proc_rosetta.pm4py_bridge import (
+    petri_graph_to_net,
+    simulate_traces,
+    to_pm4py_tree,
+    tree_to_petri_net,
+)
 from proc_rosetta.synthetic import ProcessSample
 from proc_rosetta.training import evaluate_split_from_checkpoint, load_checkpoint
 
 
 Trace = Sequence[str]
 FeatureDict = dict[Hashable, float]
+CONFORMANCE_METHODS = ("token_based_replay", "footprints")
 
 
 @dataclass(frozen=True)
@@ -52,7 +58,9 @@ def rich_test_report(
     include_pm4py_petri: bool = True,
     pm4py_petri_config: Pm4pyPetriEmbeddingConfig | None = None,
     show_progress: bool = False,
+    conformance_method: str = "token_based_replay",
 ) -> dict[str, object]:
+    validate_conformance_method(conformance_method)
     started = perf_counter()
     torch_device = resolve_device(device)
     device_name = str(torch_device)
@@ -95,7 +103,8 @@ def rich_test_report(
         show_progress=show_progress,
     )
     test_debug(
-        f"[4/{stage_count}] Running {2 * len(samples)} discovery replay evaluations "
+        f"[4/{stage_count}] Running {2 * len(samples)} "
+        f"{conformance_method_label(conformance_method)} evaluations "
         "(fitness + precision each)",
         enabled=show_progress,
     )
@@ -105,6 +114,7 @@ def rich_test_report(
         batch_size=batch_size,
         device=device_name,
         show_progress=show_progress,
+        conformance_method=conformance_method,
     )
 
     pair_count = len(samples) * (len(samples) - 1) // 2
@@ -296,7 +306,9 @@ def discovery_quality_report(
     device: str | None = None,
     max_decode_length: int = 512,
     show_progress: bool = False,
+    conformance_method: str = "token_based_replay",
 ) -> dict[str, object]:
+    validate_conformance_method(conformance_method)
     model.eval()
     torch_device = resolve_device(device)
     model.to(torch_device)
@@ -309,12 +321,16 @@ def discovery_quality_report(
     with progress_bar(
         total=2 * len(samples),
         enabled=show_progress,
-        desc="Discovery replays",
-        unit="replay",
+        desc=(
+            "Discovery replays"
+            if conformance_method == "token_based_replay"
+            else "Footprint conformance"
+        ),
+        unit="replay" if conformance_method == "token_based_replay" else "model",
     ) as progress:
-        replay_successes = 0
-        completed_replays = 0
-        total_replays = 2 * len(samples)
+        conformance_successes = 0
+        completed_models = 0
+        total_models = 2 * len(samples)
         for start in range(0, len(samples), batch_size):
             batch_samples = samples[start : start + batch_size]
             batch = _move_batch_to_device(collator(batch_samples), torch_device)
@@ -329,41 +345,58 @@ def discovery_quality_report(
                     model,
                     sample,
                     token_ids,
+                    conformance_method=conformance_method,
                 )
                 rows["proc_rosetta_trace_mu"].append(proc_rosetta_row)
-                replay_successes += int(proc_rosetta_row["token_replay_evaluable"])
-                completed_replays += 1
+                conformance_successes += int(proc_rosetta_row["conformance_evaluable"])
+                completed_models += 1
                 progress.update()
                 set_progress_postfix(
                     progress,
                     method="ProcRosetta",
-                    ok=replay_successes,
-                    remaining=total_replays - completed_replays,
+                    ok=conformance_successes,
+                    remaining=total_models - completed_models,
                 )
 
-                inductive_miner_row = evaluate_inductive_miner_discovery(sample)
+                inductive_miner_row = evaluate_inductive_miner_discovery(
+                    sample,
+                    conformance_method=conformance_method,
+                )
                 rows["inductive_miner"].append(inductive_miner_row)
-                replay_successes += int(inductive_miner_row["token_replay_evaluable"])
-                completed_replays += 1
+                conformance_successes += int(inductive_miner_row["conformance_evaluable"])
+                completed_models += 1
                 progress.update()
                 set_progress_postfix(
                     progress,
                     method="Inductive Miner",
-                    ok=replay_successes,
-                    remaining=total_replays - completed_replays,
+                    ok=conformance_successes,
+                    remaining=total_models - completed_models,
                 )
 
-    return {
-        "description": (
+    if conformance_method == "footprints":
+        description = (
+            "Footprint-based discovery quality on each test log. ProcRosetta uses "
+            "the trace encoder and grammar-masked process-tree decoder; the baseline "
+            "uses PM4Py Inductive Miner. Footprints are computed directly on each log "
+            "and discovered process tree (not on a Petri net), then scored by footprint "
+            "fitness, footprint precision, and their harmonic-mean F1."
+        )
+    else:
+        description = (
             "Token-based-replay discovery quality on each test log. ProcRosetta uses "
-            "the trace encoder and grammar-masked process-tree decoder; the "
-            "baseline uses PM4Py Inductive Miner. Each discovered process tree is "
-            "converted to a Petri net and scored by token-based replay fitness, "
-            "token-based replay precision, and their harmonic-mean F1."
-        ),
-        "conformance_method": "token_based_replay",
+            "the trace encoder and grammar-masked process-tree decoder; the baseline "
+            "uses PM4Py Inductive Miner. Each discovered process tree is converted to "
+            "a Petri net and scored by token-based replay fitness, token-based replay "
+            "precision, and their harmonic-mean F1."
+        )
+    return {
+        "description": description,
+        "conformance_method": conformance_method,
         "max_decode_length": int(max_decode_length),
-        "methods": {name: summarize_discovery_quality(values) for name, values in rows.items()},
+        "methods": {
+            name: summarize_discovery_quality(values, conformance_method=conformance_method)
+            for name, values in rows.items()
+        },
     }
 
 
@@ -371,18 +404,33 @@ def evaluate_proc_rosetta_discovery(
     model,
     sample: ProcessSample,
     token_ids: Sequence[int],
+    conformance_method: str = "token_based_replay",
 ) -> dict[str, object]:
+    validate_conformance_method(conformance_method)
     row = discovery_quality_row()
     try:
         if model.tree_tokenizer.eos_id not in [int(token_id) for token_id in token_ids]:
             raise ValueError("decoder did not emit <eos>")
         tree = model.tree_tokenizer.decode_tree(token_ids)
-        bundle = tree_to_petri_net(tree)
-        row["model_discovered"] = True
     except Exception as exc:
         row["error"] = f"decode:{type(exc).__name__}: {exc}"
         return row
 
+    if conformance_method == "footprints":
+        try:
+            pm4py_tree = to_pm4py_tree(tree)
+        except Exception as exc:
+            row["error"] = f"process_tree:{type(exc).__name__}: {exc}"
+            return row
+        row["model_discovered"] = True
+        return score_discovered_process_tree(sample, pm4py_tree, row=row)
+
+    try:
+        bundle = tree_to_petri_net(tree)
+    except Exception as exc:
+        row["error"] = f"petri:{type(exc).__name__}: {exc}"
+        return row
+    row["model_discovered"] = True
     return score_discovered_petri_net(
         sample,
         bundle.net,
@@ -392,7 +440,11 @@ def evaluate_proc_rosetta_discovery(
     )
 
 
-def evaluate_inductive_miner_discovery(sample: ProcessSample) -> dict[str, object]:
+def evaluate_inductive_miner_discovery(
+    sample: ProcessSample,
+    conformance_method: str = "token_based_replay",
+) -> dict[str, object]:
+    validate_conformance_method(conformance_method)
     row = discovery_quality_row()
     try:
         import pm4py
@@ -404,12 +456,20 @@ def evaluate_inductive_miner_discovery(sample: ProcessSample) -> dict[str, objec
             timestamp_key="time:timestamp",
             case_id_key="case:concept:name",
         )
-        net, initial_marking, final_marking = pm4py.convert_to_petri_net(tree)
-        row["model_discovered"] = True
     except Exception as exc:
         row["error"] = f"discover:{type(exc).__name__}: {exc}"
         return row
 
+    if conformance_method == "footprints":
+        row["model_discovered"] = True
+        return score_discovered_process_tree(sample, tree, row=row)
+
+    try:
+        net, initial_marking, final_marking = pm4py.convert_to_petri_net(tree)
+    except Exception as exc:
+        row["error"] = f"petri:{type(exc).__name__}: {exc}"
+        return row
+    row["model_discovered"] = True
     return score_discovered_petri_net(
         sample,
         net,
@@ -422,7 +482,7 @@ def evaluate_inductive_miner_discovery(sample: ProcessSample) -> dict[str, objec
 def discovery_quality_row() -> dict[str, object]:
     return {
         "model_discovered": False,
-        "token_replay_evaluable": False,
+        "conformance_evaluable": False,
         "fitness": None,
         "precision": None,
         "f1": None,
@@ -448,9 +508,26 @@ def score_discovered_petri_net(
         row["fitness"] = round_float(fitness)
         row["precision"] = round_float(precision)
         row["f1"] = fitness_precision_f1_score(fitness, precision)
-        row["token_replay_evaluable"] = True
+        row["conformance_evaluable"] = True
     except Exception as exc:
         row["error"] = f"token_replay:{type(exc).__name__}: {exc}"
+    return row
+
+
+def score_discovered_process_tree(
+    sample: ProcessSample,
+    tree,
+    row: dict[str, object] | None = None,
+) -> dict[str, object]:
+    row = row or discovery_quality_row()
+    try:
+        fitness, precision = footprint_fitness_precision(sample.traces, tree)
+        row["fitness"] = round_float(fitness)
+        row["precision"] = round_float(precision)
+        row["f1"] = fitness_precision_f1_score(fitness, precision)
+        row["conformance_evaluable"] = True
+    except Exception as exc:
+        row["error"] = f"footprints:{type(exc).__name__}: {exc}"
     return row
 
 
@@ -485,6 +562,29 @@ def token_based_replay_fitness_precision(
             case_id_key="case:concept:name",
         )
     )
+    return fitness, precision
+
+
+def footprint_fitness_precision(
+    traces: Sequence[Trace],
+    process_tree,
+) -> tuple[float, float]:
+    import pm4py
+    from pm4py.algo.conformance.footprints import algorithm as footprint_conformance
+    from pm4py.algo.conformance.footprints.util import evaluation as footprint_evaluation
+
+    log = traces_to_event_dataframe(traces)
+    log_footprints = pm4py.discover_footprints(log)
+    tree_footprints = pm4py.discover_footprints(process_tree)
+    conformance = footprint_conformance.apply(
+        log_footprints,
+        tree_footprints,
+        variant=footprint_conformance.Variants.LOG_EXTENSIVE,
+    )
+    fitness = float(
+        footprint_evaluation.fp_fitness(log_footprints, tree_footprints, conformance)
+    )
+    precision = float(footprint_evaluation.fp_precision(log_footprints, tree_footprints))
     return fitness, precision
 
 
@@ -574,22 +674,57 @@ def alignment_f1_score(fitness: float, precision: float) -> float:
     return fitness_precision_f1_score(fitness, precision)
 
 
-def summarize_discovery_quality(rows: Sequence[dict[str, object]]) -> dict[str, object]:
+def summarize_discovery_quality(
+    rows: Sequence[dict[str, object]],
+    conformance_method: str = "token_based_replay",
+) -> dict[str, object]:
+    validate_conformance_method(conformance_method)
     fitness_values = numeric_row_values(rows, "fitness")
     precision_values = numeric_row_values(rows, "precision")
     f1_values = numeric_row_values(rows, "f1")
     first_error = next((str(row["error"]) for row in rows if row.get("error")), None)
-    return {
+    evaluable_count = sum(1 for row in rows if conformance_row_evaluable(row))
+    evaluable_rate = round_float(evaluable_count / len(rows)) if rows else 0.0
+    error_count = len(rows) - evaluable_count
+    summary = {
         "count": int(len(rows)),
         "model_discovered_rate": rate(rows, "model_discovered"),
-        "token_replay_evaluable_rate": rate(rows, "token_replay_evaluable"),
+        "conformance_evaluable_rate": evaluable_rate,
         "mean_fitness": round_float(mean(fitness_values)),
         "mean_precision": round_float(mean(precision_values)),
         "mean_f1": round_float(mean(f1_values)),
         "median_f1": round_float(float(np.median(f1_values))) if f1_values else 0.0,
-        "token_replay_error_count": count_false(rows, "token_replay_evaluable"),
+        "conformance_error_count": error_count,
         "first_error": first_error,
     }
+    if conformance_method == "token_based_replay":
+        summary["token_replay_evaluable_rate"] = evaluable_rate
+        summary["token_replay_error_count"] = error_count
+    else:
+        summary["footprint_evaluable_rate"] = evaluable_rate
+        summary["footprint_error_count"] = error_count
+    return summary
+
+
+def conformance_row_evaluable(row: dict[str, object]) -> bool:
+    if "conformance_evaluable" in row:
+        return bool(row["conformance_evaluable"])
+    return bool(row.get("token_replay_evaluable", False))
+
+
+def validate_conformance_method(conformance_method: str) -> None:
+    if conformance_method not in CONFORMANCE_METHODS:
+        raise ValueError(
+            f"unknown conformance method {conformance_method!r}; "
+            f"expected one of {', '.join(CONFORMANCE_METHODS)}"
+        )
+
+
+def conformance_method_label(conformance_method: str) -> str:
+    validate_conformance_method(conformance_method)
+    if conformance_method == "footprints":
+        return "footprint-conformance"
+    return "token-replay"
 
 
 def numeric_row_values(rows: Sequence[dict[str, object]], key: str) -> list[float]:
@@ -1105,6 +1240,7 @@ def nearest_neighbor_overlap(left_distance: np.ndarray, right_distance: np.ndarr
 
 def format_human_test_report(report: dict[str, object]) -> str:
     lines: list[str] = []
+    discovery_f1_method = "token-based replay"
     lines.append("ProcRosetta Test Report")
     lines.append("=======================")
     lines.append("")
@@ -1153,15 +1289,34 @@ def format_human_test_report(report: dict[str, object]) -> str:
     if isinstance(discovery_quality, dict):
         discovery_methods = discovery_quality.get("methods", {})
         if isinstance(discovery_methods, dict):
+            conformance_method = discovery_quality.get(
+                "conformance_method", "token_based_replay"
+            )
             lines.append("Process discovery quality")
             lines.append("-------------------------")
-            lines.append(
-                "Token-based replay compares the trace-decoded ProcRosetta model "
-                "with PM4Py Inductive Miner on each test log."
-            )
+            if conformance_method == "footprints":
+                discovery_f1_method = "footprint"
+                lines.append(
+                    "Footprint conformance compares each test log with footprints computed "
+                    "directly on the discovered process trees (not Petri nets)."
+                )
+                conformance_ok_label = "footprint ok"
+            else:
+                lines.append(
+                    "Token-based replay compares the trace-decoded ProcRosetta model "
+                    "with PM4Py Inductive Miner on each test log."
+                )
+                conformance_ok_label = "replay ok"
             lines.append(
                 format_table(
-                    ["method", "model ok", "replay ok", "fitness", "precision", "F1"],
+                    [
+                        "method",
+                        "model ok",
+                        conformance_ok_label,
+                        "fitness",
+                        "precision",
+                        "F1",
+                    ],
                     discovery_quality_rows(discovery_methods),
                 )
             )
@@ -1309,7 +1464,7 @@ def format_human_test_report(report: dict[str, object]) -> str:
     lines.append("- NN behavior delta: method NN behavior minus ProcRosetta fused NN behavior; negative is better.")
     lines.append("- decode behavior L1: original traces vs traces simulated from the decoded tree; lower is better.")
     lines.append(
-        "- discovery F1: harmonic mean of token-based replay fitness and precision; "
+        f"- discovery F1: harmonic mean of {discovery_f1_method} fitness and precision; "
         "higher is better."
     )
     return "\n".join(lines)
@@ -1351,7 +1506,15 @@ def discovery_quality_rows(methods: dict[str, object]) -> list[list[str]]:
             [
                 human_method_name(name),
                 format_rate(method.get("model_discovered_rate", 0.0)),
-                format_rate(method.get("token_replay_evaluable_rate", 0.0)),
+                format_rate(
+                    method.get(
+                        "conformance_evaluable_rate",
+                        method.get(
+                            "token_replay_evaluable_rate",
+                            method.get("footprint_evaluable_rate", 0.0),
+                        ),
+                    )
+                ),
                 format_metric(method.get("mean_fitness", 0.0)),
                 format_metric(method.get("mean_precision", 0.0)),
                 format_metric(method.get("mean_f1", 0.0)),
