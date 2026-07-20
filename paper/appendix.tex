@@ -7,7 +7,7 @@ This appendix explains the data-generation pipeline used for the model in the
 main paper. The goal of the generator is simple: create many small process
 behaviors, write each behavior in several forms, and keep an explicit record of
 which forms share the same complete visible-trace language. The model can then
-learn from paired examples instead of guessing which log, tree, and Petri net
+learn from paired examples instead of guessing which event log, process tree, and Petri net
 belong together. This is the generator's chosen equivalence semantics; it does
 not imply equality under every structural or partial-order semantics.
 
@@ -18,14 +18,14 @@ Each row in the generated data is a \emph{process sample}. A row contains four
 main fields:
 \begin{enumerate}
   \item a canonical process tree $T$;
-  \item a generated log view $L$, stored as a finite list of visible activity
+  \item a generated event-log view $L$, stored as a finite list of visible activity
         traces;
   \item a Petri-net graph $G$, stored as typed nodes, labeled transitions,
         directed arcs, and initial/final marking vectors;
   \item an equivalence identifier $e$, shared by all rows in the same
         visible-trace equivalence family.
 \end{enumerate}
-The process tree is the decoder target. The generated log is the finite
+The process tree is the decoder target. The generated event log is the finite
 trace-based view of that family. The Petri-net graph is its graph-based view.
 During training, rows with the same equivalence identifier are treated as
 positive matches for the contrastive objective.
@@ -58,22 +58,22 @@ Test & 1{,}024 & 512 \\
 
 The important generator settings are:
 \begin{itemize}
-  \item maximum ordinary-tree recursion depth: 8;
-  \item minimum ordinary-tree depth/size targets: depth 4 and 20 nodes;
+  \item maximum ordinary-process-tree recursion depth: 8;
+  \item minimum ordinary-process-tree depth/size targets: depth 4 and 20 nodes;
   \item maximum activity labels: 30;
   \item maximum operator arity: 3;
-  \item traces per generated log view: 128;
+  \item traces per generated event-log view: 128;
   \item activity-label reuse probability: 0.15;
-  \item early leaf probability during tree recursion: 0.65;
+  \item early leaf probability during process-tree recursion: 0.65;
   \item representation rows per behavior family: 2;
-  \item log views per behavior family: 1;
+  \item event-log views per behavior family: 1;
   \item controlled-motif context suffix: 4 fresh activities;
   \item strict minimum motif coverage: 8 families per motif in training and
         4 per motif in validation and test;
   \item enabled process-tree operators: \texttt{SEQ}, \texttt{XOR},
         \texttt{AND}, and two-child \texttt{LOOP}.
 \end{itemize}
-The \texttt{LOOP} operator is generated in the ordinary-tree family. The
+The \texttt{LOOP} operator is generated in the ordinary-process-tree family. The
 generated and decoded loop form is the two-child form
 $\operatorname{LOOP}(T_{\mathit{body}},T_{\mathit{redo}})$; the tokenizer mask
 therefore emits \texttt{ARITY\_2} after a \texttt{LOOP} token. Because a loop
@@ -85,7 +85,7 @@ enumerate an unbounded language exhaustively.
 \label{app:behavior-families}
 
 The generator does not create isolated triples one by one. Instead, it creates
-\emph{behavior families}. A behavior family combines one canonical tree with
+\emph{behavior families}. A behavior family combines one canonical process tree with
 two Petri-net representations certified to have the same complete visible-trace
 language (or related directly by isomorphic renaming for ordinary loop
 families). Both rows in a family share:
@@ -111,7 +111,7 @@ same number of behavior families from each type:
 \toprule
 Family type & Training families & Validation families & Test families \\
 \midrule
-Ordinary tree & 1{,}024 & 128 & 128 \\
+Ordinary process tree & 1{,}024 & 128 & 128 \\
 Duplicate label vs. silent routing & 1{,}024 & 128 & 128 \\
 Concurrency vs. explicit interleaving & 1{,}024 & 128 & 128 \\
 Non-free-choice M pattern & 1{,}024 & 128 & 128 \\
@@ -152,9 +152,9 @@ near-equal behaviors can still occur independently in training and evaluation.
 The canonical process tree is the target representation used by the decoder.
 There are two cases.
 
-\paragraph{Ordinary-tree families.}
-For ordinary-tree families, the generator samples a random process tree. It
-first samples a pool of activity labels, then recursively builds the tree:
+\paragraph{Ordinary-process-tree families.}
+For ordinary-process-tree families, the generator samples a random process tree. It
+first samples a pool of activity labels, then recursively builds the process tree:
 \begin{enumerate}
   \item If the maximum depth has been reached, it creates an activity leaf.
   \item Otherwise, with probability 0.65 it also stops early and creates an
@@ -168,21 +168,21 @@ first samples a pool of activity labels, then recursively builds the tree:
 \end{enumerate}
 Activity labels are introduced as \texttt{a0}, \texttt{a1}, and so on. With
 probability 0.15 the generator reuses an earlier label instead of introducing a
-new one. After the tree is built, activity labels are canonicalized to
+new one. After the process tree is built, activity labels are canonicalized to
 \texttt{A0}, \texttt{A1}, and so on in first-seen order. Children of
 \texttt{XOR} and \texttt{AND} nodes are sorted by a canonical structural key, so
 equivalent child permutations do not become different targets.
 
-If a generated ordinary tree has fewer than two unique activity labels, the
+If a generated ordinary process tree has fewer than two unique activity labels, the
 generator tries to make it less trivial by adding another activity in sequence.
-The sampler makes up to 100 attempts and keeps the first tree that contains a
+The sampler makes up to 100 attempts and keeps the first process tree that contains a
 loop, reaches the configured minimum depth, and has at least 20 nodes. These are
 targets rather than hard postconditions: if no candidate meets all three, the
 fallback is the lexicographically highest-scoring candidate, prioritizing loop
 presence first, then depth, then size.
 
 \paragraph{Controlled behavior families.}
-The other three family types use small hand-defined canonical trees:
+The other three family types use small hand-defined canonical process trees:
 \begin{itemize}
   \item duplicate-label vs. silent-routing families use
         $\operatorname{XOR}(\operatorname{SEQ}(A0,A1),
@@ -192,7 +192,7 @@ The other three family types use small hand-defined canonical trees:
   \item non-free-choice M-pattern families use
         $\operatorname{XOR}(A0,\operatorname{AND}(A1,A2))$.
 \end{itemize}
-These trees are intentionally small because their purpose is to isolate one
+These process trees are intentionally small because their purpose is to isolate one
 specific representation issue at a time. To avoid making every controlled case
 too bare, the generator appends up to four fresh activity labels as a shared
 sequential suffix. The suffix is added as nested binary sequence nodes, so the
@@ -207,7 +207,7 @@ family.
 Each behavior family produces two Petri-net variants. These variants are the
 reason the dataset has two rows per behavior family.
 
-\paragraph{Ordinary-tree families.}
+\paragraph{Ordinary-process-tree families.}
 The first Petri net is obtained by converting the process tree with PM4Py. The
 second Petri net is an isomorphic copy: the places and transitions are renamed,
 but the arcs, labels, initial marking, and final marking preserve the same
@@ -233,7 +233,7 @@ equivalent.
 \paragraph{Non-free-choice M-pattern families.}
 Both variants accept the same visible traces for
 $\operatorname{XOR}(A0,\operatorname{AND}(A1,A2))$ before the shared suffix. The
-first variant is the standard PM4Py conversion of the block-structured tree. The
+first variant is the standard PM4Py conversion of the block-structured process tree. The
 second variant is a hand-built Petri net with a non-free-choice M pattern. This
 gives the model examples where behavior is preserved even though the Petri-net
 structure is less block-like.
@@ -268,9 +268,9 @@ controlled family received an \texttt{exact} certificate; there are no bounded
 rows.
 
 Ordinary loop families are handled separately because their language is
-unbounded. Their second Petri net is an isomorphic clone of the PM4Py tree
+unbounded. Their second Petri net is an isomorphic clone of the PM4Py process-tree
 conversion, so equivalence is certified structurally by the renaming
-transformation. All ordinary-tree rows in the persisted data therefore store
+transformation. All ordinary-process-tree rows in the persisted data therefore store
 the status \texttt{isomorphic}. Each accepted row includes the certificate
 status, semantics, checked variant names, and reference-language size in its
 metadata.
@@ -279,19 +279,19 @@ The generator also checks simple structural health conditions. In particular,
 the final marking must be reachable and there must be no dead transitions. A
 family that fails these checks is rejected.
 
-\subsection{Step 5: Create the Generated Log View}
+\subsection{Step 5: Create the Generated Event-Log View}
 \label{app:create-log-view}
 
 After equivalence is checked or certified, the generator creates a trace pool.
 For controlled families in the current data, the pool is the sorted exact
 visible language returned by the completed checker. For ordinary loop
-families, PM4Py performs $\max(256,4n)$ process-tree playouts for requested log
+families, PM4Py performs $\max(256,4n)$ process-tree playouts for requested event-log
 size $n$; the generator then deduplicates and sorts the observations. Thus the
 current $n=128$ run draws 512 playout traces before deduplication. It creates
-one log view per family and stores 128 traces in that view.
+one event-log view per family and stores 128 traces in that view.
 
 The current configuration lists \texttt{uniform\_variants} followed by
-\texttt{resampled}. Because it requests only one log view, that view uses the
+\texttt{resampled}. Because it requests only one event-log view, that view uses the
 first mode. In \texttt{uniform\_variants}, the generator cycles through the
 trace pool until it has 128 traces, then shuffles them with a deterministic
 seed. If a behavior has only two variants, both recur; if the pool has more
@@ -302,24 +302,24 @@ modes for other experiments. The persisted split uses one clean
 \texttt{uniform\_variants} view per family; all stored trace-edit lists are
 empty.
 
-Family construction, quota order, and log-view shuffling use stable seeds
+Family construction, quota order, and event-log-view shuffling use stable seeds
 loop trace pools are an exception: although a derived playout seed is recorded,
 the current call does not apply it to PM4Py's playout randomness. Exact loop
 trace pools are therefore not guaranteed by the generator seed alone and can
 depend on ambient random state as well as the installed PM4Py version. The
 persisted JSONL rows, rather than regeneration from seed alone, define the exact
-loop log contents used in the study.
+loop event-log contents used in the study.
 
 \subsection{Step 6: Flatten Families into Training Rows}
 \label{app:flatten-rows}
 
 The final step turns each behavior family into rows. With the current
-configuration, each family has one generated log view and two Petri-net
+configuration, each family has one generated event-log view and two Petri-net
 variants, so it becomes exactly two rows:
 \[
-  (\text{tree}, \text{same log view}, \text{Petri variant 0}, e)
+  (\text{process tree}, \text{same event-log view}, \text{Petri-net variant 0}, e)
   \quad\text{and}\quad
-  (\text{tree}, \text{same log view}, \text{Petri variant 1}, e).
+  (\text{process tree}, \text{same event-log view}, \text{Petri-net variant 1}, e).
 \]
 Both rows have the same equivalence identifier $e$. The process tree and trace
 list are identical in the two rows. The Petri-net graph is different.
@@ -332,7 +332,7 @@ Rows are written to:
 \end{itemize}
 The generator also writes \texttt{data/metadata.json}, which records the seed,
 the full synthetic configuration, split sizes, motif counts, representation
-counts, average tree and trace statistics, and maximum Petri graph sizes.
+counts, average process-tree and trace statistics, and maximum Petri-net graph sizes.
 For each split it records both planned and actual motif quotas, per-motif
 representation-slot counts, any strict-coverage deficits, and whether the
 minimum-coverage check passed. During generation, \texttt{sample.py} reports
@@ -358,7 +358,7 @@ This preserves the behavior while reducing dependence on the literal label
 names.
 
 In short, the data-generation pipeline makes the supervision explicit. The
-model sees a tree, a finite generated log, and a Petri-net graph; it also sees
+model sees a process tree, a finite generated event log, and a Petri-net graph; it also sees
 which rows belong to the same visible-trace equivalence family. The generated
 families therefore train the model to align artifact types by behavior rather
 than by node names, transition counts, or one particular Petri-net structure.
