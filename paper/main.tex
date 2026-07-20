@@ -323,33 +323,33 @@ Table~\ref{tab:decode} evaluates greedy decoding from all four latent sources. E
 \centering
 \begin{minipage}[t]{0.58\textwidth}
 \centering
-\caption{Greedy-decode quality on 1{,}024 test rows. \emph{Norm.\ edit}: length-normalized token edit distance. Behavioral $L_1$: each 128-trace source event log versus 128 PM4Py stochastic top-down playout traces, without per-decode reseeding. Rates and normalized-edit means use all rows. Nontermination alone does not force Exact or Petri failure: both are evaluated if the sequence parses; otherwise they fail. Behavioral $L_1$ averages evaluable rows. Lower is better for both distances.}
+\caption{Greedy-decode quality on 1{,}024 test rows. \emph{Norm.\ edit}: length-normalized token edit distance. Behavioral $L_1$: each 128-trace source event log versus 128 PM4Py stochastic top-down playout traces, without per-decode reseeding. Rates and normalized-edit means use all rows. Nontermination alone does not force Exact failure: it is evaluated if the sequence parses; otherwise it fails. Behavioral $L_1$ averages evaluable rows. Lower is better for both distances.}
 \label{tab:decode}
 \scriptsize
 \resizebox{\linewidth}{!}{%
-\begin{tabular}{lcccccc}
+\begin{tabular}{lccccc}
 \toprule
-Latent source & Term. & Valid & Exact & Petri & Norm.\ edit $\downarrow$ & Behavior $L_1$ $\downarrow$ \\
+Latent source & Term. & Valid & Exact & Norm.\ edit $\downarrow$ & Behavior $L_1$ $\downarrow$ \\
 \midrule
-$\mu_{\mathit{tree}}$ (process-tree encoder)   & 100\% & 100\% & 75.0\% & 100\% & 0.164 & 0.521 \\
-$\mu_{\mathit{trace}}$ (event-log encoder)   & 99.8\% & 99.8\% & 75.0\% & 99.8\% & 0.165 & \textbf{0.511} \\
-$\mu_{\mathit{petri}}$ (Petri encoder) & 100\% & 100\% & 75.0\% & 100\% & \textbf{0.163} & 0.513 \\
-$\mu_{\mathit{fused}}$ (mean of the three) & 100\% & 100\% & 75.0\% & 100\% & \textbf{0.163} & 0.514 \\
+$\mu_{\mathit{tree}}$ (process-tree encoder)   & 100\% & 100\% & 75.0\% & 0.164 & 0.521 \\
+$\mu_{\mathit{trace}}$ (event-log encoder)   & 99.8\% & 99.8\% & 75.0\% & 0.165 & \textbf{0.511} \\
+$\mu_{\mathit{petri}}$ (Petri encoder) & 100\% & 100\% & 75.0\% & \textbf{0.163} & 0.513 \\
+$\mu_{\mathit{fused}}$ (mean of the three) & 100\% & 100\% & 75.0\% & \textbf{0.163} & 0.514 \\
 \bottomrule
 \end{tabular}}
 \end{minipage}\hfill
 \begin{minipage}[t]{0.39\textwidth}
 \centering
-\caption{Process discovery quality on the 1{,}024 test event logs. ``Model'' is the percentage for which a process tree is returned; ``Footprints'' is the percentage for which the source-event-log/process-tree comparison is evaluable. Fitness, precision, and F1 average the evaluable subset (96.5\% for ProcRosetta; 100\% for Inductive Miner).}
+\caption{Process discovery quality on the 1{,}024 test event logs. ``Model'' is the percentage for which a process tree is returned. Fitness, precision, and F1 average the evaluable subset (96.5\% for ProcRosetta; 100\% for Inductive Miner).}
 \label{tab:discovery}
 \scriptsize
 \resizebox{\linewidth}{!}{%
-\begin{tabular}{lccccc}
+\begin{tabular}{lcccc}
 \toprule
-Method & Model & Footprints & Fitness & Precision & F1 \\
+Method & Model & Fitness & Precision & F1 \\
 \midrule
-ProcRosetta (event log $\to$ process tree) & 99.8\% & 96.5\% & 0.866 & 0.897 & 0.866 \\
-Inductive Miner & \textbf{100\%} & \textbf{100\%} & \textbf{1.000} & \textbf{0.936} & \textbf{0.958} \\
+ProcRosetta (event log $\to$ process tree) & 99.8\% & 0.866 & 0.897 & 0.866 \\
+Inductive Miner & \textbf{100\%} & \textbf{1.000} & \textbf{0.936} & \textbf{0.958} \\
 \bottomrule
 \end{tabular}}
 \end{minipage}
@@ -416,7 +416,7 @@ Table~\ref{tab:discovery} compares ProcRosetta event-log encoding/process-tree d
 
 The Inductive Miner attains perfect footprint fitness and F1 $0.958$. ProcRosetta attains fitness $0.866$, precision $0.897$, and F1 $0.866$ (about 90\% of the baseline), with 99.8\% model success and 96.5\% footprint evaluability. Its purely neural translation compresses an event log into one 256-dimensional vector without replay or search, but the gap shows that validity does not recover every observed ordering relation. ProcRosetta is therefore a learned translation and representation mechanism, not a replacement for conformance-optimized deterministic process discovery.
 
-Figure~\ref{fig:discoveryexamples} compares two supplied, out-of-distribution event logs. ProcRosetta process trees are reconstructed from the tool screenshots; labels are unabridged and only line-wrapped. Unlike the footprint table, these examples retain alignment scoring on frequency-preserving samples (128 \texttt{receipt.xes} traces and all 100 \texttt{roadtraffic100traces.xes} traces). For receipt, the 16-node process tree retains 10 activities and reaches F1 $0.193$, versus $0.483$ for the Inductive Miner's 47-node process tree; for road traffic, its 16-node process tree contains all ten activities and reaches $0.202$, versus $0.850$. Both ProcRosetta outputs use a compact top-level choice with nested loops, but precision $0.125$ shows that a valid arrangement of labels need not capture ordering constraints. The deterministic miner fits observed variants more closely; these examples support the aggregate in-distribution result without claiming equivalent external performance.
+Figure~\ref{fig:discoveryexamples} compares two supplied, out-of-distribution event logs. ProcRosetta process trees are reconstructed from the tool screenshots; labels are unabridged and only line-wrapped. Unlike the footprint table, these examples retain alignment scoring on frequency-preserving samples (128 \texttt{receipt.xes} traces and all 100 \texttt{roadtraffic100traces.xes} traces). For receipt, the 16-node process tree retains 10 activities and reaches F1 $0.193$, versus $0.483$ for the Inductive Miner's 47-node process tree; for road traffic, its 16-node process tree contains all ten activities and reaches $0.202$, versus $0.850$. Both ProcRosetta outputs use a compact top-level choice with nested loops, but precision $0.125$ shows that a valid arrangement of labels need not capture ordering constraints.
 
 \begin{figure*}[t]
   \centering
