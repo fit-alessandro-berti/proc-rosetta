@@ -329,39 +329,321 @@ family.
 \subsection{Step 3: Build Two Petri-Net Variants}
 \label{app:build-petri-variants}
 
-Each behavior family produces two Petri-net variants. These variants are the
-reason the dataset has two rows per behavior family.
+Each behavior family produces exactly two accepting Petri nets,
+$N_v=(G_v,M^0_v,M^f_v)$ for $v\in\{0,1\}$. The graph $G_v$ contains places,
+transitions, and directed arcs; $M^0_v$ and $M^f_v$ are its initial and final
+markings. The two variants need not have the same nodes or topology. Instead,
+the controlled families are constructed to satisfy
+\begin{equation}
+  \mathcal{L}_{\mathrm{vis}}(N_0)=\mathcal{L}_{\mathrm{vis}}(N_1),
+  \label{eq:app-visible-language-invariant}
+\end{equation}
+where $\mathcal{L}_{\mathrm{vis}}$ contains complete firing sequences after
+silent $\tau$ transitions have been removed. Step~4 verifies this invariant.
+For ordinary loop families, whose languages are unbounded, a graph-isomorphism
+certificate replaces enumeration. Step~6 later turns $N_0$ and $N_1$ into two
+rows while keeping the same process tree, event-log view, and family identifier.
 
-\paragraph{Ordinary-process-tree families.}
-The first Petri net is obtained by converting the process tree with PM4Py. The
-second Petri net is an isomorphic copy: the places and transitions are renamed,
-but the arcs, labels, initial marking, and final marking preserve the same
-behavior. This teaches the model not to treat arbitrary node names as semantic
-information.
+Figures~\ref{fig:app-ordinary-renaming}--\ref{fig:app-m-pattern} use standard
+Petri-net notation: circles are places, a dot marks the initial token, a double
+circle marks the final place, labeled rectangles are visible transitions, and
+gray $\tau$ rectangles are silent transitions. The figures show the core motif;
+the identical sequential context suffix is omitted.
 
-\paragraph{Duplicate-label vs. silent-routing families.}
-Both variants accept the same two visible traces, $A0,A1$ and $A0,A2$ before the
-shared suffix. One variant has two visible \texttt{A0} transitions, one for each
-branch. The other variant has a single visible \texttt{A0} transition followed
-by silent routing to the \texttt{A1} or \texttt{A2} branch. The visible behavior
-is the same, but the graph explains the choice differently.
+\tikzset{
+  appPNPlace/.style={circle, draw=black!70, minimum size=5.5mm,
+    inner sep=0pt, fill=white},
+  appPNFinal/.style={appPNPlace, double, double distance=0.7pt},
+  appPNTransition/.style={rectangle, draw=black!70, minimum width=5.5mm,
+    minimum height=8mm, inner sep=1pt, fill=teal!8, font=\scriptsize},
+  appPNSilent/.style={appPNTransition, fill=black!12},
+  appPNArc/.style={-{Latex[length=1.6mm]}, semithick, draw=black!70},
+  appPNTitle/.style={font=\footnotesize\bfseries, align=center}
+}
 
-\paragraph{Concurrency vs. explicit-interleaving families.}
-Both variants accept $A0,A1$ and $A1,A0$ before the shared suffix. The first
-variant is the Petri net obtained from the parallel process tree, so the two
-activities can run concurrently. The second variant lists the two possible
-orders explicitly as two serial paths. The visible traces are the same, but one
-graph contains true concurrency and the other encodes only the allowed
-interleavings; accordingly, the generator records them as not partial-order
-equivalent.
+\paragraph{Ordinary-process-tree families: isomorphic renaming.}
+Variant $N_0$ is the PM4Py conversion of the sampled process tree. Variant
+$N_1$ is a deep copy with bijections $\phi_P$ over places and $\phi_T$ over
+transitions. The copy preserves every arc and arc weight, every visible label,
+and the initial and final markings; only internal node identifiers change. In
+particular, $(x,y)$ is an arc in $N_0$ exactly when
+$(\phi(x),\phi(y))$ is an arc in $N_1$. Figure~\ref{fig:app-ordinary-renaming}
+shows this operation on a small sequential example. The actual generated
+process tree may be much larger, but the renaming rule is identical.
 
-\paragraph{Non-free-choice M-pattern families.}
-Both variants accept the same visible traces for
-$\operatorname{XOR}(A0,\operatorname{AND}(A1,A2))$ before the shared suffix. The
-first variant is the standard PM4Py conversion of the block-structured process tree. The
-second variant is a hand-built Petri net with a non-free-choice M pattern. This
-gives the model examples where behavior is preserved even though the Petri-net
-structure is less block-like.
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  \node[appPNTitle] at (2.4,1.25) {$N_0$: PM4Py conversion};
+  \node[appPNPlace] (o-p0) at (0,0) {};
+  \fill (o-p0.center) circle (1.1pt);
+  \node[appPNTransition] (o-a0) at (1.2,0) {$A0$};
+  \node[appPNPlace] (o-p1) at (2.4,0) {};
+  \node[appPNTransition] (o-a1) at (3.6,0) {$A1$};
+  \node[appPNFinal] (o-pf) at (4.8,0) {};
+  \draw[appPNArc] (o-p0) -- (o-a0);
+  \draw[appPNArc] (o-a0) -- (o-p1);
+  \draw[appPNArc] (o-p1) -- (o-a1);
+  \draw[appPNArc] (o-a1) -- (o-pf);
+  \node[font=\tiny, below=1mm of o-p0] {$p_0$};
+  \node[font=\tiny, below=1mm of o-a0] {$t_0$};
+  \node[font=\tiny, below=1mm of o-p1] {$p_1$};
+  \node[font=\tiny, below=1mm of o-a1] {$t_1$};
+  \node[font=\tiny, below=1mm of o-pf] {$p_f$};
+
+  \node[align=center, font=\scriptsize] at (6.4,0)
+    {$\xrightarrow{\text{rename IDs}}$\\[-1pt]labels and arcs fixed};
+
+  \node[appPNTitle] at (10.4,1.25) {$N_1$: isomorphic copy};
+  \node[appPNPlace] (r-p0) at (8,0) {};
+  \fill (r-p0.center) circle (1.1pt);
+  \node[appPNTransition] (r-a0) at (9.2,0) {$A0$};
+  \node[appPNPlace] (r-p1) at (10.4,0) {};
+  \node[appPNTransition] (r-a1) at (11.6,0) {$A1$};
+  \node[appPNFinal] (r-pf) at (12.8,0) {};
+  \draw[appPNArc] (r-p0) -- (r-a0);
+  \draw[appPNArc] (r-a0) -- (r-p1);
+  \draw[appPNArc] (r-p1) -- (r-a1);
+  \draw[appPNArc] (r-a1) -- (r-pf);
+  \node[font=\tiny, below=1mm of r-p0] {$r_7$};
+  \node[font=\tiny, below=1mm of r-a0] {$u_9$};
+  \node[font=\tiny, below=1mm of r-p1] {$r_4$};
+  \node[font=\tiny, below=1mm of r-a1] {$u_3$};
+  \node[font=\tiny, below=1mm of r-pf] {$r_1$};
+\end{tikzpicture}
+\caption{Isomorphic renaming for an ordinary-process-tree family. Place and
+transition identifiers change, but topology, visible labels, and markings do
+not.}
+\Description{Two identical linear Petri nets labeled A0 then A1. The left uses
+place identifiers p0, p1, and pf and transition identifiers t0 and t1; the right
+uses different identifiers while retaining the same labels and arcs.}
+\label{fig:app-ordinary-renaming}
+\end{figure}
+
+Because isomorphism already proves behavioral equivalence, this pair primarily
+teaches invariance to arbitrary serialization names. For ordinary loop
+families it also gives a finite certificate without attempting to enumerate an
+infinite visible language.
+
+\paragraph{Duplicate-label vs. silent-routing families: move the choice.}
+Both variants implement
+$\operatorname{XOR}(\operatorname{SEQ}(A0,A1),
+\operatorname{SEQ}(A0,A2))$. In $N_0$, the initial place has two outgoing
+visible transitions, both labeled $A0$. Firing one of them simultaneously
+selects the $A1$ or $A2$ branch. In $N_1$, a single $A0$ transition fires
+first; only afterward do two competing silent transitions route the token to
+$A1$ or $A2$. Thus the location and visibility of the choice differ, and the
+number of $A0$ transitions differs, but both variants have exactly the visible
+language $\{\langle A0,A1\rangle,\langle A0,A2\rangle\}$.
+
+\begin{figure}[H]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[font=\footnotesize]
+  \node[appPNTitle] at (2.4,1.65) {$N_0$: duplicated visible prefix};
+  \node[appPNPlace] (d-p0) at (0,0) {};
+  \fill (d-p0.center) circle (1.1pt);
+  \node[appPNTransition] (d-a0l) at (1.2,0.7) {$A0$};
+  \node[appPNTransition] (d-a0r) at (1.2,-0.7) {$A0$};
+  \node[appPNPlace] (d-pl) at (2.4,0.7) {};
+  \node[appPNPlace] (d-pr) at (2.4,-0.7) {};
+  \node[appPNTransition] (d-a1) at (3.6,0.7) {$A1$};
+  \node[appPNTransition] (d-a2) at (3.6,-0.7) {$A2$};
+  \node[appPNFinal] (d-pf) at (4.8,0) {};
+  \draw[appPNArc] (d-p0) -- (d-a0l);
+  \draw[appPNArc] (d-p0) -- (d-a0r);
+  \draw[appPNArc] (d-a0l) -- (d-pl);
+  \draw[appPNArc] (d-a0r) -- (d-pr);
+  \draw[appPNArc] (d-pl) -- (d-a1);
+  \draw[appPNArc] (d-pr) -- (d-a2);
+  \draw[appPNArc] (d-a1) -- (d-pf);
+  \draw[appPNArc] (d-a2) -- (d-pf);
+
+  \node[appPNTitle] at (10.3,1.65) {$N_1$: shared prefix and silent routing};
+  \node[appPNPlace] (s-p0) at (6.7,0) {};
+  \fill (s-p0.center) circle (1.1pt);
+  \node[appPNTransition] (s-a0) at (7.7,0) {$A0$};
+  \node[appPNPlace] (s-pc) at (8.7,0) {};
+  \node[appPNSilent] (s-tl) at (9.7,0.7) {$\tau$};
+  \node[appPNSilent] (s-tr) at (9.7,-0.7) {$\tau$};
+  \node[appPNPlace] (s-pl) at (10.7,0.7) {};
+  \node[appPNPlace] (s-pr) at (10.7,-0.7) {};
+  \node[appPNTransition] (s-a1) at (11.7,0.7) {$A1$};
+  \node[appPNTransition] (s-a2) at (11.7,-0.7) {$A2$};
+  \node[appPNFinal] (s-pf) at (12.9,0) {};
+  \draw[appPNArc] (s-p0) -- (s-a0);
+  \draw[appPNArc] (s-a0) -- (s-pc);
+  \draw[appPNArc] (s-pc) -- (s-tl);
+  \draw[appPNArc] (s-pc) -- (s-tr);
+  \draw[appPNArc] (s-tl) -- (s-pl);
+  \draw[appPNArc] (s-tr) -- (s-pr);
+  \draw[appPNArc] (s-pl) -- (s-a1);
+  \draw[appPNArc] (s-pr) -- (s-a2);
+  \draw[appPNArc] (s-a1) -- (s-pf);
+  \draw[appPNArc] (s-a2) -- (s-pf);
+\end{tikzpicture}%
+}
+\caption{The duplicate-label and silent-routing variants. The choice is made
+while firing one of two $A0$ transitions in $N_0$, but after the single $A0$
+transition through silent routing in $N_1$.}
+\Description{Two Petri nets with two branches. The left duplicates the A0
+transition at the start of each branch. The right shares one A0 transition and
+then branches through two silent transitions. Both branches end in A1 or A2.}
+\label{fig:app-duplicate-silent}
+\end{figure}
+
+\paragraph{Concurrency vs. explicit-interleaving families: change the causal
+structure.}
+Both variants realize the complete visible traces
+$\langle A0,A1\rangle$ and $\langle A1,A0\rangle$. The PM4Py-derived variant
+$N_0$ uses a silent split to create two tokens. Consequently, $A0$ and $A1$
+are enabled together and may overlap; a silent join waits for both. The
+hand-built variant $N_1$ never holds two concurrent tokens. Instead, its upper
+serial path spells out $A0$ then $A1$, and its lower path spells out $A1$ then
+$A0$. The event sequences agree, but the partial-order semantics do not, so
+the generator explicitly records
+\texttt{partial\_order\_equivalent=false} for $N_1$.
+
+\begin{figure}[H]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[font=\footnotesize]
+  \node[appPNTitle] at (3.3,1.65) {$N_0$: true token concurrency};
+  \node[appPNPlace] (c-p0) at (0,0) {};
+  \fill (c-p0.center) circle (1.1pt);
+  \node[appPNSilent] (c-split) at (1.1,0) {$\tau$};
+  \node[appPNPlace] (c-pa) at (2.2,0.7) {};
+  \node[appPNPlace] (c-pb) at (2.2,-0.7) {};
+  \node[appPNTransition] (c-a0) at (3.3,0.7) {$A0$};
+  \node[appPNTransition] (c-a1) at (3.3,-0.7) {$A1$};
+  \node[appPNPlace] (c-qa) at (4.4,0.7) {};
+  \node[appPNPlace] (c-qb) at (4.4,-0.7) {};
+  \node[appPNSilent] (c-join) at (5.5,0) {$\tau$};
+  \node[appPNFinal] (c-pf) at (6.6,0) {};
+  \draw[appPNArc] (c-p0) -- (c-split);
+  \draw[appPNArc] (c-split) -- (c-pa);
+  \draw[appPNArc] (c-split) -- (c-pb);
+  \draw[appPNArc] (c-pa) -- (c-a0);
+  \draw[appPNArc] (c-pb) -- (c-a1);
+  \draw[appPNArc] (c-a0) -- (c-qa);
+  \draw[appPNArc] (c-a1) -- (c-qb);
+  \draw[appPNArc] (c-qa) -- (c-join);
+  \draw[appPNArc] (c-qb) -- (c-join);
+  \draw[appPNArc] (c-join) -- (c-pf);
+
+  \node[appPNTitle] at (10.5,1.65) {$N_1$: two explicit serial paths};
+  \node[appPNPlace] (i-p0) at (7.6,0) {};
+  \fill (i-p0.center) circle (1.1pt);
+  \node[appPNTransition] (i-a0f) at (8.7,0.7) {$A0$};
+  \node[appPNTransition] (i-a1f) at (8.7,-0.7) {$A1$};
+  \node[appPNPlace] (i-pa) at (9.8,0.7) {};
+  \node[appPNPlace] (i-pb) at (9.8,-0.7) {};
+  \node[appPNTransition] (i-a1s) at (10.9,0.7) {$A1$};
+  \node[appPNTransition] (i-a0s) at (10.9,-0.7) {$A0$};
+  \node[appPNFinal] (i-pf) at (12.1,0) {};
+  \draw[appPNArc] (i-p0) -- (i-a0f);
+  \draw[appPNArc] (i-p0) -- (i-a1f);
+  \draw[appPNArc] (i-a0f) -- (i-pa);
+  \draw[appPNArc] (i-a1f) -- (i-pb);
+  \draw[appPNArc] (i-pa) -- (i-a1s);
+  \draw[appPNArc] (i-pb) -- (i-a0s);
+  \draw[appPNArc] (i-a1s) -- (i-pf);
+  \draw[appPNArc] (i-a0s) -- (i-pf);
+\end{tikzpicture}%
+}
+\caption{True concurrency and explicit interleaving have the same two complete
+visible traces. Only $N_0$ represents $A0$ and $A1$ as simultaneously enabled.}
+\Description{The left Petri net silently splits one token into two parallel
+branches containing A0 and A1 and silently joins them. The right Petri net has
+two alternative serial paths, A0 then A1 and A1 then A0.}
+\label{fig:app-concurrency-interleaving}
+\end{figure}
+
+\paragraph{Non-free-choice M-pattern families: change the conflict structure.}
+The canonical process tree is
+$\operatorname{XOR}(A0,\operatorname{AND}(A1,A2))$. In the block-structured
+variant $N_0$, the first choice is global: either $A0$ fires, or a silent split
+selects the parallel $A1$/$A2$ branch. In the hand-built M-pattern $N_1$, a
+silent split first produces tokens in places $p_1$ and $p_2$. Transition $A0$
+requires both tokens, while $A1$ competes for the token in $p_1$ and $A2$
+competes for the token in $p_2$. Hence $A0$ shares an input place with each of
+$A1$ and $A2$ but does not have the same preset, violating the free-choice
+condition. Nevertheless, both variants complete exactly
+$\langle A0\rangle$, $\langle A1,A2\rangle$, and
+$\langle A2,A1\rangle$.
+
+\begin{figure}[H]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[font=\footnotesize]
+  \node[appPNTitle] at (3.4,1.8) {$N_0$: block-structured global choice};
+  \node[appPNPlace] (b-p0) at (0,0) {};
+  \fill (b-p0.center) circle (1.1pt);
+  \node[appPNTransition, fill=orange!12] (b-a0) at (1.2,0.9) {$A0$};
+  \node[appPNSilent] (b-split) at (1.2,-0.8) {$\tau$};
+  \node[appPNPlace] (b-p1) at (2.4,-0.25) {};
+  \node[appPNPlace] (b-p2) at (2.4,-1.35) {};
+  \node[appPNTransition] (b-a1) at (3.5,-0.25) {$A1$};
+  \node[appPNTransition] (b-a2) at (3.5,-1.35) {$A2$};
+  \node[appPNPlace] (b-q1) at (4.6,-0.25) {};
+  \node[appPNPlace] (b-q2) at (4.6,-1.35) {};
+  \node[appPNSilent] (b-join) at (5.7,-0.8) {$\tau$};
+  \node[appPNFinal] (b-pf) at (6.8,0) {};
+  \draw[appPNArc] (b-p0) -- (b-a0);
+  \draw[appPNArc] (b-a0) -- (b-pf);
+  \draw[appPNArc] (b-p0) -- (b-split);
+  \draw[appPNArc] (b-split) -- (b-p1);
+  \draw[appPNArc] (b-split) -- (b-p2);
+  \draw[appPNArc] (b-p1) -- (b-a1);
+  \draw[appPNArc] (b-p2) -- (b-a2);
+  \draw[appPNArc] (b-a1) -- (b-q1);
+  \draw[appPNArc] (b-a2) -- (b-q2);
+  \draw[appPNArc] (b-q1) -- (b-join);
+  \draw[appPNArc] (b-q2) -- (b-join);
+  \draw[appPNArc] (b-join) -- (b-pf);
+
+  \node[appPNTitle] at (11.6,1.8) {$N_1$: non-free-choice M-pattern};
+  \node[appPNPlace] (m-p0) at (8.0,0) {};
+  \fill (m-p0.center) circle (1.1pt);
+  \node[appPNSilent] (m-split) at (9.1,0) {$\tau$};
+  \node[appPNPlace] (m-p1) at (10.2,0.7) {};
+  \node[appPNPlace] (m-p2) at (10.2,-0.7) {};
+  \node[appPNTransition] (m-a1) at (11.5,1.2) {$A1$};
+  \node[appPNTransition, fill=orange!12] (m-a0) at (11.7,0) {$A0$};
+  \node[appPNTransition] (m-a2) at (11.5,-1.2) {$A2$};
+  \node[appPNPlace] (m-q1) at (12.8,1.2) {};
+  \node[appPNPlace] (m-q2) at (12.8,-1.2) {};
+  \node[appPNSilent] (m-join) at (14.0,0) {$\tau$};
+  \node[appPNFinal] (m-pf) at (15.2,0) {};
+  \draw[appPNArc] (m-p0) -- (m-split);
+  \draw[appPNArc] (m-split) -- (m-p1);
+  \draw[appPNArc] (m-split) -- (m-p2);
+  \draw[appPNArc] (m-p1) -- (m-a1);
+  \draw[appPNArc] (m-p2) -- (m-a2);
+  \draw[appPNArc, draw=red!70!black] (m-p1) -- (m-a0);
+  \draw[appPNArc, draw=red!70!black] (m-p2) -- (m-a0);
+  \draw[appPNArc] (m-a1) -- (m-q1);
+  \draw[appPNArc] (m-a2) -- (m-q2);
+  \draw[appPNArc] (m-q1) -- (m-join);
+  \draw[appPNArc] (m-q2) -- (m-join);
+  \draw[appPNArc] (m-a0) -- (m-pf);
+  \draw[appPNArc] (m-join) -- (m-pf);
+  \node[font=\scriptsize, text=red!70!black, align=center] at (11.1,-2.0)
+    {shared-input conflicts};
+\end{tikzpicture}%
+}
+\caption{A block-structured realization and a non-free-choice M-pattern. The
+red arcs highlight the two inputs required jointly by $A0$ in $N_1$.}
+\Description{The left Petri net makes a global choice between A0 and a parallel
+A1-A2 branch. The right first creates two tokens; A0 requires both, while A1
+and A2 consume one each, creating a non-free-choice M-pattern.}
+\label{fig:app-m-pattern}
+\end{figure}
+
+For every controlled family, the generator then appends each context activity
+to both final markings in the same order, creating a new final place after each
+activity. This shared suffix lengthens all complete traces equally and does not
+alter the structural contrast illustrated above.
 
 \subsection{Step 4: Check Behavioral Equivalence}
 \label{app:equivalence-check}
