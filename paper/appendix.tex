@@ -1,15 +1,86 @@
-\appendix
+\documentclass[manuscript,screen,nonacm]{acmart}
+
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,shapes.geometric}
+
+\settopmatter{printacmref=false,printccs=false,printfolios=true}
+
+\title[ProcRosetta: Training Data Generation]{ProcRosetta: Training Data Generation}
+\subtitle{Supplementary Material}
+
+\author{Alessandro Berti}
+\orcid{0000-0002-3279-4795}
+\affiliation{%
+  \institution{Process and Data Science (PADS), RWTH Aachen University}
+  \city{Aachen}
+  \country{Germany}}
+\email{a.berti@pads.rwth-aachen.de}
+
+\author{Wil M.P. van der Aalst}
+\orcid{0000-0002-0955-6940}
+\affiliation{%
+  \institution{Process and Data Science (PADS), RWTH Aachen University}
+  \city{Aachen}
+  \country{Germany}}
+\affiliation{%
+  \institution{Celonis}
+  \city{Munich}
+  \country{Germany}}
+\email{wvdaalst@pads.rwth-aachen.de}
+
+\renewcommand{\shortauthors}{Alessandro Berti et al.}
+
+\begin{document}
+\maketitle
 
 \section{How the Training Data Was Generated}
 \label{app:data-generation}
 
-This appendix explains the data-generation pipeline used for the model in the
+This supplementary document explains the data-generation pipeline used for the
 main paper. The goal of the generator is simple: create many small process
 behaviors, write each behavior in several forms, and keep an explicit record of
 which forms share the same complete visible-trace language. The model can then
 learn from paired examples instead of guessing which event log, process tree, and Petri net
 belong together. This is the generator's chosen equivalence semantics; it does
 not imply equality under every structural or partial-order semantics.
+
+Figure~\ref{fig:app-generator-overview} summarizes the six stages detailed
+below.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  stage/.style={draw=black!55, rounded corners=2pt, align=center,
+    minimum height=10mm, text width=0.22\linewidth, inner sep=3pt},
+  flow/.style={-{Latex[length=2mm]}, thick, draw=black!65}
+]
+  \node[stage, fill=black!4] (choose) {1. Choose\\family type};
+  \node[stage, fill=teal!8, right=7mm of choose] (tree)
+    {2. Build canonical\\process tree $T$};
+  \node[stage, fill=purple!8, right=7mm of tree] (petri)
+    {3. Build Petri-net\\variants $G_0,G_1$};
+  \node[stage, fill=blue!6, below=8mm of petri] (check)
+    {4. Check visible-trace\\equivalence};
+  \node[stage, fill=orange!10, left=7mm of check] (eventlog)
+    {5. Create event-log\\view $L$};
+  \node[stage, fill=black!4, left=7mm of eventlog] (rows)
+    {6. Flatten family\\into training rows};
+
+  \draw[flow] (choose) -- (tree);
+  \draw[flow] (tree) -- (petri);
+  \draw[flow] (petri) -- (check);
+  \draw[flow] (check) -- (eventlog);
+  \draw[flow] (eventlog) -- (rows);
+\end{tikzpicture}
+\caption{The behavior-family data-generation pipeline. Equivalence is checked
+before an event-log view is created and the family is flattened into rows.}
+\Description{A six-stage serpentine flow from choosing a family type, through
+process-tree and Petri-net construction and equivalence checking, to event-log
+creation and row flattening.}
+\label{fig:app-generator-overview}
+\end{figure}
 
 \subsection{What One Training Row Contains}
 \label{app:data-row}
@@ -181,6 +252,60 @@ targets rather than hard postconditions: if no candidate meets all three, the
 fallback is the lexicographically highest-scoring candidate, prioritizing loop
 presence first, then depth, then size.
 
+Figure~\ref{fig:app-tree-sampler} separates the recursive construction rule
+from the candidate-selection rule.
+
+\begin{figure}[H]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\footnotesize,
+  box/.style={draw=black!55, rounded corners=2pt, align=center,
+    minimum height=10mm, text width=26mm, inner sep=3pt},
+  decision/.style={diamond, draw=black!60, aspect=2.1, align=center,
+    text width=16mm, inner sep=1.5pt},
+  flow/.style={-{Latex[length=2mm]}, thick, draw=black!65}
+]
+  \node[box, fill=black!4] (labels) at (0,0)
+    {Sample activity-label pool};
+  \node[box, fill=teal!8, text width=40mm] (construct) at (3.4,0)
+    {Build recursively\\[-1pt]
+     depth limit or early stop $\Rightarrow$ activity;\\
+     otherwise choose an operator and children};
+  \node[box, fill=teal!8, text width=30mm] (canonicalize) at (7.2,0)
+    {Canonicalize labels and commutative children};
+  \node[box, fill=blue!6, text width=27mm] (score) at (10.3,0)
+    {Score loop presence, depth, and size};
+  \node[decision, fill=orange!10] (targets) at (10.3,-2.3)
+    {targets met?};
+  \node[box, fill=green!9] (accept) at (13.3,-2.3)
+    {Accept process tree};
+  \node[box, fill=orange!8, text width=31mm] (retry) at (7.0,-2.3)
+    {Keep best candidate and retry};
+  \node[box, fill=black!4, text width=30mm] (fallback) at (3.4,-2.3)
+    {After 100 attempts:\\return best score};
+
+  \draw[flow] (labels) -- (construct);
+  \draw[flow] (construct) -- (canonicalize);
+  \draw[flow] (canonicalize) -- (score);
+  \draw[flow] (score) -- (targets);
+  \draw[flow] (targets) -- node[above, font=\scriptsize] {yes} (accept);
+  \draw[flow] (targets) -- node[above, font=\scriptsize] {no} (retry);
+  \draw[flow] (retry) to[out=90,in=-90] node[below left, font=\scriptsize]
+    {next attempt} (construct.south);
+  \draw[flow] (retry) -- node[above, font=\scriptsize] {attempt limit}
+    (fallback);
+\end{tikzpicture}%
+}
+\caption{Ordinary-process-tree sampling. The loop, depth, and size settings are
+selection targets: an unmet target triggers another attempt, while the final
+fallback returns the highest-scoring candidate.}
+\Description{A two-row flowchart showing recursive process-tree construction,
+canonicalization, candidate scoring, target checking, acceptance, retry, and
+the attempt-limit fallback.}
+\label{fig:app-tree-sampler}
+\end{figure}
+
 \paragraph{Controlled behavior families.}
 The other three family types use small hand-defined canonical process trees:
 \begin{itemize}
@@ -302,7 +427,7 @@ modes for other experiments. The persisted split uses one clean
 \texttt{uniform\_variants} view per family; all stored trace-edit lists are
 empty.
 
-Family construction, quota order, and event-log-view shuffling use stable seeds
+Family construction, quota order, and event-log-view shuffling use stable seeds;
 loop trace pools are an exception: although a derived playout seed is recorded,
 the current call does not apply it to PM4Py's playout randomness. Exact loop
 trace pools are therefore not guaranteed by the generator seed alone and can
@@ -317,10 +442,57 @@ The final step turns each behavior family into rows. With the current
 configuration, each family has one generated event-log view and two Petri-net
 variants, so it becomes exactly two rows:
 \[
-  (\text{process tree}, \text{same event-log view}, \text{Petri-net variant 0}, e)
-  \quad\text{and}\quad
-  (\text{process tree}, \text{same event-log view}, \text{Petri-net variant 1}, e).
+\begin{aligned}
+  &(\text{process tree}, \text{same event-log view},
+    \text{Petri-net variant 0}, e),\\
+  &(\text{process tree}, \text{same event-log view},
+    \text{Petri-net variant 1}, e).
+\end{aligned}
 \]
+Figure~\ref{fig:app-flatten-family} makes the shared and variant-specific fields
+explicit.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  shared/.style={draw=black!55, rounded corners=2pt, align=left,
+    text width=0.30\linewidth, minimum height=24mm, inner sep=5pt,
+    fill=black!3},
+  variant/.style={draw=purple!65!black, rounded corners=2pt, align=center,
+    text width=0.18\linewidth, minimum height=10mm, inner sep=3pt,
+    fill=purple!8},
+  row/.style={draw=teal!60!black, rounded corners=2pt, align=center,
+    text width=0.25\linewidth, minimum height=13mm, inner sep=3pt,
+    fill=teal!7},
+  flow/.style={-{Latex[length=2mm]}, thick, draw=black!65}
+]
+  \node[shared] (shared) {\textbf{Shared family fields}\\
+    canonical process tree $T$\\
+    event-log view $L$\\
+    equivalence identifier $e$};
+  \node[variant, above right=1mm and 13mm of shared] (gzero)
+    {Petri-net variant $G_0$};
+  \node[variant, below right=1mm and 13mm of shared] (gone)
+    {Petri-net variant $G_1$};
+  \node[row, right=13mm of gzero] (rowzero)
+    {training row 0\\$\bigl(T,L,G_0,e\bigr)$};
+  \node[row, right=13mm of gone] (rowone)
+    {training row 1\\$\bigl(T,L,G_1,e\bigr)$};
+
+  \draw[flow] (shared.east) -- (gzero.west);
+  \draw[flow] (shared.east) -- (gone.west);
+  \draw[flow] (gzero) -- (rowzero);
+  \draw[flow] (gone) -- (rowone);
+\end{tikzpicture}
+\caption{Flattening one behavior family into two training rows. The process
+tree, event-log view, and equivalence identifier are duplicated; only the
+Petri-net graph changes.}
+\Description{Shared process-tree, event-log, and equivalence fields branch to
+two Petri-net variants, which produce two corresponding training rows.}
+\label{fig:app-flatten-family}
+\end{figure}
+
 Both rows have the same equivalence identifier $e$. The process tree and trace
 list are identical in the two rows. The Petri-net graph is different.
 
@@ -362,3 +534,5 @@ model sees a process tree, a finite generated event log, and a Petri-net graph; 
 which rows belong to the same visible-trace equivalence family. The generated
 families therefore train the model to align artifact types by behavior rather
 than by node names, transition counts, or one particular Petri-net structure.
+
+\end{document}
