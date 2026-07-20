@@ -6,8 +6,10 @@
 This appendix explains the data-generation pipeline used for the model in the
 main paper. The goal of the generator is simple: create many small process
 behaviors, write each behavior in several forms, and keep an explicit record of
-which forms describe the same behavior. The model can then learn from paired
-examples instead of guessing which log, tree, and Petri net belong together.
+which forms share the same complete visible-trace language. The model can then
+learn from paired examples instead of guessing which log, tree, and Petri net
+belong together. This is the generator's chosen equivalence semantics; it does
+not imply equality under every structural or partial-order semantics.
 
 \subsection{What One Training Row Contains}
 \label{app:data-row}
@@ -20,13 +22,13 @@ main fields:
         traces;
   \item a Petri-net graph $G$, stored as typed nodes, labeled transitions,
         directed arcs, and initial/final marking vectors;
-  \item an equivalence identifier $e$, shared by all rows that represent the
-        same behavior.
+  \item an equivalence identifier $e$, shared by all rows in the same
+        visible-trace equivalence family.
 \end{enumerate}
-The process tree is the decoder target. The generated log is the trace-based
-view of the same behavior. The Petri-net graph is the graph-based view. During
-training, rows with the same equivalence identifier are treated as positive
-matches for the contrastive objective.
+The process tree is the decoder target. The generated log is the finite
+trace-based view of that family. The Petri-net graph is its graph-based view.
+During training, rows with the same equivalence identifier are treated as
+positive matches for the contrastive objective.
 
 The persisted JSONL rows also store bookkeeping fields:
 \texttt{model\_variant\_id}, \texttt{log\_view\_id},
@@ -83,8 +85,10 @@ enumerate an unbounded language exhaustively.
 \label{app:behavior-families}
 
 The generator does not create isolated triples one by one. Instead, it creates
-\emph{behavior families}. A behavior family is one underlying behavior plus two
-Petri-net representations of that behavior. Both rows in a family share:
+\emph{behavior families}. A behavior family combines one canonical tree with
+two Petri-net representations certified to have the same complete visible-trace
+language (or related directly by isomorphic renaming for ordinary loop
+families). Both rows in a family share:
 \begin{itemize}
   \item the same canonical process tree;
   \item the same generated trace list;
@@ -93,8 +97,11 @@ Petri-net representations of that behavior. Both rows in a family share:
 They differ in their Petri-net graph. Sometimes the second graph is only a
 renamed copy of the first graph. In other cases, the second graph uses a
 different internal structure while keeping the same complete visible traces.
-This is important because the model should learn behavior, not only superficial
-graph shape.
+For example, the concurrency/interleaving family has the same linearized traces
+but deliberately differs in partial-order semantics, recorded as
+\texttt{partial\_order\_equivalent=false}. Thus the family identifier denotes
+the explicit visible-trace equivalence used for training, not equivalence under
+all behavioral notions.
 
 The current data is balanced across four family types. Each split contains the
 same number of behavior families from each type:
@@ -168,10 +175,11 @@ equivalent child permutations do not become different targets.
 
 If a generated ordinary tree has fewer than two unique activity labels, the
 generator tries to make it less trivial by adding another activity in sequence.
-The sampler retries ordinary trees and keeps the first tree that contains a
-loop, reaches the configured minimum depth, and has at least 20 nodes. If this
-does not happen within the retry budget, it keeps the deepest and largest
-candidate encountered.
+The sampler makes up to 100 attempts and keeps the first tree that contains a
+loop, reaches the configured minimum depth, and has at least 20 nodes. These are
+targets rather than hard postconditions: if no candidate meets all three, the
+fallback is the lexicographically highest-scoring candidate, prioritizing loop
+presence first, then depth, then size.
 
 \paragraph{Controlled behavior families.}
 The other three family types use small hand-defined canonical trees:
@@ -219,7 +227,8 @@ variant is the Petri net obtained from the parallel process tree, so the two
 activities can run concurrently. The second variant lists the two possible
 orders explicitly as two serial paths. The visible traces are the same, but one
 graph contains true concurrency and the other encodes only the allowed
-interleavings.
+interleavings; accordingly, the generator records them as not partial-order
+equivalent.
 
 \paragraph{Non-free-choice M-pattern families.}
 Both variants accept the same visible traces for
@@ -232,21 +241,26 @@ structure is less block-like.
 \subsection{Step 4: Check Behavioral Equivalence}
 \label{app:equivalence-check}
 
-Before a non-loop behavior family is accepted, the generator compares the
-visible trace sets returned for all of its Petri-net variants. The checker
-explores reachable markings, records traces that reach the final marking, and
-omits invisible transitions from those traces. It also reports whether the
-search finished exhaustively or encountered a resource limit.
+For every family not handled by the ordinary-loop isomorphism shortcut, the
+generator compares the visible trace sets returned for all Petri-net variants.
+The checker explores firing sequences and records search states comprising the
+marking, visible prefix, and firing count. It records traces that reach the
+final marking, omits invisible transitions, and reports whether exploration
+finished or a resource bound truncated it.
 
-The check has explicit resource limits:
+The current check uses these bounds:
 \begin{itemize}
-  \item at most 5{,}000 explored states;
-  \item at most 10{,}000 complete traces;
-  \item at most 32 visible activities per trace.
+  \item a threshold of 5{,}000 visited search states;
+  \item a threshold of 10{,}000 distinct complete visible traces;
+  \item at most 32 visible activities per trace;
+  \item at most $4\cdot32+|T|$ transition firings along a search path, where
+        $|T|$ is the number of Petri-net transitions.
 \end{itemize}
-The returned trace set must be nonempty and identical for every variant. If all
-searches finish, the certificate status is \texttt{exact}; if a bound truncates
-at least one search, the compared finite result receives status
+The implementation flags the search as incomplete when either count threshold
+is exceeded or either path bound prevents further exploration. The trace set
+returned up to that point must be nonempty and identical for every variant. If
+all searches finish, the certificate status is \texttt{exact}; if a bound
+truncates at least one search, the compared finite result receives status
 \texttt{bounded}. The current configuration sets
 \texttt{exact\_equivalence\_only\_for\_training} to false, so a bounded family
 is eligible for any split. In the persisted data used here, however, every
@@ -269,31 +283,32 @@ family that fails these checks is rejected.
 \label{app:create-log-view}
 
 After equivalence is checked or certified, the generator creates a trace pool.
-For the controlled families in the current data, the pool is the sorted exact
+For controlled families in the current data, the pool is the sorted exact
 visible language returned by the completed checker. For ordinary loop
-families, PM4Py performs $\max(256,4n)$ process-tree playouts for a requested
-log size $n$; the generator deduplicates and sorts the observed traces. Thus,
-for the current $n=128$ run, each ordinary trace pool is formed from 512
-playout traces. The current run creates one log view per behavior family and
-stores 128 traces in that log view.
+families, PM4Py performs $\max(256,4n)$ process-tree playouts for requested log
+size $n$; the generator then deduplicates and sorts the observations. Thus the
+current $n=128$ run draws 512 playout traces before deduplication. It creates
+one log view per family and stores 128 traces in that view.
 
-The default log sampling mode is \texttt{uniform\_variants}. In this mode, the
-generator cycles through the trace pool until it has 128 traces, then
-shuffles their order with a deterministic seed. If a behavior has only two trace
-variants, each variant appears several times. If it has more variants, the first
-128 positions of the repeated cycle are used. This keeps the generated logs
-simple and reproducible.
+The current configuration lists \texttt{uniform\_variants} followed by
+\texttt{resampled}. Because it requests only one log view, that view uses the
+first mode. In \texttt{uniform\_variants}, the generator cycles through the
+trace pool until it has 128 traces, then shuffles them with a deterministic
+seed. If a behavior has only two variants, both recur; if the pool has more
+than 128 variants, only its first 128 sorted entries are used before shuffling.
 
-The configuration also defines other sampling modes, such as sparse,
-long-tail, incomplete, resampled, and noisy modes. They are part of the codebase
-for other experiments, but the current persisted split uses one clean
-uniform-variants log view per behavior family.
+The generator also supports sparse, long-tail, incomplete, resampled, and noisy
+modes for other experiments. The persisted split uses one clean
+\texttt{uniform\_variants} view per family; all stored trace-edit lists are
+empty.
 
 Family construction, quota order, and log-view shuffling use stable seeds
-derived from the global seed, split, family index, and pipeline stage. Ordinary
-loop trace pools additionally depend on PM4Py process-tree playout, so exact
-playout results can depend on the installed PM4Py version even when the Python
-seed and generator configuration are unchanged.
+loop trace pools are an exception: although a derived playout seed is recorded,
+the current call does not apply it to PM4Py's playout randomness. Exact loop
+trace pools are therefore not guaranteed by the generator seed alone and can
+depend on ambient random state as well as the installed PM4Py version. The
+persisted JSONL rows, rather than regeneration from seed alone, define the exact
+loop log contents used in the study.
 
 \subsection{Step 6: Flatten Families into Training Rows}
 \label{app:flatten-rows}
@@ -337,12 +352,13 @@ At training time, each row is converted into tensors:
 \end{itemize}
 The batch collator also creates a positive-pair mask from the equivalence
 identifiers. If two rows have the same equivalence identifier, they are treated
-as matching views of the same behavior. Training batches can also apply a
-consistent random renaming of activity labels within a family. This preserves
-the behavior while reducing dependence on the literal label names.
+as matching views of the same visible-trace equivalence family. Training batches
+can also apply a consistent random renaming of activity labels within a family.
+This preserves the behavior while reducing dependence on the literal label
+names.
 
 In short, the data-generation pipeline makes the supervision explicit. The
 model sees a tree, a finite generated log, and a Petri-net graph; it also sees
-which rows describe the same behavior. The generated families therefore train
-the model to align artifact types by behavior rather than by node names,
-transition counts, or one particular Petri-net structure.
+which rows belong to the same visible-trace equivalence family. The generated
+families therefore train the model to align artifact types by behavior rather
+than by node names, transition counts, or one particular Petri-net structure.
