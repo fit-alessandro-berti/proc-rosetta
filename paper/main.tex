@@ -613,9 +613,9 @@ The target process trees cover sequence, choice, concurrency, and two-child loop
 \section{Conclusion}
 \label{sec:conclusion}
 
-ProcRosetta aligns event logs, process trees, and Petri nets in one latent space and decodes valid process trees convertible to sound Petri nets. Retrieval exceeds chance but remains limited (RQ1). At least 99.8\% of decodes terminate and all terminated outputs are valid; 75.0\% match exactly, and decoded behavior is closer than unrelated rows (RQ2). Paired views cluster locally, while event-log features give the best global rank correlation and event-log-to-process-tree translation reaches about 90\% of the Inductive Miner's footprint F1 (RQ3).
+ProcRosetta provides a unified representation for event logs, process trees, and Petri nets, connecting complementary views of process behavior. The study shows that these artifacts can be brought into a shared latent space while retaining a grammar-constrained path back to process models. Cross-modal retrieval, reconstruction, discovery, and neighborhood analyses suggest that the representation captures meaningful behavioral relationships, although alignment across modalities and generalization beyond the training distribution remain open challenges.
 
-Future work should test larger encoders, multiple seeds, realistic event logs, cross-split deduplication, richer sound targets, and exact-conformance distances.
+Future work should broaden the data and model families, evaluate robustness across settings, incorporate richer sound target languages, and develop objectives and conformance-aware measures for transferable cross-modal process understanding.
 
 \section*{Acknowledgements}
 
