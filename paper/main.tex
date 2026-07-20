@@ -183,7 +183,7 @@ This section presents the paired training data, the encoders, the grammar-masked
 \subsection{Synthetic Paired Triples}
 \label{sec:datagen}
 
-ProcRosetta is trained on synthetic \emph{paired triples} whose correspondence is fixed by the generator (Figure~\ref{fig:triple}): each sample $x_i = (T_i, L_i, G_i, e_i)$ belongs to one behavior family $e_i$ with a canonical process tree $T_i$.
+ProcRosetta is trained on synthetic \emph{paired triples} whose correspondence is fixed by the generator (Figure~\ref{fig:triple}): each sample $x_i = (T_i, L_i, G_i, e_i)$ belongs to one behavior family $e_i$ with a canonical process tree $T_i$.\footnote{Data-generation supplement: \url{https://github.com/fit-alessandro-berti/proc-rosetta/blob/main/data_generation.pdf}.}
 \begin{itemize}
   \item canonical ordinary process trees are sampled from $\{\operatorname{SEQ}, \operatorname{XOR}, \operatorname{AND}, \operatorname{LOOP}\}$ process trees (maximum recursion depth $8$, arity $2$ to $3$ for non-loop operators, two-child loops, at most $30$ activities, reuse probability $0.15$) and canonicalized (Section~\ref{sec:preliminaries});
   \item each behavior is stored in two rows with the same process-tree target and the same visible traces, but with different Petri net graphs; the second graph may simply rename nodes or use different internal routing while preserving the same behavior;
@@ -613,9 +613,9 @@ The target process trees cover sequence, choice, concurrency, and two-child loop
 \section{Conclusion}
 \label{sec:conclusion}
 
-ProcRosetta embeds event logs, process trees, and Petri nets in a shared behavioral latent space and decodes grammar-valid process trees that convert to sound Petri nets. All exact-row retrieval directions exceed chance but leave headroom (RQ1). At least 99.8\% of decodes terminate; every terminated output is valid and convertible, 75.0\% exactly match the target, and decoded behavior remains closer to the source than unrelated rows (RQ2). Under the paired-row construction, equivalent views form local neighborhoods, while deterministic event-log features lead global rank correlation and event-log-to-process-tree translation reaches about 90\% of the Inductive Miner's footprint F1 (RQ3).
+ProcRosetta aligns event logs, process trees, and Petri nets in one latent space and decodes valid process trees convertible to sound Petri nets. Retrieval exceeds chance but remains limited (RQ1). At least 99.8\% of decodes terminate and all terminated outputs are valid; 75.0\% match exactly, and decoded behavior is closer than unrelated rows (RQ2). Paired views cluster locally, while event-log features give the best global rank correlation and event-log-to-process-tree translation reaches about 90\% of the Inductive Miner's footprint F1 (RQ3).
 
-Future work should test larger encoders, multiple seeds, and realistic event logs; control cross-split near-duplicates; improve retrieval and decoding; and evaluate richer sound targets, exact-conformance distances, and natural-language descriptions.
+Future work should test larger encoders, multiple seeds, realistic event logs, cross-split deduplication, richer sound targets, and exact-conformance distances.
 
 \section*{Acknowledgements}
 
