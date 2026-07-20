@@ -244,3 +244,6 @@ nohup.out
 #.streamlit/
 
 !dist_data/*.tar.gz
+
+!data_generation.pdf
+
