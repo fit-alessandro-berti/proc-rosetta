@@ -9,6 +9,12 @@
 \usetikzlibrary{positioning,arrows.meta,shapes.geometric}
 \pgfplotsset{compat=1.18}
 
+% Imported vector figures contain compatible transparency groups; pdfTeX
+% otherwise warns when more than one such figure appears on a page.
+\ifdefined\pdfsuppresswarningpagegroup
+  \pdfsuppresswarningpagegroup=1
+\fi
+
 % Relax float placement so tables/figures can share pages with text.
 \renewcommand{\topfraction}{0.95}
 \renewcommand{\bottomfraction}{0.7}
@@ -16,6 +22,7 @@
 \renewcommand{\floatpagefraction}{0.85}
 \setcounter{topnumber}{3}
 \setcounter{totalnumber}{5}
+\raggedbottom
 
 \acmConference[ICPM '27]{International Conference on Process Mining 2027}{TBD 2027}{TBD}
 \acmYear{2027}
@@ -72,6 +79,7 @@ ProcRosetta treats event logs, process trees, and Petri nets as three views of o
   \centering
   \includegraphics[width=0.92\textwidth]{figures/outline.png}
   \caption{ProcRosetta aligns encoded event logs, process trees, and Petri nets in one latent space. A shared grammar-masked decoder realizes process-tree reconstruction, event-log-to-process-tree process discovery, and Petri-net-to-process-tree translation; completed process trees convert deterministically to Petri nets.}
+  \Description{System diagram with three encoders for event logs, process trees, and Petri nets feeding a shared latent space. A grammar-masked decoder maps the latent representation to a process tree, which can be converted to a Petri net.}
   \label{fig:outline}
 \end{figure*}
 
@@ -172,6 +180,7 @@ An \emph{accepting labeled Petri net}~\cite{vanDerAalst2016} is a tuple $\mathit
 \end{tikzpicture}%
 }
 \caption{One synthetic paired triple: a generated process tree $T = \operatorname{SEQ}(\mathrm{A0}, \operatorname{XOR}(\mathrm{A1},\mathrm{A2}))$ (a) is serialized as a prefix token sequence with explicit arities (b), simulated into an event log (c; superscripts denote trace frequencies), and deterministically converted into an accepting Petri net (d).}
+\Description{Four representations of one process: a sequence process tree with an exclusive-choice child, its prefix token sequence, an event log containing traces A0-A1 and A0-A2, and the equivalent accepting Petri net.}
 \label{fig:triple}
 \end{figure}
 
@@ -265,6 +274,7 @@ An interactive Streamlit tool\footnote{Available at \url{https://rosetta-pm.app}
     \par\smallskip\small (b) Latent-space exploration.
   \end{minipage}
   \caption{Interactive tool support for ProcRosetta. The translation view exposes generated models and validation outcomes, while the latent-space view makes relationships among heterogeneous artifacts explorable.}
+  \Description{Two screenshots of the ProcRosetta interface. The first shows event-log-to-process-tree translation and validation results; the second shows a latent-space projection and controls for exploring artifact relationships.}
   \label{fig:tool}
 \end{figure*}
 
@@ -308,6 +318,7 @@ Trainable parameters & 443{,}849 & Early stopping & patience 4 of max.\ 100 epoc
 \includegraphics[width=\linewidth]{figures/training_curves.pdf}
 \captionsetup{hypcap=false}
 \captionof{figure}{Training behavior. (a)~Training and validation loss per epoch; the dashed line marks the learning-rate halving entering epoch 30, the dotted line the best-validation checkpoint (epoch 35), and the cross the final checkpoint (epoch 36) used for the test report. (b)~The principal validation loss components decrease jointly.}
+\Description{Two line charts over 36 epochs. Training and validation losses generally decrease, with the lowest validation loss at epoch 35 and the reported final checkpoint at epoch 36. The principal validation loss components also decrease over training.}
 \label{fig:training}
 \end{minipage}
 \end{center}
@@ -377,6 +388,7 @@ Figure~\ref{fig:reconstructionexamples} contrasts a largest exact reconstruction
     \par\smallskip\small (c) Non-exact reconstruction.
   \end{minipage}
   \caption{Held-out process-tree reconstructions. In (a), source and output are identical; (b) and (c) show a large source and its simplified, non-exact reconstruction.}
+  \Description{Three process-tree diagrams. The first is an exact reconstruction of its source. The second is a large source tree, and the third is its smaller reconstruction, which preserves upper choice and parallel structure while omitting deeper structure.}
   \label{fig:reconstructionexamples}
 \end{figure*}
 
@@ -404,6 +416,7 @@ Panels~(b) and~(c) expose the boundary imposed by the process-tree decoder. The 
     \par\smallskip\small (c) Decoded block-structured Petri net.
   \end{minipage}
   \caption{Held-out Petri net translations. The exact block-structured source and reconstruction coincide in (a); (b) and (c) show a non-block-structured M-pattern and its different block-structured decode. Black rectangles denote silent transitions. All canonical transition labels are shown in full.}
+  \Description{Three Petri net diagrams. The first shows a block-structured source that exactly matches its reconstruction. The second shows a non-free-choice M-pattern, and the third shows its behaviorally equivalent but structurally different block-structured decode.}
   \label{fig:petrireconstructionexamples}
 \end{figure*}
 
@@ -443,6 +456,7 @@ Figure~\ref{fig:discoveryexamples} compares two supplied, out-of-distribution ev
     \par\smallskip\small (d) \texttt{roadtraffic100traces.xes}: Inductive Miner.
   \end{minipage}
   \caption{Process discovery on two supplied event logs. The ProcRosetta process trees (left) are reconstructed from the tool screenshots; PM4Py's Inductive Miner process trees are shown on the right. Full activity labels are retained and only line-wrapped for legibility. All panels use PM4Py's process tree visualization and are imported as PDF.}
+  \Description{Four process-tree diagrams comparing ProcRosetta and the Inductive Miner on receipt and road-traffic event logs. In both rows, the ProcRosetta tree on the left is more compact than the corresponding Inductive Miner tree on the right.}
   \label{fig:discoveryexamples}
 \end{figure*}
 
@@ -538,6 +552,7 @@ coordinates {(-0.467942,-0.994468) (-0.931072,-0.028958) (-0.634011,-0.336283) (
 \end{axis}
 \end{tikzpicture}
 \caption{Joint PCA of $L_2$-normalized latent means for 18 distinct held-out processes. Colors and shapes mark modalities; gray triangles join matching views. The subset was fixed before inspecting embeddings.}
+\Description{Scatter plot of the first two principal components for 18 held-out processes. Each process contributes nearby event-log, Petri-net, and process-tree points connected by a gray triangle; different processes are generally farther apart.}
 \label{fig:embeddingpca}
 \end{figure}
 
