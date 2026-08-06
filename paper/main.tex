@@ -602,40 +602,39 @@ process tree $\to$ event log  & 4.0\% & 0.097 & 99.9 \\
 \end{minipage}
 \end{table*}
 
-The modality-specific embeddings are strongly compatible with their arithmetic-mean fusion, with pairwise-distance correlations of $0.824$ to $0.970$. Because the fused representation is constructed directly from the same three modality embeddings, Table~\ref{tab:agreement} is a geometric consistency check rather than independent validation of alignment. The cross-modal retrieval results in Table~\ref{tab:retrieval} provide the more direct test of whether representations from different artifact types can identify their paired counterparts.
+The modality-specific embeddings are strongly compatible with their arithmetic-mean fusion, with pairwise-distance correlations of $0.824$ to $0.970$. Because the fusion is constructed directly from the same three modality embeddings, Table~\ref{tab:agreement} is a geometric consistency check rather than independent validation; the retrieval results in Table~\ref{tab:retrieval} provide the more direct test of whether representations from different artifact types identify their paired counterparts.
 
 \subsection{Cross-Modal Retrieval (RQ1)}
 \label{sec:retrievalresults}
 
 
 
-Table~\ref{tab:retrieval} directly tests cross-modal alignment by retrieving the matching row among 1{,}024 candidates in all six directions. Top-1 accuracy is 2.9 to 8.0\% (chance: 0.1\%) and mean rank 96.7 to 100.8 (random expectation: 512). Exact-row scores are deliberately strict: each query has one indexed target, although its alternate row is behaviorally equivalent. Separately, the nearest row is from the same family in 25.0\% of fused, 25.0\% of Petri-net, 74.6\% of event-log, and 25.6\% of process-tree embeddings (within-family cosine: 0.995 to 1.000). Thus instance-level alignment is above chance but leaves substantial retrieval headroom.
+Table~\ref{tab:retrieval} directly tests cross-modal alignment by retrieving the matching row among 1{,}024 candidates in all six directions. Top-1 accuracy is 2.9 to 8.0\% (chance: 0.1\%) and mean rank 96.7 to 100.8 (random expectation: 512); these exact-row scores are deliberately strict, as each query has one indexed target although its alternate row is behaviorally equivalent. Separately, the nearest row is from the same family in 25.0\% of fused, 25.0\% of Petri-net, 74.6\% of event-log, and 25.6\% of process-tree embeddings (within-family cosine: 0.995 to 1.000). Thus instance-level alignment is above chance but leaves substantial retrieval headroom.
 
 \subsection{Reproducibility and Implementation}
 \label{sec:repository}
 
-The public Python implementation uses PyTorch and PM4Py~\cite{Berti2023PM4Py}: \url{https://github.com/fit-alessandro-berti/proc-rosetta}. Its generator, training and evaluation pipelines, and metric implementations reproduce the study end-to-end: \texttt{sample.py} regenerates Table~\ref{tab:dataset}'s seeded splits, \texttt{train.py} trains Table~\ref{tab:hyper}'s model and writes Figure~\ref{fig:training}'s metrics, and \texttt{test.py} produces Tables~\ref{tab:decode} through~\ref{tab:retrieval}. Utilities also embed external \texttt{.xes}, \texttt{.pnml}, and \texttt{.ptml} artifacts and decode event logs or Petri nets into process trees with automatic canonicalization and label restoration.
+The public PyTorch/PM4Py~\cite{Berti2023PM4Py} implementation at \url{https://github.com/fit-alessandro-berti/proc-rosetta} reproduces the study end-to-end: \texttt{sample.py} regenerates Table~\ref{tab:dataset}'s seeded splits, \texttt{train.py} trains Table~\ref{tab:hyper}'s model and writes Figure~\ref{fig:training}'s metrics, and \texttt{test.py} produces Tables~\ref{tab:decode} through~\ref{tab:retrieval}. Utilities also embed external \texttt{.xes}, \texttt{.pnml}, and \texttt{.ptml} artifacts and decode event logs or Petri nets into process trees with automatic canonicalization and label restoration.
 
 \section{Discussion}
 \label{sec:discussion}
 
 \paragraph{Threats to validity.}
-Three threats qualify these findings. \emph{(i) Synthetic data.} Training and evaluation use synthetic behavior families that do not capture the noise and complexity of real event logs, limiting conclusions to in-distribution artifacts. Family-wise splitting keeps paired rows together but does not prevent visible-language overlap between independently generated families, which may inflate exact-match rates. \emph{(ii) Metric circularity.} The behavioral distance shares two of its three components with the directly-follows and trace-variant baselines, favoring their scores; Table~\ref{tab:embedding} therefore also reports the less affected nearest-neighbor quality. \emph{(iii) Single configuration.} Results cover one seeded, full-objective configuration; variation across seeds and hyperparameters and the contributions of individual objectives remain unmeasured.
+Three threats qualify these findings. \emph{(i) Synthetic data.} Training and evaluation use synthetic behavior families that lack the noise and complexity of real event logs, limiting conclusions to in-distribution artifacts; family-wise splitting keeps paired rows together but does not prevent visible-language overlap between independently generated families, which may inflate exact-match rates. \emph{(ii) Metric circularity.} The behavioral distance shares two of its three components with the directly-follows and trace-variant baselines, favoring their scores; Table~\ref{tab:embedding} therefore also reports the less affected nearest-neighbor quality. \emph{(iii) Single configuration.} Results cover one seeded, full-objective configuration; variation across seeds and hyperparameters and the contributions of individual objectives remain unmeasured.
 
 \paragraph{Scope of the model class.}
-The target process trees cover sequence, choice, concurrency, and two-child loops. Some Petri net inputs are non-block or non-free-choice variants, but the decoder still emits block-structured process trees, which are less expressive than partially ordered formalisms such as POWL~\cite{Kourani2026}. Any target language with a prefix grammar, canonical form, and deterministic Petri-net conversion could replace the decoder.
+The target process trees cover sequence, choice, concurrency, and two-child loops. Even for non-block or non-free-choice Petri net inputs, the decoder emits block-structured process trees, which are less expressive than partially ordered formalisms such as POWL~\cite{Kourani2026}. Any target language with a prefix grammar, canonical form, and deterministic Petri-net conversion could replace the decoder.
 
 \section{Conclusion}
 \label{sec:conclusion}
 
-ProcRosetta provides a unified representation for event logs, process trees, and Petri nets, connecting complementary views of process behavior. The study shows that these artifacts can be brought into a shared latent space while retaining a grammar-constrained path back to process models. Cross-modal retrieval, reconstruction, discovery, and neighborhood analyses suggest that the representation captures meaningful behavioral relationships, although alignment across modalities and generalization beyond the training distribution remain open challenges.
+ProcRosetta provides a unified representation for event logs, process trees, and Petri nets, showing that these complementary views of process behavior can be brought into a shared latent space while retaining a grammar-constrained path back to process models. Cross-modal retrieval, reconstruction, discovery, and neighborhood analyses suggest that the representation captures meaningful behavioral relationships, although alignment across modalities and generalization beyond the training distribution remain open challenges. Future work should broaden the data and model families, evaluate robustness across settings, incorporate richer sound target languages, and develop objectives and conformance-aware measures for transferable cross-modal process understanding.
 
-Future work should broaden the data and model families, evaluate robustness across settings, incorporate richer sound target languages, and develop objectives and conformance-aware measures for transferable cross-modal process understanding.
+\begin{acks}
+Funded by the European Union. This work has received funding from the European High Performance Computing Joint Undertaking (JU) and from the German Federal Ministry of Research, Technology and Space (BMFTR), the Ministry of Culture and Science of North Rhine-Westphalia (MKW NRW), and the Hessian Ministry of Science and Research, Arts and Culture (HMWK) under grant agreement No~101250682.
 
-\section*{Acknowledgements}
-
-Funded by the European Union. This work has received funding from the European High Performance Computing Joint Undertaking (JU) and from the German Federal Ministry of Research, Technology and Space (BMFTR), the Ministry of Culture and Science of North Rhine-Westphalia (MKW NRW), and the Hessian Ministry of Science and Research, Arts and Culture (HMWK) under grant agreement No 101250682.
-Generative AI tools were used to support the implementation of the accompanying software and the writing of this paper; the authors reviewed all generated content and take full responsibility for the work.
+Generative AI tools were used to support the implementation of the accompanying software and the writing of this paper. The authors reviewed, edited, and verified all generated content and take full responsibility for the work.
+\end{acks}
 
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{bib}
