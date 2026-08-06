@@ -101,12 +101,12 @@ Section~\ref{sec:relatedWork} reviews related work; Section~\ref{sec:preliminari
 \label{sec:relatedWork}
 
 \paragraph{Process discovery and model generation.}
-Classical process discovery maps event logs to models~\cite{Aalst2004}. The Inductive Miner recursively decomposes event logs into sound, block-structured process trees~\cite{Leemans2013}; more expressive sound targets such as POWL relax strict block structure~\cite{Kourani2026}. Neural process discovery has learned a direct event-log-to-Petri net mapping from synthetic pairs~\cite{Sommers2021}. ProcRosetta retains the process tree bias for validity and deterministic Petri conversion, but learns a tri-modal space rather than one event-log-to-model direction.
+Classical process discovery maps event logs to models~\cite{Aalst2004}. The Inductive Miner recursively decomposes event logs into sound, block-structured process trees~\cite{Leemans2013}; more expressive sound targets such as POWL relax strict block structure~\cite{Kourani2026}. Neural process discovery has learned a direct event-log-to-Petri net mapping from synthetic pairs~\cite{Sommers2023}. ProcRosetta retains the process tree bias for validity and deterministic Petri conversion, but learns a tri-modal space rather than one event-log-to-model direction.
 
 \paragraph{Representation learning.}
 Prior process embeddings cover traces and event logs~\cite{DeKoninck2018,Barbon2023} or Petri nets~\cite{Colonna2024}; PetriNet2Vec is therefore a baseline below. They encode one artifact family and do not decode models from a shared space. ProcRosetta instead aligns three artifact types and evaluates both latent geometry and generated-model behavior.
 
-Model comparison distinguishes label, structural, and behavioral similarity~\cite{Dijkman2011}, while alignment-based conformance provides exact event-log-to-model diagnostics~\cite{Adriansyah2012}. ProcRosetta's latent distance is a scalable but approximate proxy, so the assessment separately measures behavioral-distance agreement and discovered-model conformance.
+Model comparison distinguishes label, structural, and behavioral similarity~\cite{Dijkman2011}, while alignment-based conformance provides exact event-log-to-model diagnostics~\cite{Adriansyah2013}. ProcRosetta's latent distance is a scalable but approximate proxy, so the assessment separately measures behavioral-distance agreement and discovered-model conformance.
 
 \paragraph{Shared representations and constrained decoding.}
 CLIP established contrastive alignment of paired modalities~\cite{Radford2021}, while grammar-constrained decoding enforces structured outputs~\cite{Geng2023}. ProcRosetta combines these ideas for formal artifacts: equivalence is behavioral, and the shared decoder emits grammar-valid process trees. Tri-modal alignment, behavioral evaluation, and validity-preserving generation distinguish it from both single-modality embeddings and direct neural process discovery.
