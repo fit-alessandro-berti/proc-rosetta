@@ -114,7 +114,7 @@ CLIP established contrastive alignment of paired modalities~\cite{Radford2021}, 
 \section{Preliminaries}
 \label{sec:preliminaries}
 
-We fix a finite alphabet of activity labels $\Sigma$. Throughout the paper, activity labels are \emph{canonicalized} to $\mathrm{A0}, \mathrm{A1}, \ldots$ in order of first occurrence, making all representations invariant to arbitrary activity naming while preserving repeated-activity identity.
+We fix a finite alphabet of activity labels $\Sigma$. For each sample, activity labels are \emph{canonicalized} to $\mathrm{A0}, \mathrm{A1}, \ldots$ in first-occurrence order while scanning its stored event-log traces; the same renaming is then applied to the process tree and Petri net. This makes all three representations jointly invariant to arbitrary activity naming while preserving repeated-activity identity.
 
 \paragraph{Event logs.}
 A \emph{trace} is a finite word $\sigma = \langle a_1, \ldots, a_m \rangle$ with $a_j \in \Sigma$; an \emph{event log} is a finite multiset of traces, $L = [\sigma_1, \ldots, \sigma_n] \in \mathcal{B}(\Sigma^*)$, preserving trace frequencies. Event logs carry only control-flow information here, abstracting from richer event attributes.
@@ -194,25 +194,26 @@ This section presents the paired training data, the encoders, the grammar-masked
 
 ProcRosetta is trained on synthetic \emph{paired triples} whose correspondence is fixed by the generator (Figure~\ref{fig:triple}): each sample $x_i = (T_i, L_i, G_i, e_i)$ belongs to one behavior family $e_i$ with a canonical process tree $T_i$.\footnote{Data-generation supplement: \url{https://github.com/fit-alessandro-berti/proc-rosetta/blob/main/data_generation.pdf}.}
 \begin{itemize}
-  \item canonical ordinary process trees are sampled from $\{\operatorname{SEQ}, \operatorname{XOR}, \operatorname{AND}, \operatorname{LOOP}\}$ process trees (maximum recursion depth $8$, arity $2$ to $3$ for non-loop operators, two-child loops, at most $30$ activities, reuse probability $0.15$) and canonicalized (Section~\ref{sec:preliminaries});
+  \item ordinary process trees are sampled from $\{\operatorname{SEQ}, \operatorname{XOR}, \operatorname{AND}, \operatorname{LOOP}\}$ process trees (maximum recursion depth $8$, arity $2$ to $3$ for non-loop operators, two-child loops, $8$--$30$ distinct activities, early-leaf probability $0.55$, reuse probability $0.15$) and structurally canonicalized (Section~\ref{sec:preliminaries});
+  \item ordinary process trees receive weight $0.55$, while duplicate-label/silent-routing, concurrency/interleaving, and non-free-choice motifs receive weight $0.15$ each; the three controlled motifs are embedded in a shared sequential context of six fresh activities;
   \item each behavior is stored in two rows with the same process-tree target and the same visible traces, but with different Petri net graphs; the second graph may simply rename nodes or use different internal routing while preserving the same behavior;
-  \item $L_i$ is a $128$-trace event-log view sampled from the family's visible behavior, and $G_i$ is the typed-graph representation of the corresponding Petri net variant.
+  \item $L_i$ is a $128$-trace event-log view sampled from the family's visible behavior, and $G_i$ is the typed-graph representation of the corresponding Petri net variant; before storage, first-seen labels derived from $L_i$ are applied consistently to $T_i$, $L_i$, and $G_i$.
 \end{itemize}
 The generator uses a fixed random seed and produces three disjoint family-wise splits: $8{,}192$ training, $1{,}024$ validation, and $1{,}024$ test rows, corresponding to $4{,}096$, $512$, and $512$ behavior families (Table~\ref{tab:dataset}). Loops are enabled in the ordinary process-tree family. Since loop languages are generally unbounded, ordinary loop families use process tree playout to construct the finite observed trace pool, while their alternate Petri net representation is certified by isomorphic renaming. The controlled duplicate-label, concurrency, and non-free-choice families remain checked by bounded complete visible-language enumeration. The aggregate statistics and empirical results below use these regenerated splits and the corresponding epoch-36 checkpoint.\footnote{The data used to train and test the model, together with the latest checkpoint, are available at \url{https://github.com/fit-alessandro-berti/proc-rosetta/tree/main/dist_data}.}
 
 Each behavior family contributes two rows with identical process tree and event-log views; only the Petri net graph may differ. Thus, the $1{,}024$-row test split contains $512$ family identifiers, and every row has a behaviorally equivalent companion in row-level neighborhood and retrieval analyses. Family-wise splitting prevents the two rows of one generated family from crossing splits, but it does not enforce visible-language uniqueness across independently generated families. Ordinary loop families use isomorphic node renaming for the alternate Petri view, whereas non-isomorphic routing variations occur in the controlled families; within-family Petri agreement therefore reflects identifier invariance throughout and invariance to alternative routing only for a subset.
 
 \begin{table}
-\caption{Configured synthetic dataset splits for the loop-enabled data run (rows are paired triples; behavior families group equivalent rows; fixed seed).}
+\caption{Configured synthetic dataset splits for the weighted, loop-enabled data run (rows are paired triples; behavior families group equivalent rows; fixed seed). Motif allocation lists ordinary / duplicate--silent / concurrency--interleaving / non-free-choice families.}
 \label{tab:dataset}
 \small
-\begin{tabular}{lrrrrrr}
+\begin{tabular}{lrrlrrr}
 \toprule
-Split & Rows & Families & \makecell[r]{Families per\\motif} & \makecell[r]{Max recursion\\depth} & \makecell[r]{Traces per\\row} & \makecell[r]{Petri variants\\per family} \\
+Split & Rows & Families & \makecell[l]{Motif family\\allocation} & \makecell[r]{Max recursion\\depth} & \makecell[r]{Traces per\\row} & \makecell[r]{Petri variants\\per family} \\
 \midrule
-Training   & 8{,}192 & 4{,}096 & 1{,}024 & 8 & 128 & 2 \\
-Validation & 1{,}024 & 512     & 128     & 8 & 128 & 2 \\
-Test       & 1{,}024 & 512     & 128     & 8 & 128 & 2 \\
+Training   & 8{,}192 & 4{,}096 & 2{,}243 / 618 / 618 / 617 & 8 & 128 & 2 \\
+Validation & 1{,}024 & 512     & 277 / 78 / 79 / 78       & 8 & 128 & 2 \\
+Test       & 1{,}024 & 512     & 277 / 78 / 79 / 78       & 8 & 128 & 2 \\
 \bottomrule
 \end{tabular}
 \end{table}

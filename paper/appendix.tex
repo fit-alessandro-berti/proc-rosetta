@@ -131,14 +131,17 @@ The important generator settings are:
 \begin{itemize}
   \item maximum ordinary-process-tree recursion depth: 8;
   \item minimum ordinary-process-tree depth/size targets: depth 4 and 20 nodes;
+  \item minimum distinct activities per ordinary process tree: 8;
   \item maximum activity labels: 30;
   \item maximum operator arity: 3;
   \item traces per generated event-log view: 128;
   \item activity-label reuse probability: 0.15;
-  \item early leaf probability during process-tree recursion: 0.65;
+  \item early leaf probability during process-tree recursion: 0.55;
   \item representation rows per behavior family: 2;
   \item event-log views per behavior family: 1;
-  \item controlled-motif context suffix: 4 fresh activities;
+  \item controlled-motif context suffix: 6 fresh activities;
+  \item family-type weights: 0.55 for ordinary process trees and 0.15 for
+        each of the three controlled motifs;
   \item strict minimum motif coverage: 8 families per motif in training and
         4 per motif in validation and test;
   \item enabled process-tree operators: \texttt{SEQ}, \texttt{XOR},
@@ -174,18 +177,19 @@ but deliberately differs in partial-order semantics, recorded as
 the explicit visible-trace equivalence used for training, not equivalence under
 all behavioral notions.
 
-The current data is balanced across four family types. Each split contains the
-same number of behavior families from each type:
+The current configuration favors ordinary process trees while retaining all
+three controlled family types. With the split sizes above, the deterministic
+weighted quota allocator produces:
 \begin{center}
 \small
 \begin{tabular}{lrrr}
 \toprule
 Family type & Training families & Validation families & Test families \\
 \midrule
-Ordinary process tree & 1{,}024 & 128 & 128 \\
-Duplicate label vs. silent routing & 1{,}024 & 128 & 128 \\
-Concurrency vs. explicit interleaving & 1{,}024 & 128 & 128 \\
-Non-free-choice M pattern & 1{,}024 & 128 & 128 \\
+Ordinary process tree & 2{,}243 & 277 & 277 \\
+Duplicate label vs. silent routing & 618 & 78 & 78 \\
+Concurrency vs. explicit interleaving & 618 & 79 & 79 \\
+Non-free-choice M pattern & 617 & 78 & 78 \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -198,10 +202,14 @@ needed. Because the current configuration stores two rows per behavior family,
 8{,}192 training rows become 4{,}096 training families. The same calculation
 turns 1{,}024 validation rows and 1{,}024 test rows into 512 families each.
 
-The four family types have equal weight. The generator allocates a deterministic
-quota to each type and shuffles the order using a seed derived from the global
-seed, the split name, and the phrase \texttt{motif-quota-plan}. This gives a
-mixed order of samples on disk while preserving exact class balance.
+The ordinary-process-tree family has weight 0.55; the duplicate-label/silent-
+routing, concurrency/interleaving, and non-free-choice families have weight
+0.15 each. The generator first reserves the strict per-type minimum and then
+allocates the remaining families proportionally by the largest-remainder
+method. It shuffles the resulting deterministic quota plan using a seed
+derived from the global seed, the split name, and the phrase
+\texttt{motif-quota-plan}. This gives a mixed order on disk while preserving
+the planned weighted counts and minimum coverage.
 
 The current run uses strict class coverage. Before replacing the data
 directory, the generator verifies that every requested row count is divisible
@@ -225,10 +233,10 @@ There are two cases.
 
 \paragraph{Ordinary-process-tree families.}
 For ordinary-process-tree families, the generator samples a random process tree. It
-first samples a pool of activity labels, then recursively builds the process tree:
+first samples a pool of 8 to 30 activity labels, then recursively builds the process tree:
 \begin{enumerate}
   \item If the maximum depth has been reached, it creates an activity leaf.
-  \item Otherwise, with probability 0.65 it also stops early and creates an
+  \item Otherwise, with probability 0.55 it also stops early and creates an
         activity leaf.
   \item If it does not stop, it chooses one operator from \texttt{SEQ},
         \texttt{XOR}, \texttt{AND}, and \texttt{LOOP}.
@@ -239,18 +247,20 @@ first samples a pool of activity labels, then recursively builds the process tre
 \end{enumerate}
 Activity labels are introduced as \texttt{a0}, \texttt{a1}, and so on. With
 probability 0.15 the generator reuses an earlier label instead of introducing a
-new one. After the process tree is built, activity labels are canonicalized to
-\texttt{A0}, \texttt{A1}, and so on in first-seen order. Children of
-\texttt{XOR} and \texttt{AND} nodes are sorted by a canonical structural key, so
-equivalent child permutations do not become different targets.
+new one. During construction, labels are normalized to \texttt{A0},
+\texttt{A1}, and so on in depth-first tree order. Children of \texttt{XOR} and
+\texttt{AND} nodes are sorted by a canonical structural key, so equivalent
+child permutations do not become different targets. The final stored labels
+are assigned later from the event-log view (Section~\ref{app:flatten-rows}).
 
-If a generated ordinary process tree has fewer than two unique activity labels, the
-generator tries to make it less trivial by adding another activity in sequence.
-The sampler makes up to 100 attempts and keeps the first process tree that contains a
-loop, reaches the configured minimum depth, and has at least 20 nodes. These are
-targets rather than hard postconditions: if no candidate meets all three, the
-fallback is the lexicographically highest-scoring candidate, prioritizing loop
-presence first, then depth, then size.
+The sampler makes up to 100 attempts and keeps the first process tree that
+contains a loop, has at least eight distinct activities, reaches the configured
+minimum depth, and has at least 20 nodes. Candidate scoring prioritizes loop
+presence, then progress toward the eight-activity floor, depth, and size. If no
+candidate meets every selection target, the best candidate is returned after
+fresh activities are added sequentially until it has at least eight distinct
+labels. The alphabet floor is therefore a hard postcondition; loop presence,
+depth, and size remain selection targets rather than hard postconditions.
 
 Figure~\ref{fig:app-tree-sampler} separates the recursive construction rule
 from the candidate-selection rule.
@@ -275,7 +285,7 @@ from the candidate-selection rule.
   \node[box, fill=teal!8, text width=30mm] (canonicalize) at (7.2,0)
     {Canonicalize labels and commutative children};
   \node[box, fill=blue!6, text width=27mm] (score) at (10.3,0)
-    {Score loop presence, depth, and size};
+    {Score loop, alphabet size, depth, and size};
   \node[decision, fill=orange!10] (targets) at (10.3,-2.3)
     {targets met?};
   \node[box, fill=green!9] (accept) at (13.3,-2.3)
@@ -283,7 +293,7 @@ from the candidate-selection rule.
   \node[box, fill=orange!8, text width=31mm] (retry) at (7.0,-2.3)
     {Keep best candidate and retry};
   \node[box, fill=black!4, text width=30mm] (fallback) at (3.4,-2.3)
-    {After 100 attempts:\\return best score};
+    {After 100 attempts:\\pad best to 8 activities};
 
   \draw[flow] (labels) -- (construct);
   \draw[flow] (construct) -- (canonicalize);
@@ -297,12 +307,13 @@ from the candidate-selection rule.
     (fallback);
 \end{tikzpicture}%
 }
-\caption{Ordinary-process-tree sampling. The loop, depth, and size settings are
-selection targets: an unmet target triggers another attempt, while the final
-fallback returns the highest-scoring candidate.}
+\caption{Ordinary-process-tree sampling. Loop presence, eight distinct
+activities, depth, and size guide selection. The final fallback pads the
+highest-scoring candidate when necessary, making only the alphabet floor a
+hard postcondition.}
 \Description{A two-row flowchart showing recursive process-tree construction,
-canonicalization, candidate scoring, target checking, acceptance, retry, and
-the attempt-limit fallback.}
+canonicalization, candidate scoring including alphabet size, target checking,
+acceptance, retry, and the attempt-limit padding fallback.}
 \label{fig:app-tree-sampler}
 \end{figure}
 
@@ -319,11 +330,11 @@ The other three family types use small hand-defined canonical process trees:
 \end{itemize}
 These process trees are intentionally small because their purpose is to isolate one
 specific representation issue at a time. To avoid making every controlled case
-too bare, the generator appends up to four fresh activity labels as a shared
+too bare, the generator appends up to six fresh activity labels as a shared
 sequential suffix. The suffix is added as nested binary sequence nodes, so the
 configured maximum arity remains 3. For example, if a motif already uses
 \texttt{A0}, \texttt{A1}, and \texttt{A2}, the suffix can add \texttt{A3}
-through \texttt{A6}. The same suffix is added to both Petri-net variants in the
+through \texttt{A8}. The same suffix is added to both Petri-net variants in the
 family.
 
 \subsection{Step 3: Build Two Petri-Net Variants}
@@ -731,6 +742,16 @@ variants, so it becomes exactly two rows:
     \text{Petri-net variant 1}, e).
 \end{aligned}
 \]
+Before these rows are stored, the generator scans the event-log view in its
+persisted trace order and assigns \texttt{A0}, \texttt{A1}, and so on when each
+activity first appears. Family-alphabet labels not observed in that finite view
+are appended in stable tree/trace-pool order. The resulting map is applied to
+the process tree, every trace event, and every visible Petri-net transition;
+trace-edit provenance is relabeled by the same map. Consequently, all
+modalities in a row use exactly the label scheme that an external event log
+receives at inference time. The row records
+\texttt{label\_scheme=first\_seen\_per\_log\_view} in its metadata.
+
 Figure~\ref{fig:app-flatten-family} makes the shared and variant-specific fields
 explicit.
 
@@ -749,8 +770,8 @@ explicit.
     fill=teal!7},
   flow/.style={-{Latex[length=2mm]}, thick, draw=black!65}
 ]
-  \node[shared] (shared) {\textbf{Shared family fields}\\
-    canonical process tree $T$\\
+  \node[shared] (shared) {\textbf{Shared relabeled fields}\\
+    process tree $T$\\
     event-log view $L$\\
     equivalence identifier $e$};
   \node[variant, above right=1mm and 13mm of shared] (gzero)
@@ -767,9 +788,9 @@ explicit.
   \draw[flow] (gzero) -- (rowzero);
   \draw[flow] (gone) -- (rowone);
 \end{tikzpicture}
-\caption{Flattening one behavior family into two training rows. The process
-tree, event-log view, and equivalence identifier are duplicated; only the
-Petri-net graph changes.}
+\caption{Flattening one behavior family into two training rows after applying
+the event-log view's first-seen activity map. The process tree, event-log view,
+and equivalence identifier are duplicated; only the Petri-net graph changes.}
 \Description{Shared process-tree, event-log, and equivalence fields branch to
 two Petri-net variants, which produce two corresponding training rows.}
 \label{fig:app-flatten-family}
@@ -799,7 +820,7 @@ completed flattened rows with a per-split progress bar on standard error;
 At training time, each row is converted into tensors:
 \begin{itemize}
   \item the process tree becomes a prefix token sequence with explicit arity
-        tokens;
+        tokens, preserving its stored first-seen activity labels;
   \item the generated traces become padded activity-token sequences;
   \item the Petri net becomes node-type indices, transition-label ids, marking
         features, and two adjacency matrices.
