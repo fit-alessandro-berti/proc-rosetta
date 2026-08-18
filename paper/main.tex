@@ -55,7 +55,7 @@
 \renewcommand{\shortauthors}{Alessandro Berti et al.}
 
 \begin{abstract}
-Process mining relies on heterogeneous artifacts: event logs record observed behavior, while process trees and Petri nets describe intended or discovered behavior. Methods that connect these artifacts are typically specialized to a particular representation pair and task, which limits reuse across process discovery, comparison, retrieval, and translation. This paper presents \emph{ProcRosetta}, a multimodal neural framework that learns a shared latent space of process behavior for event logs, process trees, and Petri nets. Modality-specific encoders map each artifact into this space, while a shared grammar-masked decoder produces a grammar-valid process tree whenever decoding terminates, after which the process tree can be converted deterministically into a sound Petri net. The framework is trained on synthetic behaviorally paired views using complementary reconstruction, cross-modal translation, latent-alignment, contrastive, and variational objectives. We contribute the multimodal architecture, a controlled data-generation and training pipeline, and an assessment spanning decode validity, process discovery quality, behavior-aligned geometry, and cross-modal retrieval. Held-out results show that ProcRosetta reliably produces well-formed models, retains meaningful behavioral information during translation, and learns cross-modal neighborhoods that reflect process relationships. Specialized deterministic methods remain stronger on some tasks, positioning ProcRosetta as a reusable representation and translation layer rather than a replacement for established process mining algorithms. The implementation, data, and evaluation suite are publicly available.
+Process mining uses heterogeneous artifacts: event logs record observed behavior, while process trees and Petri nets describe behavior. We present \emph{ProcRosetta}, a multimodal neural framework that embeds all three artifacts in a shared process-behavior space. Modality-specific encoders map artifacts into this space; a shared grammar-masked decoder produces a grammar-valid process tree whenever decoding terminates, which converts deterministically into a sound Petri net. Training uses synthetic behaviorally paired views with reconstruction, cross-modal translation, latent-alignment, contrastive, and variational objectives. Our assessment covers decode validity, process discovery, behavior-aligned geometry, and cross-modal retrieval. Held-out results show well-formed outputs, meaningful behavioral retention during translation, and cross-modal neighborhoods that reflect process relationships. Specialized deterministic methods remain stronger on some tasks, positioning ProcRosetta as a reusable representation and translation layer rather than their replacement. The implementation, data, and evaluation suite are public.
 \end{abstract}
 
 \ccsdesc[500]{Information systems~Business process management}
@@ -78,7 +78,7 @@ ProcRosetta treats event logs, process trees, and Petri nets as three views of o
 \begin{figure*}
   \centering
   \includegraphics[width=0.92\textwidth]{figures/outline.png}
-  \caption{ProcRosetta aligns encoded event logs, process trees, and Petri nets in one latent space. A shared grammar-masked decoder realizes process-tree reconstruction, event-log-to-process-tree process discovery, and Petri-net-to-process-tree translation; completed process trees convert deterministically to Petri nets.}
+  \caption{ProcRosetta aligns event logs, process trees, and Petri nets in one latent space. A shared grammar-masked decoder supports reconstruction and cross-modal translation; completed process trees convert deterministically to Petri nets.}
   \Description{System diagram with three encoders for event logs, process trees, and Petri nets feeding a shared latent space. A grammar-masked decoder maps the latent representation to a process tree, which can be converted to a Petri net.}
   \label{fig:outline}
 \end{figure*}
@@ -179,7 +179,7 @@ An \emph{accepting labeled Petri net}~\cite{vanDerAalst2016} is a tuple $\mathit
 \end{scope}
 \end{tikzpicture}%
 }
-\caption{One synthetic paired triple: a generated process tree $T = \operatorname{SEQ}(\mathrm{A0}, \operatorname{XOR}(\mathrm{A1},\mathrm{A2}))$ (a) is serialized as a prefix token sequence with explicit arities (b), simulated into an event log (c; superscripts denote trace frequencies), and deterministically converted into an accepting Petri net (d).}
+\caption{One synthetic paired triple: a generated process tree (a), its prefix serialization (b), simulated event log (c; superscripts are trace frequencies), and deterministic accepting-Petri-net conversion (d).}
 \Description{Four representations of one process: a sequence process tree with an exclusive-choice child, its prefix token sequence, an event log containing traces A0-A1 and A0-A2, and the equivalent accepting Petri net.}
 \label{fig:triple}
 \end{figure}
@@ -204,7 +204,7 @@ The generator uses a fixed random seed and produces three disjoint family-wise s
 Each behavior family contributes two rows with identical process tree and event-log views; only the Petri net graph may differ. Thus, the $1{,}024$-row test split contains $512$ family identifiers, and every row has a behaviorally equivalent companion in row-level neighborhood and retrieval analyses. Family-wise splitting prevents the two rows of one generated family from crossing splits, but it does not enforce visible-language uniqueness across independently generated families. Ordinary loop families use isomorphic node renaming for the alternate Petri view, whereas non-isomorphic routing variations occur in the controlled families; within-family Petri agreement therefore reflects identifier invariance throughout and invariance to alternative routing only for a subset.
 
 \begin{table}
-\caption{Configured synthetic dataset splits for the weighted, loop-enabled data run (rows are paired triples; behavior families group equivalent rows; fixed seed). Motif allocation lists ordinary / duplicate--silent / concurrency--interleaving / non-free-choice families.}
+\caption{Weighted, loop-enabled synthetic splits (fixed seed). Motif allocation lists ordinary / duplicate--silent / concurrency--interleaving / non-free-choice families.}
 \label{tab:dataset}
 \small
 \begin{tabular}{lrrlrrr}
@@ -318,7 +318,7 @@ Trainable parameters & 443{,}849 & Early stopping & patience 4 of max.\ 100 epoc
 \centering
 \includegraphics[width=\linewidth]{figures/training_curves.pdf}
 \captionsetup{hypcap=false}
-\captionof{figure}{Training behavior. (a)~Training and validation loss per epoch; the dashed line marks the learning-rate halving entering epoch 30, the dotted line the best-validation checkpoint (epoch 35), and the cross the final checkpoint (epoch 36) used for the test report. (b)~The principal validation loss components decrease jointly.}
+\captionof{figure}{Training behavior. (a)~Training and validation loss; the dashed line marks learning-rate halving, the dotted line the best checkpoint (epoch 35), and the cross the tested final checkpoint (epoch 36). (b)~Principal validation-loss components.}
 \Description{Two line charts over 36 epochs. Training and validation losses generally decrease, with the lowest validation loss at epoch 35 and the reported final checkpoint at epoch 36. The principal validation loss components also decrease over training.}
 \label{fig:training}
 \end{minipage}
@@ -335,7 +335,7 @@ Table~\ref{tab:decode} evaluates greedy decoding from all four latent sources. E
 \centering
 \begin{minipage}[t]{0.58\textwidth}
 \centering
-\caption{Greedy-decode quality on 1{,}024 test rows. \emph{Norm.\ edit}: length-normalized token edit distance. Behavioral $L_1$: each 128-trace source event log versus 128 PM4Py stochastic top-down playout traces, without per-decode reseeding. Rates and normalized-edit means use all rows. Nontermination alone does not force Exact failure: it is evaluated if the sequence parses; otherwise it fails. Behavioral $L_1$ averages evaluable rows. Lower is better for both distances.}
+\caption{Greedy decoding on 1{,}024 test rows. \emph{Norm.\ edit}: length-normalized token edit distance. Behavioral $L_1$ compares each source log with 128 stochastic PM4Py playout traces. Rates and edit means use all rows; behavioral $L_1$ uses evaluable rows. A parseable nonterminated sequence may still be exact. Lower is better.}
 \label{tab:decode}
 \scriptsize
 \resizebox{\linewidth}{!}{%
@@ -352,7 +352,7 @@ $\mu_{\mathit{fused}}$ (mean of the three) & 100\% & 100\% & 75.0\% & \textbf{0.
 \end{minipage}\hfill
 \begin{minipage}[t]{0.39\textwidth}
 \centering
-\caption{Process discovery quality on the 1{,}024 test event logs. ``Model'' is the percentage for which a process tree is returned. Fitness, precision, and F1 average the evaluable subset (96.5\% for ProcRosetta; 100\% for Inductive Miner).}
+\caption{Discovery on 1{,}024 test logs. ``Model'' is process-tree return rate; other metrics use evaluable rows (96.5\% / 100\%).}
 \label{tab:discovery}
 \scriptsize
 \resizebox{\linewidth}{!}{%
@@ -467,7 +467,7 @@ Figure~\ref{fig:discoveryexamples} compares two supplied, out-of-distribution ev
 A behavioral latent space should correlate with behavioral distance. We define the latter as the mean of three $L_1$ distances between empirical trace-variant, boundary-aware directly-follows~\cite{vanDerAalst2019DFG}, and trace-length distributions, each in $[0,2]$. Over all $523{,}776$ test-event-log pairs it averages $1.2128$ (range $0.0000$ to $1.9980$). Embeddings are scored by (i)~Spearman $\rho$ between cosine and behavioral distances, (ii)~mean behavioral distance to the embedding nearest neighbor (NN behavior; lower is better), and (iii)~improvement over the random-pair average (higher is better).
 
 \begin{table}
-\caption{Embedding quality on the test split, ranked by Spearman correlation between embedding distance and behavioral distance over all 523{,}776 pairs. \emph{NN behavior}: mean behavioral distance to the nearest embedding neighbor; \emph{Improv.}: improvement over the random-pair mean (1.213). $\bullet$: learned; $\circ$: deterministic features; $\dagger$: shares abstractions with the behavioral-distance definition itself.}
+\caption{Embedding quality over all 523{,}776 test pairs, ranked by behavioral-distance Spearman correlation. \emph{NN behavior}: nearest-neighbor behavioral distance; \emph{Improv.}: improvement over the random-pair mean (1.213). $\bullet$: learned; $\circ$: deterministic; $\dagger$: overlaps the distance definition.}
 \label{tab:embedding}
 \small
 \begin{tabular}{llrrrr}
@@ -552,7 +552,7 @@ coordinates {(-0.467942,-0.994468) (-0.931072,-0.028958) (-0.634011,-0.336283) (
 \addlegendentry{Process tree}
 \end{axis}
 \end{tikzpicture}
-\caption{Joint PCA of $L_2$-normalized latent means for 18 distinct held-out processes. Colors and shapes mark modalities; gray triangles join matching views. The subset was fixed before inspecting embeddings.}
+\caption{Joint PCA of $L_2$-normalized latent means for 18 held-out processes. Marks denote modalities; gray triangles join matching views.}
 \Description{Scatter plot of the first two principal components for 18 held-out processes. Each process contributes nearby event-log, Petri-net, and process-tree points connected by a gray triangle; different processes are generally farther apart.}
 \label{fig:embeddingpca}
 \end{figure}
@@ -561,7 +561,7 @@ coordinates {(-0.467942,-0.994468) (-0.931072,-0.028958) (-0.634011,-0.336283) (
 \centering
 \begin{minipage}[t]{0.62\textwidth}
 \centering
-\caption{Geometry agreement with the fused ProcRosetta embedding: pairwise-distance correlation, top-1 nearest-neighbor overlap, and deltas versus the fused reference. Negative $\Delta$ NN behavior means better neighborhoods.}
+\caption{Agreement with the fused embedding: distance correlation, top-1 neighbor overlap, and deltas versus fusion. Negative $\Delta$ NN behavior is better.}
 \label{tab:agreement}
 \scriptsize
 \resizebox{\linewidth}{!}{%
@@ -584,7 +584,7 @@ Petri structural counts             & 0.490 & 0.257 & $-0.106$ & $+0.000$ \\
 \end{minipage}\hfill
 \begin{minipage}[t]{0.35\textwidth}
 \centering
-\caption{Cross-modal retrieval on the test split: 1{,}024 target candidates are ranked by cosine similarity. The two rows of a behavior family are distinct indexed targets, so retrieving the equivalent companion is not an exact-row hit. Ties follow the index order returned by NumPy's descending \texttt{argsort}, without fractional or family-aware credit. Chance: top-1 $=0.1\%$, mean rank $\approx512$.}
+\caption{Retrieval among 1{,}024 test candidates. Companion rows receive no credit; ties follow descending \texttt{argsort}. Chance: top-1 $=0.1\%$, mean rank $\approx512$.}
 \label{tab:retrieval}
 \scriptsize
 \resizebox{\linewidth}{!}{%
