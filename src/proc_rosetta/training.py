@@ -5,6 +5,7 @@ from collections import defaultdict
 from dataclasses import asdict
 from dataclasses import dataclass
 from pathlib import Path
+import random
 import sys
 from time import perf_counter
 
@@ -318,6 +319,7 @@ def train_from_data_dir(
     train_config: TrainConfig | None = None,
     show_progress: bool = True,
     metrics_csv_path: str | Path = "checkpoints/training_metrics.csv",
+    resume: bool = False,
 ) -> tuple[ProcRosettaModel, list[dict[str, object]]]:
     train_config = train_config or TrainConfig()
     torch.manual_seed(train_config.seed)
@@ -342,7 +344,16 @@ def train_from_data_dir(
         f"curriculum_phase={synthetic_config.curriculum_phase}",
         enabled=show_progress,
     )
-    model = build_model(train_config, synthetic_config, device)
+    resume_checkpoint: dict[str, object] | None = None
+    if resume:
+        model, resume_checkpoint = load_checkpoint(checkpoint_path, device)
+        validate_resume_configuration(
+            checkpoint=resume_checkpoint,
+            train_config=train_config,
+            synthetic_config=synthetic_config,
+        )
+    else:
+        model = build_model(train_config, synthetic_config, device)
     debug("Loading training split", enabled=show_progress)
     train_loader = build_jsonl_dataloader(
         split_samples_path(data_dir, "training"),
@@ -383,11 +394,44 @@ def train_from_data_dir(
     history: list[dict[str, object]] = []
     best_validation_loss = float("inf")
     epochs_without_improvement = 0
+    start_epoch = 1
+    if resume_checkpoint is not None:
+        completed_epoch = int(resume_checkpoint.get("epoch", 0))
+        history = [dict(row) for row in resume_checkpoint.get("history", [])]
+        if history and int(history[-1].get("epoch", -1)) != completed_epoch:
+            raise ValueError(
+                "checkpoint history does not end at its completed epoch: "
+                f"epoch={completed_epoch}, history_epoch={history[-1].get('epoch')}"
+            )
+        start_epoch = completed_epoch + 1
+        stored_best = resume_checkpoint.get("best_validation_loss")
+        if stored_best is not None:
+            best_validation_loss = float(stored_best)
+        if history:
+            epochs_without_improvement = int(
+                history[-1].get("epochs_without_improvement", 0)
+            )
+        restore_training_state(
+            checkpoint=resume_checkpoint,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            train_loader=train_loader,
+            device=device,
+            completed_epoch=completed_epoch,
+            history=history,
+            seed=train_config.seed,
+            show_progress=show_progress,
+        )
+        debug(
+            f"Resuming from {checkpoint_path} after epoch {completed_epoch}; "
+            f"target epoch={train_config.epochs}",
+            enabled=show_progress,
+        )
     best_checkpoint_path = best_checkpoint_for(checkpoint_path)
     metrics_csv_path = Path(metrics_csv_path)
-    init_metrics_csv(metrics_csv_path)
+    write_metrics_csv(metrics_csv_path, history)
     debug(f"Per-epoch metrics CSV: {metrics_csv_path}", enabled=show_progress)
-    for epoch in range(1, train_config.epochs + 1):
+    for epoch in range(start_epoch, train_config.epochs + 1):
         epoch_start = perf_counter()
         debug(f"Starting epoch {epoch}/{train_config.epochs}", enabled=show_progress)
         training_metrics = train_epoch(
@@ -457,6 +501,10 @@ def train_from_data_dir(
             epoch=epoch,
             best_validation_loss=best_validation_loss,
             is_best=False,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            train_loader=train_loader,
+            device=device,
         )
         if improved:
             save_checkpoint(
@@ -468,6 +516,10 @@ def train_from_data_dir(
                 epoch=epoch,
                 best_validation_loss=best_validation_loss,
                 is_best=True,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                train_loader=train_loader,
+                device=device,
             )
         append_metrics_csv(metrics_csv_path, row)
         debug(
@@ -602,6 +654,19 @@ def init_metrics_csv(path: str | Path) -> None:
         writer.writeheader()
 
 
+def write_metrics_csv(path: str | Path, rows: list[dict[str, object]]) -> None:
+    """Synchronize metrics with checkpoint history without leaving a partial file."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f".{path.name}.tmp")
+    with temporary_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=metrics_csv_columns())
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(flatten_epoch_row(row))
+    temporary_path.replace(path)
+
+
 def append_metrics_csv(path: str | Path, row: dict[str, object]) -> None:
     flat = flatten_epoch_row(row)
     with Path(path).open("a", newline="", encoding="utf-8") as handle:
@@ -640,22 +705,204 @@ def save_checkpoint(
     epoch: int,
     best_validation_loss: float | None = None,
     is_best: bool = False,
+    optimizer: torch.optim.Optimizer | None = None,
+    scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau | None = None,
+    train_loader: DataLoader | None = None,
+    device: torch.device | None = None,
 ) -> None:
     checkpoint_path = Path(checkpoint_path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 3,
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "train_config": asdict(train_config),
+        "synthetic_config": synthetic_config.to_dict(),
+        "history": history,
+        "best_validation_loss": best_validation_loss,
+        "is_best": is_best,
+    }
+    if optimizer is not None and scheduler is not None and train_loader is not None:
+        payload.update(
+            {
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "rng_state": capture_rng_state(device or torch.device("cpu")),
+                "training_loader_state": capture_training_loader_state(train_loader),
+            }
+        )
+    temporary_path = checkpoint_path.with_name(f".{checkpoint_path.name}.tmp")
     torch.save(
-        {
-            "version": 2,
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "train_config": asdict(train_config),
-            "synthetic_config": synthetic_config.to_dict(),
-            "history": history,
-            "best_validation_loss": best_validation_loss,
-            "is_best": is_best,
-        },
-        checkpoint_path,
+        payload,
+        temporary_path,
     )
+    temporary_path.replace(checkpoint_path)
+
+
+def validate_resume_configuration(
+    checkpoint: dict[str, object],
+    train_config: TrainConfig,
+    synthetic_config: SyntheticConfig,
+) -> None:
+    checkpoint_train_config = train_config_from_checkpoint(checkpoint, train_config.device)
+    checkpoint_values = asdict(checkpoint_train_config)
+    requested_values = asdict(train_config)
+    differences = {
+        name: (checkpoint_values[name], requested_values[name])
+        for name in checkpoint_values
+        if name not in {"epochs", "device"}
+        and checkpoint_values[name] != requested_values[name]
+    }
+    if differences:
+        formatted = ", ".join(
+            f"{name}: checkpoint={old!r}, requested={new!r}"
+            for name, (old, new) in sorted(differences.items())
+        )
+        raise ValueError(f"resume configuration differs from checkpoint ({formatted})")
+
+    checkpoint_synthetic = SyntheticConfig.from_dict(checkpoint["synthetic_config"])
+    if checkpoint_synthetic.to_dict() != synthetic_config.to_dict():
+        raise ValueError("resume data configuration differs from checkpoint synthetic_config")
+
+
+def train_config_from_checkpoint(
+    checkpoint: dict[str, object], device: torch.device | str
+) -> TrainConfig:
+    train_config_data = asdict(TrainConfig())
+    train_config_data.update(dict(checkpoint["train_config"]))
+    train_config_data["device"] = str(device)
+    return TrainConfig(**train_config_data)
+
+
+def capture_rng_state(device: torch.device) -> dict[str, object]:
+    state: dict[str, object] = {
+        "device_type": device.type,
+        "python": random.getstate(),
+        "torch_cpu": torch.get_rng_state(),
+    }
+    if device.type == "cuda" and torch.cuda.is_available():
+        state["torch_cuda"] = torch.cuda.get_rng_state_all()
+    elif device.type == "mps" and torch.backends.mps.is_available():
+        state["torch_mps"] = torch.mps.get_rng_state()
+    return state
+
+
+def restore_rng_state(state: dict[str, object], device: torch.device) -> bool:
+    python_state = state.get("python")
+    cpu_state = state.get("torch_cpu")
+    if python_state is not None:
+        random.setstate(python_state)
+    if isinstance(cpu_state, torch.Tensor):
+        torch.set_rng_state(cpu_state.cpu())
+
+    same_device_type = state.get("device_type") == device.type
+    if device.type == "cuda" and torch.cuda.is_available():
+        cuda_states = state.get("torch_cuda")
+        if isinstance(cuda_states, list) and all(
+            isinstance(item, torch.Tensor) for item in cuda_states
+        ):
+            torch.cuda.set_rng_state_all([item.cpu() for item in cuda_states])
+        else:
+            same_device_type = False
+    elif device.type == "mps" and torch.backends.mps.is_available():
+        mps_state = state.get("torch_mps")
+        if isinstance(mps_state, torch.Tensor):
+            torch.mps.set_rng_state(mps_state.cpu())
+        else:
+            same_device_type = False
+    return same_device_type and python_state is not None and isinstance(cpu_state, torch.Tensor)
+
+
+def capture_training_loader_state(train_loader: DataLoader) -> dict[str, object]:
+    state: dict[str, object] = {}
+    batch_sampler = getattr(train_loader, "batch_sampler", None)
+    if hasattr(batch_sampler, "epoch"):
+        state["batch_sampler_epoch"] = int(batch_sampler.epoch)
+    collator_rng = getattr(getattr(train_loader, "collate_fn", None), "rng", None)
+    if isinstance(collator_rng, random.Random):
+        state["collator_rng"] = collator_rng.getstate()
+    return state
+
+
+def restore_training_loader_state(
+    train_loader: DataLoader, state: dict[str, object], completed_epoch: int
+) -> bool:
+    restored = True
+    batch_sampler = getattr(train_loader, "batch_sampler", None)
+    if hasattr(batch_sampler, "epoch"):
+        batch_sampler.epoch = int(state.get("batch_sampler_epoch", completed_epoch))
+        restored = "batch_sampler_epoch" in state
+    collator_rng = getattr(getattr(train_loader, "collate_fn", None), "rng", None)
+    if isinstance(collator_rng, random.Random):
+        saved_collator_rng = state.get("collator_rng")
+        if saved_collator_rng is not None:
+            collator_rng.setstate(saved_collator_rng)
+        else:
+            restored = False
+    return restored
+
+
+def replay_scheduler_history(
+    scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau,
+    history: list[dict[str, object]],
+) -> None:
+    for row in history:
+        validation = row.get("validation")
+        if isinstance(validation, dict) and "loss" in validation:
+            scheduler.step(float(validation["loss"]))
+
+
+def restore_training_state(
+    *,
+    checkpoint: dict[str, object],
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau,
+    train_loader: DataLoader,
+    device: torch.device,
+    completed_epoch: int,
+    history: list[dict[str, object]],
+    seed: int,
+    show_progress: bool,
+) -> None:
+    optimizer_state = checkpoint.get("optimizer_state_dict")
+    scheduler_state = checkpoint.get("scheduler_state_dict")
+    if (optimizer_state is None) != (scheduler_state is None):
+        raise ValueError("checkpoint contains incomplete optimizer/scheduler resume state")
+
+    if optimizer_state is None:
+        replay_scheduler_history(scheduler, history)
+        batch_sampler = getattr(train_loader, "batch_sampler", None)
+        if hasattr(batch_sampler, "epoch"):
+            batch_sampler.epoch = completed_epoch
+        torch.manual_seed(seed + completed_epoch)
+        if device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed + completed_epoch)
+        debug(
+            "Legacy checkpoint has no optimizer, scheduler, RNG, or augmentation state; "
+            "continuing from its model weights with a freshly initialized optimizer.",
+            enabled=show_progress,
+        )
+        return
+
+    optimizer.load_state_dict(optimizer_state)
+    scheduler.load_state_dict(scheduler_state)
+    rng_state = checkpoint.get("rng_state")
+    loader_state = checkpoint.get("training_loader_state")
+    rng_restored = isinstance(rng_state, dict) and restore_rng_state(rng_state, device)
+    loader_restored = isinstance(loader_state, dict) and restore_training_loader_state(
+        train_loader, loader_state, completed_epoch
+    )
+    if rng_restored and loader_restored:
+        debug(
+            "Restored optimizer, scheduler, RNG, and data-loader state.",
+            enabled=show_progress,
+        )
+    else:
+        debug(
+            "Restored optimizer and scheduler; exact RNG/data-loader continuation was not "
+            "available for this device.",
+            enabled=show_progress,
+        )
 
 
 def load_checkpoint(
@@ -667,9 +914,7 @@ def load_checkpoint(
         raise FileNotFoundError(f"checkpoint does not exist: {checkpoint_path}")
     torch_device = resolve_device(device)
     checkpoint = torch.load(checkpoint_path, map_location=torch_device)
-    train_config_data = dict(checkpoint["train_config"])
-    train_config_data["device"] = str(torch_device)
-    train_config = TrainConfig(**train_config_data)
+    train_config = train_config_from_checkpoint(checkpoint, torch_device)
     synthetic_config = SyntheticConfig.from_dict(checkpoint["synthetic_config"])
     model = build_model(train_config, synthetic_config, torch_device)
     incompatible = model.load_state_dict(checkpoint["model_state_dict"], strict=False)

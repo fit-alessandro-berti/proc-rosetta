@@ -270,6 +270,22 @@ checkpoints/proc_rosetta.best.pt  # best validation-loss epoch
 checkpoints/training_metrics.csv  # per-epoch metrics
 ```
 
+Resume an interrupted run from the latest completed epoch:
+
+```bash
+./train.py \
+  --data-dir data \
+  --checkpoint checkpoints/proc_rosetta.pt \
+  --epochs 100 \
+  --resume
+```
+
+With `--resume`, `--epochs` is the total target epoch count. Resume uses the
+checkpoint's accumulated history and training state, and the metrics CSV is
+synchronized with that history before training continues. Checkpoints created
+before resume-state support can still be continued from their model weights,
+but their optimizer momentum and exact random state cannot be recovered.
+
 Useful training controls:
 
 ```bash

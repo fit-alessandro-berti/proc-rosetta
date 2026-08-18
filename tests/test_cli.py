@@ -1,6 +1,7 @@
 import json
 import csv
 import pytest
+import torch
 
 from proc_rosetta.cli import main
 from proc_rosetta.cli import build_parser, split_counts_from_args
@@ -41,6 +42,7 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert train_args.label_smoothing == 0.08
     assert train_args.early_stopping_patience == 4
     assert train_args.activity_remap_probability == 0.5
+    assert not train_args.resume
     assert test_args.device == default_device()
     assert not test_args.quiet
     assert test_args.conformance_method == "token_based_replay"
@@ -279,6 +281,84 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert rows[0]["epoch"] == "1"
     assert rows[0]["training_loss"]
     assert rows[0]["validation_loss"]
+
+    saved = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    assert saved["version"] == 3
+    assert "optimizer_state_dict" in saved
+    assert "scheduler_state_dict" in saved
+    assert "rng_state" in saved
+    assert "training_loader_state" in saved
+
+    # Version-2 checkpoints, including the repository's interrupted run, have
+    # weights and history but no exact optimizer/RNG continuation state.
+    for key in (
+        "optimizer_state_dict",
+        "scheduler_state_dict",
+        "rng_state",
+        "training_loader_state",
+    ):
+        saved.pop(key)
+    saved["version"] = 2
+    torch.save(saved, checkpoint)
+
+    assert main(
+        [
+            "train",
+            "--data-dir",
+            str(data_dir),
+            "--checkpoint",
+            str(checkpoint),
+            "--metrics-csv",
+            str(metrics_csv),
+            "--epochs",
+            "2",
+            "--batch-size",
+            "1",
+            "--hidden-dim",
+            "16",
+            "--latent-dim",
+            "8",
+            "--resume",
+        ]
+    ) == 0
+    captured = capsys.readouterr()
+    assert "Legacy checkpoint has no optimizer" in captured.err
+    assert "Starting epoch 2/2" in captured.err
+    assert json.loads(captured.out.strip().splitlines()[-1])["epoch"] == 2
+    with metrics_csv.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [row["epoch"] for row in rows] == ["1", "2"]
+    resumed = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    assert resumed["epoch"] == 2
+    assert len(resumed["history"]) == 2
+    assert "optimizer_state_dict" in resumed
+
+    assert main(
+        [
+            "train",
+            "--data-dir",
+            str(data_dir),
+            "--checkpoint",
+            str(checkpoint),
+            "--metrics-csv",
+            str(metrics_csv),
+            "--epochs",
+            "3",
+            "--batch-size",
+            "1",
+            "--hidden-dim",
+            "16",
+            "--latent-dim",
+            "8",
+            "--resume",
+        ]
+    ) == 0
+    captured = capsys.readouterr()
+    assert "Restored optimizer, scheduler, RNG, and data-loader state" in captured.err
+    assert "Starting epoch 3/3" in captured.err
+    with metrics_csv.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [row["epoch"] for row in rows] == ["1", "2", "3"]
 
     assert main(
         [

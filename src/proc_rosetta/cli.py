@@ -116,6 +116,14 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--lr-factor", type=float, default=0.5)
     train.add_argument("--min-lr", type=float, default=1e-5)
     train.add_argument("--metrics-csv", default="checkpoints/training_metrics.csv")
+    train.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "continue from --checkpoint; --epochs is the total target epoch count, "
+            "not the number of additional epochs"
+        ),
+    )
     train.add_argument("--seed", type=int, default=13)
     train.add_argument(
         "--device",
@@ -279,6 +287,7 @@ def run_train(args: argparse.Namespace) -> int:
         train_config=train_config,
         show_progress=not args.quiet,
         metrics_csv_path=args.metrics_csv,
+        resume=args.resume,
     )
     for row in history:
         print(json.dumps(round_nested_metrics(row), sort_keys=True))
