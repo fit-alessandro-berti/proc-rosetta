@@ -45,6 +45,23 @@ class PetriGraph:
             "final_marking": list(self.final_marking),
         }
 
+    def relabel(self, mapping: dict[str, str]) -> "PetriGraph":
+        """Return a copy with visible transition labels renamed through ``mapping``."""
+
+        if not mapping:
+            return self
+        return PetriGraph(
+            node_types=self.node_types,
+            node_names=self.node_names,
+            transition_labels=tuple(
+                None if label is None else mapping.get(label, label)
+                for label in self.transition_labels
+            ),
+            edges=self.edges,
+            initial_marking=self.initial_marking,
+            final_marking=self.final_marking,
+        )
+
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "PetriGraph":
         return PetriGraph(

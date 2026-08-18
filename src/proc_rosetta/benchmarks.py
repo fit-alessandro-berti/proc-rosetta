@@ -864,7 +864,8 @@ def evaluate_single_decode(
 ) -> dict[str, object]:
     tokenizer = model.tree_tokenizer
     decoded_tokens = trim_tree_token_sequence(token_ids, tokenizer)
-    target_tokens = tokenizer.encode_tree(sample.tree)
+    # Match the collator: targets keep the stored first-seen labels.
+    target_tokens = tokenizer.encode_tree(sample.tree, canonicalize=False)
     normalized_denominator = max(len(target_tokens), len(decoded_tokens), 1)
     token_edit_distance = levenshtein_distance(target_tokens, decoded_tokens)
     row: dict[str, object] = {

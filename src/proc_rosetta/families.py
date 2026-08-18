@@ -512,18 +512,92 @@ def generate_behavior_family(
     )
 
 
-def flatten_behavior_family(family: BehaviorFamily) -> list[Any]:
+def first_seen_activity_mapping(
+    traces: Sequence[Sequence[str]],
+    alphabet: Sequence[str],
+    max_activities: int,
+) -> dict[str, str]:
+    """Assign ``A0, A1, ...`` in first-occurrence order over ``traces``.
+
+    This mirrors exactly how external event logs are canonicalized at inference
+    time, so training examples carry the same labeling scheme the encoder will
+    see for real logs. Labels from ``alphabet`` (the family's model labels) that
+    never occur in the traces are appended afterwards in stable order. Labels
+    outside ``alphabet`` (noise insertions such as ``__OOD__``) only consume an
+    index when capacity remains after every alphabet label got one, so a noisy
+    view can never push a model label out of the tokenizer range.
+    """
+
+    alphabet_set = set(alphabet)
+    mapping: dict[str, str] = {}
+    unassigned_alphabet = len(alphabet_set)
+    for trace in traces:
+        for label in trace:
+            if label in mapping:
+                continue
+            if label in alphabet_set:
+                mapping[label] = f"A{len(mapping)}"
+                unassigned_alphabet -= 1
+            elif len(mapping) < max_activities - unassigned_alphabet:
+                mapping[label] = f"A{len(mapping)}"
+    for label in alphabet:
+        if label not in mapping and len(mapping) < max_activities:
+            mapping[label] = f"A{len(mapping)}"
+    return mapping
+
+
+def _relabel_trace_edits(
+    trace_edits: tuple[tuple[TraceEdit, ...], ...],
+    mapping: dict[str, str],
+) -> tuple[tuple[TraceEdit, ...], ...]:
+    return tuple(
+        tuple(
+            TraceEdit(
+                kind=edit.kind,
+                position=edit.position,
+                old_label=None if edit.old_label is None else mapping.get(edit.old_label, edit.old_label),
+                new_label=None if edit.new_label is None else mapping.get(edit.new_label, edit.new_label),
+            )
+            for edit in edits
+        )
+        for edits in trace_edits
+    )
+
+
+def flatten_behavior_family(
+    family: BehaviorFamily,
+    max_activities: int | None = None,
+) -> list[Any]:
     # Import lazily to avoid the synthetic -> families -> synthetic cycle.
-    from proc_rosetta.synthetic import ProcessSample
+    from proc_rosetta.synthetic import DEFAULT_MAX_ACTIVITIES, ProcessSample
+
+    if max_activities is None:
+        max_activities = DEFAULT_MAX_ACTIVITIES
+    # DFS order fixes a stable extension order for tree labels missing from a view.
+    tree_alphabet = tuple(dict.fromkeys(family.canonical_tree.activity_labels()))
+    pool_alphabet = tuple(
+        sorted({label for trace in family.clean_trace_pool for label in trace})
+    )
+    alphabet = tuple(
+        dict.fromkeys((*tree_alphabet, *pool_alphabet))
+    )
 
     rows: list[ProcessSample] = []
     for log_view in family.log_views:
+        # Relabel every modality of this view with the labels an external log
+        # would receive: A0, A1, ... in first-seen trace order.
+        mapping = first_seen_activity_mapping(log_view.traces, alphabet, max_activities)
+        view_tree = family.canonical_tree.relabel(mapping)
+        view_traces = tuple(
+            tuple(mapping.get(label, label) for label in trace) for trace in log_view.traces
+        )
+        view_edits = _relabel_trace_edits(log_view.trace_edits, mapping)
         for representation_slot, variant in enumerate(family.model_variants):
             rows.append(
                 ProcessSample(
-                    tree=family.canonical_tree,
-                    traces=log_view.traces,
-                    petri_graph=variant.petri_graph,
+                    tree=view_tree,
+                    traces=view_traces,
+                    petri_graph=variant.petri_graph.relabel(mapping),
                     equivalence_id=family.behavior_id,
                     model_variant_id=variant.variant_id,
                     log_view_id=log_view.log_view_id,
@@ -533,9 +607,10 @@ def flatten_behavior_family(family: BehaviorFamily) -> list[Any]:
                         **family.metadata,
                         "representation_slot": representation_slot,
                         "sampling_mode": log_view.sampling_mode,
+                        "label_scheme": "first_seen_per_log_view",
                         "trace_edits": [
                             [edit.to_dict() for edit in trace_edits]
-                            for trace_edits in log_view.trace_edits
+                            for trace_edits in view_edits
                         ],
                         "observation_quality": (
                             "noisy" if any(log_view.trace_edits) else log_view.sampling_mode
@@ -595,7 +670,10 @@ def generate_family_samples(
                 and family.equivalence_certificate.status != "exact"
             ):
                 continue
-            family_rows = flatten_behavior_family(family)
+            family_rows = flatten_behavior_family(
+                family,
+                max_activities=int(getattr(config, "max_activities", 30)),
+            )
             accepted_rows = family_rows[: count - len(rows)]
             rows.extend(accepted_rows)
             if progress_update is not None:

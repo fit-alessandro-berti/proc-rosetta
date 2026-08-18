@@ -4,15 +4,15 @@
   "max_activities": 30,
   "max_arity": 3,
   "curriculum_phase": 3,
-  "leaf_probability": 0.65,
-  "motif_context_size": 4,
+  "leaf_probability": 0.55,
+  "motif_context_size": 6,
   "min_tree_depth": 4,
   "min_tree_size": 20,
   "motifs": {
-    "ordinary_tree": 0.25,
-    "duplicate_vs_silent": 0.25,
-    "concurrent_vs_interleaved": 0.25,
-    "m_nonfreechoice": 0.25
+    "ordinary_tree": 0.55,
+    "duplicate_vs_silent": 0.15,
+    "concurrent_vs_interleaved": 0.15,
+    "m_nonfreechoice": 0.15
   },
   "class_coverage": {
     "mode": "strict",
@@ -56,5 +56,6 @@
     "exact_language_max_states": 5000,
     "exact_language_max_traces": 10000,
     "bounded_visible_length": 32
-  }
+  },
+  "min_activities": 8
 }

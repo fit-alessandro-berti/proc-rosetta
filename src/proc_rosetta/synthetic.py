@@ -15,12 +15,13 @@ DEFAULT_MAX_ACTIVITIES = 30
 class SyntheticConfig:
     max_depth: int = 8
     max_activities: int = DEFAULT_MAX_ACTIVITIES
+    min_activities: int = 8
     max_arity: int = 3
     traces_per_sample: int = 128
     curriculum_phase: int = 3
     reuse_activity_probability: float = 0.15
-    leaf_probability: float = 0.65
-    motif_context_size: int = 4
+    leaf_probability: float = 0.55
+    motif_context_size: int = 6
     min_tree_depth: int = 4
     min_tree_size: int = 20
     generator: str = "behavior_families"
@@ -30,10 +31,10 @@ class SyntheticConfig:
     log_view_modes: tuple[str, ...] = ("uniform_variants", "resampled")
     motif_weights: dict[str, float] = field(
         default_factory=lambda: {
-            "ordinary_tree": 0.25,
-            "duplicate_vs_silent": 0.25,
-            "concurrent_vs_interleaved": 0.25,
-            "m_nonfreechoice": 0.25,
+            "ordinary_tree": 0.55,
+            "duplicate_vs_silent": 0.15,
+            "concurrent_vs_interleaved": 0.15,
+            "m_nonfreechoice": 0.15,
         }
     )
     min_families_per_motif: dict[str, int] = field(
@@ -64,6 +65,7 @@ class SyntheticConfig:
         return {
             "max_depth": self.max_depth,
             "max_activities": self.max_activities,
+            "min_activities": self.min_activities,
             "max_arity": self.max_arity,
             "traces_per_sample": self.traces_per_sample,
             "curriculum_phase": self.curriculum_phase,
@@ -120,12 +122,13 @@ class SyntheticConfig:
         return SyntheticConfig(
             max_depth=int(data.get("max_depth", 8)),
             max_activities=int(data.get("max_activities", DEFAULT_MAX_ACTIVITIES)),
+            min_activities=int(data.get("min_activities", 8)),
             max_arity=int(data.get("max_arity", 3)),
             traces_per_sample=int(logs.get("traces_per_log", data.get("traces_per_sample", 128))),
             curriculum_phase=int(data.get("curriculum_phase", 3)),
             reuse_activity_probability=float(data.get("reuse_activity_probability", 0.15)),
-            leaf_probability=float(data.get("leaf_probability", 0.65)),
-            motif_context_size=int(data.get("motif_context_size", 4)),
+            leaf_probability=float(data.get("leaf_probability", 0.55)),
+            motif_context_size=int(data.get("motif_context_size", 6)),
             min_tree_depth=int(data.get("min_tree_depth", 4)),
             min_tree_size=int(data.get("min_tree_size", 20)),
             generator=str(data.get("generator", "behavior_families")),
@@ -142,10 +145,10 @@ class SyntheticConfig:
                 str(key): float(value) for key, value in motif_weights.items()
             }
             or {
-                "ordinary_tree": 0.25,
-                "duplicate_vs_silent": 0.25,
-                "concurrent_vs_interleaved": 0.25,
-                "m_nonfreechoice": 0.25,
+                "ordinary_tree": 0.55,
+                "duplicate_vs_silent": 0.15,
+                "concurrent_vs_interleaved": 0.15,
+                "m_nonfreechoice": 0.15,
             },
             min_families_per_motif={
                 str(key): int(value)
@@ -326,12 +329,16 @@ def generate_process_tree(config: SyntheticConfig, rng: random.Random | None = N
         max(1, int(config.max_depth) + 1),
     )
     min_size = max(1, int(config.min_tree_size))
+    min_activities = min(
+        max(2, int(getattr(config, "min_activities", 2))),
+        max(2, int(config.max_activities)),
+    )
 
     def contains_loop(node: ProcessTreeNode) -> bool:
         return node.kind is NodeKind.LOOP or any(contains_loop(child) for child in node.children)
 
     def build_once() -> ProcessTreeNode:
-        activity_count = rng.randint(2, config.max_activities)
+        activity_count = rng.randint(min_activities, config.max_activities)
         activity_pool = [f"a{i}" for i in range(activity_count)]
         next_activity = 0
 
@@ -372,19 +379,58 @@ def generate_process_tree(config: SyntheticConfig, rng: random.Random | None = N
         return tree.canonicalize_activity_labels()
 
     best_tree: ProcessTreeNode | None = None
-    best_score: tuple[bool, int, int] | None = None
+    best_score: tuple[bool, int, int, int] | None = None
     for _ in range(100):
         tree = build_once()
         has_required_loop = (not require_loop) or contains_loop(tree)
-        score = (has_required_loop, tree.max_depth(), tree.size())
+        distinct = len(tree.unique_activity_labels())
+        score = (has_required_loop, min(distinct, min_activities), tree.max_depth(), tree.size())
         if best_score is None or score > best_score:
             best_tree = tree
             best_score = score
-        if has_required_loop and tree.max_depth() >= min_depth and tree.size() >= min_size:
+        if (
+            has_required_loop
+            and distinct >= min_activities
+            and tree.max_depth() >= min_depth
+            and tree.size() >= min_size
+        ):
             return tree
 
     assert best_tree is not None
-    return best_tree
+    return _pad_tree_to_min_activities(best_tree, min_activities, rng)
+
+
+def _pad_tree_to_min_activities(
+    tree: ProcessTreeNode,
+    min_activities: int,
+    rng: random.Random,
+) -> ProcessTreeNode:
+    """Guarantee the alphabet floor by weaving unused activities into the tree.
+
+    Retried sampling occasionally falls short of ``min_activities``; rather than
+    rejecting the whole family, extend the best candidate with a short visible
+    sequence of fresh labels so downstream consumers can rely on the floor.
+    """
+
+    used = set(tree.unique_activity_labels())
+    if len(used) >= min_activities:
+        return tree
+    fresh: list[str] = []
+    index = 0
+    while len(used) + len(fresh) < min_activities:
+        label = f"A{index}"
+        index += 1
+        if label in used:
+            continue
+        fresh.append(label)
+    prepend = rng.random() < 0.5
+    for label in fresh:
+        # Fold one label at a time so operator arity stays within tokenizer limits.
+        if prepend:
+            tree = ProcessTreeNode.seq(ProcessTreeNode.activity(label), tree)
+        else:
+            tree = ProcessTreeNode.seq(tree, ProcessTreeNode.activity(label))
+    return tree
 
 
 def generate_sample(
@@ -392,16 +438,28 @@ def generate_sample(
     rng: random.Random | None = None,
     equivalence_id: str | None = None,
 ) -> ProcessSample:
+    from proc_rosetta.families import first_seen_activity_mapping
+
     config = config or SyntheticConfig()
     rng = rng or random.Random()
     tree = generate_process_tree(config, rng)
-    petri = tree_to_petri_net(tree)
     traces = tuple(tuple(trace) for trace in simulate_traces(tree, num_traces=config.traces_per_sample))
+    # Store every modality under the labeling external logs receive at
+    # inference: A0, A1, ... in first-seen trace order.
+    mapping = first_seen_activity_mapping(
+        traces,
+        tuple(dict.fromkeys(tree.activity_labels())),
+        config.max_activities,
+    )
+    tree = tree.relabel(mapping)
+    traces = tuple(tuple(mapping.get(label, label) for label in trace) for trace in traces)
+    petri = tree_to_petri_net(tree)
     return ProcessSample(
         tree=tree,
         traces=traces,
         petri_graph=petri.graph,
         equivalence_id=equivalence_id or f"synthetic-{rng.getrandbits(64):016x}",
+        metadata={"label_scheme": "first_seen_per_log_view"},
     )
 
 

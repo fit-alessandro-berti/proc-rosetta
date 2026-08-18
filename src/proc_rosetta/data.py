@@ -160,7 +160,13 @@ class ProcessBatchCollator:
                 ] = target_activity_id
 
     def _tree_tokens(self, samples: Sequence[ProcessSample]) -> torch.Tensor:
-        encoded = [self.tree_tokenizer.encode_tree(sample.tree) for sample in samples]
+        # Keep the stored first-seen labels: canonicalizing here would restore
+        # tree-DFS label order and desynchronize the tree tokens from the trace
+        # and Petri labels of the same sample.
+        encoded = [
+            self.tree_tokenizer.encode_tree(sample.tree, canonicalize=False)
+            for sample in samples
+        ]
         max_len = min(max(len(row) for row in encoded), self.config.max_tree_tokens)
         out = torch.full((len(samples), max_len), self.tree_tokenizer.pad_id, dtype=torch.long)
         for idx, row in enumerate(encoded):

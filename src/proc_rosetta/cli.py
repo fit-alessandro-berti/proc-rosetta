@@ -35,6 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     sample.add_argument("--seed", type=int, default=13)
     sample.add_argument("--max-depth", type=int, default=8)
     sample.add_argument("--max-activities", type=int, default=DEFAULT_MAX_ACTIVITIES)
+    sample.add_argument("--min-activities", type=int, default=8)
+    sample.add_argument("--leaf-probability", type=float, default=0.55)
     sample.add_argument("--max-arity", type=int, default=3)
     sample.add_argument("--traces-per-sample", type=int, default=128)
     sample.add_argument("--curriculum-phase", type=int, default=3)
@@ -199,6 +201,8 @@ def synthetic_config_from_args(args: argparse.Namespace) -> SyntheticConfig:
     defaults = {
         "max_depth": 8,
         "max_activities": DEFAULT_MAX_ACTIVITIES,
+        "min_activities": 8,
+        "leaf_probability": 0.55,
         "max_arity": 3,
         "traces_per_sample": 128,
         "curriculum_phase": 3,
@@ -210,6 +214,8 @@ def synthetic_config_from_args(args: argparse.Namespace) -> SyntheticConfig:
     for field_name in (
         "max_depth",
         "max_activities",
+        "min_activities",
+        "leaf_probability",
         "max_arity",
         "traces_per_sample",
         "curriculum_phase",

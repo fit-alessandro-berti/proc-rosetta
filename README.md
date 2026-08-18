@@ -51,6 +51,14 @@ one canonical behavior -> shared master trace pool -> one or more log views
 Controlled motifs are embedded in a configurable shared sequence context
 (`motif_context_size`) so matched experiments are not limited to tiny nets.
 
+Motif weights now favor ordinary random trees (`ordinary_tree=0.55`, the three
+controlled motifs `0.15` each) so most training logs carry realistic variant
+diversity and alphabet sizes. `min_activities` (default 8) enforces an
+alphabet floor per behavior, matching real event logs, and every stored
+sample is relabeled to `A0, A1, ...` in first-seen trace order — the same
+canonicalization external XES logs receive at inference time — so the trace,
+tree, and Petri labels of a row always agree with the inference-time scheme.
+
 Each sample contains:
 
 ```text
