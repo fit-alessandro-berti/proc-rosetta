@@ -39,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     sample.add_argument("--leaf-probability", type=float, default=0.55)
     sample.add_argument("--max-arity", type=int, default=3)
     sample.add_argument("--traces-per-sample", type=int, default=128)
+    sample.add_argument("--max-trace-length", type=int, default=128)
     sample.add_argument("--curriculum-phase", type=int, default=3)
     sample.add_argument(
         "--generator",
@@ -55,6 +56,10 @@ def build_parser() -> argparse.ArgumentParser:
     sample.add_argument(
         "--preset",
         choices=[
+            "stage_a_tiny_overfit",
+            "stage_b_exact_alignment",
+            "stage_c_behavior_geometry",
+            "stage_d_observation_curriculum",
             "smoke",
             "balanced_train",
             "iid_behavior",
@@ -71,10 +76,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
     )
     sample.add_argument("--variants-per-behavior", type=int, default=2)
-    sample.add_argument("--log-views-per-behavior", type=int, default=1)
+    sample.add_argument("--log-views-per-behavior", type=int, default=4)
     sample.add_argument(
         "--log-view-modes",
-        default="uniform_variants,resampled",
+        default="uniform_variants,resampled,sparse,long_tail",
         help=(
             "Comma-separated modes: uniform_variants,resampled,long_tail,sparse,"
             "incomplete,noisy."
@@ -103,14 +108,20 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--data-dir", default="data")
     train.add_argument("--checkpoint", default="checkpoints/proc_rosetta.pt")
     train.add_argument("--epochs", type=int, default=100)
-    train.add_argument("--batch-size", type=int, default=32)
-    train.add_argument("--learning-rate", type=float, default=1e-3)
-    train.add_argument("--latent-dim", type=int, default=256)
-    train.add_argument("--hidden-dim", type=int, default=96)
-    train.add_argument("--dropout", type=float, default=0.25)
-    train.add_argument("--weight-decay", type=float, default=1e-3)
-    train.add_argument("--label-smoothing", type=float, default=0.08)
-    train.add_argument("--early-stopping-patience", type=int, default=4)
+    train.add_argument("--batch-size", type=int, default=128)
+    train.add_argument("--learning-rate", type=float, default=3e-4)
+    train.add_argument("--latent-dim", type=int, default=128)
+    train.add_argument("--hidden-dim", type=int, default=256)
+    train.add_argument(
+        "--semantic-latent-mode",
+        choices=["deterministic"],
+        default="deterministic",
+        help="Semantic content mode; supervised translation supports deterministic only.",
+    )
+    train.add_argument("--dropout", type=float, default=0.10)
+    train.add_argument("--weight-decay", type=float, default=1e-4)
+    train.add_argument("--label-smoothing", type=float, default=0.0)
+    train.add_argument("--early-stopping-patience", type=int, default=12)
     train.add_argument("--min-delta", type=float, default=0.001)
     train.add_argument("--lr-patience", type=int, default=2)
     train.add_argument("--lr-factor", type=float, default=0.5)
@@ -124,6 +135,8 @@ def build_parser() -> argparse.ArgumentParser:
             "not the number of additional epochs"
         ),
     )
+    train.add_argument("--stage-gate-interval", type=int, default=5)
+    train.add_argument("--gradient-diagnostics-interval", type=int, default=1)
     train.add_argument("--seed", type=int, default=13)
     train.add_argument(
         "--device",
@@ -131,15 +144,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="Torch device; defaults to cuda or mps when available, otherwise cpu.",
     )
     train.add_argument("--quiet", action="store_true", help="disable stderr debug messages and progress bars")
-    train.add_argument("--views-per-family", type=int, default=2)
+    train.add_argument("--views-per-family", type=int, default=4)
     train.add_argument(
         "--activity-remap-probability",
         type=float,
-        default=0.5,
+        default=0.0,
         help=(
             "Probability of consistently renaming activities within each training "
             "family; preserves behavior while discouraging label memorization."
         ),
+    )
+    train.add_argument("--memory-tokens", type=int, default=8)
+    train.add_argument("--decoder-layers", type=int, default=4)
+    train.add_argument("--decoder-input-dropout", type=float, default=0.10)
+    train.add_argument("--scheduled-sampling-max", type=float, default=0.20)
+    train.add_argument("--scheduled-sampling-start-epoch", type=int, default=20)
+    train.add_argument("--scheduled-sampling-ramp-epochs", type=int, default=20)
+    train.add_argument("--gradient-clip-norm", type=float, default=5.0)
+    train.add_argument("--tree-reconstruction-weight", type=float, default=0.5)
+    train.add_argument("--trace-to-tree-weight", type=float, default=2.0)
+    train.add_argument("--petri-to-tree-weight", type=float, default=0.5)
+    train.add_argument("--exact-contrastive-weight", type=float, default=0.5)
+    train.add_argument("--within-modality-contrastive-weight", type=float, default=0.25)
+    train.add_argument("--soft-behavior-geometry-weight", type=float, default=0.25)
+    train.add_argument("--variance-weight", type=float, default=0.1)
+    train.add_argument("--covariance-weight", type=float, default=0.01)
+    train.add_argument("--kl-weight", type=float, default=0.0)
+    train.add_argument("--latent-alignment-weight", type=float, default=0.0)
+    train.add_argument("--contrastive-temperature", type=float, default=0.2)
+    train.add_argument("--behavior-temperature", type=float, default=0.2)
+    train.add_argument("--latent-temperature", type=float, default=0.2)
+    train.add_argument(
+        "--training-stage",
+        choices=["a", "b", "c", "d", "full"],
+        default="full",
+        help="Gate objectives according to the staged remediation sequence.",
     )
     train.add_argument(
         "--no-group-aware-batches",
@@ -213,11 +252,12 @@ def synthetic_config_from_args(args: argparse.Namespace) -> SyntheticConfig:
         "leaf_probability": 0.55,
         "max_arity": 3,
         "traces_per_sample": 128,
+        "max_trace_length": 128,
         "curriculum_phase": 3,
         "generator": "behavior_families",
         "variants_per_behavior": 2,
-        "log_views_per_behavior": 1,
-        "log_view_modes": "uniform_variants,resampled",
+        "log_views_per_behavior": 4,
+        "log_view_modes": "uniform_variants,resampled,sparse,long_tail",
     }
     for field_name in (
         "max_depth",
@@ -226,6 +266,7 @@ def synthetic_config_from_args(args: argparse.Namespace) -> SyntheticConfig:
         "leaf_probability",
         "max_arity",
         "traces_per_sample",
+        "max_trace_length",
         "curriculum_phase",
         "generator",
         "variants_per_behavior",
@@ -267,6 +308,7 @@ def run_train(args: argparse.Namespace) -> int:
         learning_rate=args.learning_rate,
         latent_dim=args.latent_dim,
         hidden_dim=args.hidden_dim,
+        semantic_latent_mode=args.semantic_latent_mode,
         dropout=args.dropout,
         weight_decay=args.weight_decay,
         label_smoothing=args.label_smoothing,
@@ -280,6 +322,29 @@ def run_train(args: argparse.Namespace) -> int:
         group_aware_batches=not args.no_group_aware_batches,
         views_per_family=max(1, args.views_per_family),
         activity_remap_probability=args.activity_remap_probability,
+        memory_tokens=args.memory_tokens,
+        decoder_layers=args.decoder_layers,
+        decoder_input_dropout=args.decoder_input_dropout,
+        scheduled_sampling_max=args.scheduled_sampling_max,
+        scheduled_sampling_start_epoch=args.scheduled_sampling_start_epoch,
+        scheduled_sampling_ramp_epochs=args.scheduled_sampling_ramp_epochs,
+        gradient_clip_norm=args.gradient_clip_norm,
+        tree_reconstruction_weight=args.tree_reconstruction_weight,
+        trace_to_tree_weight=args.trace_to_tree_weight,
+        petri_to_tree_weight=args.petri_to_tree_weight,
+        exact_contrastive_weight=args.exact_contrastive_weight,
+        within_modality_contrastive_weight=args.within_modality_contrastive_weight,
+        soft_behavior_geometry_weight=args.soft_behavior_geometry_weight,
+        variance_weight=args.variance_weight,
+        covariance_weight=args.covariance_weight,
+        kl_weight=args.kl_weight,
+        latent_alignment_weight=args.latent_alignment_weight,
+        contrastive_temperature=args.contrastive_temperature,
+        behavior_temperature=args.behavior_temperature,
+        latent_temperature=args.latent_temperature,
+        training_stage=args.training_stage,
+        stage_gate_interval=max(1, args.stage_gate_interval),
+        gradient_diagnostics_interval=max(1, args.gradient_diagnostics_interval),
     )
     _, history = train_from_data_dir(
         data_dir=args.data_dir,
@@ -403,8 +468,18 @@ def _parse_weights(value: str) -> dict[str, float]:
     return result
 
 
-def round_metrics(metrics: dict[str, float]) -> dict[str, float]:
-    return {key: round(value, 6) for key, value in metrics.items()}
+def round_metrics(metrics: dict[str, object]) -> dict[str, object]:
+    return {key: _round_nested_value(value) for key, value in metrics.items()}
+
+
+def _round_nested_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _round_nested_value(child) for key, child in value.items()}
+    if isinstance(value, list):
+        return [_round_nested_value(child) for child in value]
+    if isinstance(value, float):
+        return round(value, 6)
+    return value
 
 
 def round_nested_metrics(row: dict[str, object]) -> dict[str, object]:

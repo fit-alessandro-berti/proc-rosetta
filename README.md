@@ -48,11 +48,12 @@ one canonical behavior -> shared master trace pool -> one or more log views
                        -> optional exact prefix tries and tau refinements
 ```
 
-Controlled motifs are embedded in a configurable shared sequence context
-(`motif_context_size`) so matched experiments are not limited to tiny nets.
+Every controlled motif is inserted at a random point in a 4–12-node structural
+SEQ/XOR/AND context. The same context is composed with each Petri representation,
+and duplicate complete-language signatures are rejected.
 
-Motif weights now favor ordinary random trees (`ordinary_tree=0.55`, the three
-controlled motifs `0.15` each) so most training logs carry realistic variant
+Motif weights favor ordinary random trees (`ordinary_tree=0.75`, the three
+controlled motifs approximately `0.0833` each) so most training logs carry realistic variant
 diversity and alphabet sizes. `min_activities` (default 8) enforces an
 alphabet floor per behavior, matching real event logs, and every stored
 sample is relabeled to `A0, A1, ...` in first-seen trace order — the same
@@ -66,6 +67,9 @@ tree:        canonical process tree
 traces:      tuple of activity-label traces
 petri_graph: typed Petri-net graph with markings
 equivalence_id: behavior ID shared by every equivalent row
+exact_behavior_id / exact_trace_language_id: SHA-256 of certified normalized language
+partial_order_id / structural_motif_id
+behavior_signature: bounded 128-D language and footprint signature
 model_variant_id / representation_kind / log_view_id
 equivalence_level and validation metadata
 ```
@@ -73,9 +77,11 @@ equivalence_level and validation metadata
 The model contains:
 
 ```text
-process tree tokens -> TreeEncoder ------.
-event-log traces    -> TraceEncoder -----+-> shared latent z -> GrammarTreeDecoder
-Petri graph         -> PetriGraphEncoder-'
+process tree tokens -> 4-layer prefix Transformer --------.
+event-log traces    -> biGRU + set Transformer ------------+-> 8 x 256 source memory
+Petri graph         -> 5-layer edge-aware residual GNN ----'       |
+                                                                cross-attention
+normalized 128-D metric heads <---- each encoder               4-layer tree decoder
 ```
 
 The training objective combines:
@@ -83,13 +89,18 @@ The training objective combines:
 - tree-to-tree reconstruction;
 - trace-to-tree translation;
 - Petri-to-tree translation;
-- latent mean alignment between modalities;
-- symmetric cross-modal contrastive alignment;
-- weak KL regularization.
+- all-positive supervised contrast across all six modality directions;
+- within-modality view invariance;
+- soft behavior-neighborhood matching;
+- variance/covariance anti-collapse regularization.
 
-The contrastive objective is multi-positive: every row with the same behavior
-ID is a positive, and the training loader keeps multiple family views in the
-same batch. The Petri encoder also embeds visible transition labels.
+Semantic content is deterministic: supervised decoding does not sample a VAE,
+KL and raw latent MSE are zero, and decoder memory is separate from the metric
+head. Strong positives require a certified exact language and matching
+partial-order identity. Bounded families participate only in soft behavior
+geometry. The decoder cross-attends on every layer and uses an activity-copy
+distribution scored against contextual occurrence states aggregated per source
+activity, rather than copying from an unconditioned vocabulary alone.
 
 The default activity vocabulary supports `A0` through `A29`. If an old
 checkpoint was trained with fewer activity labels, retrain it before using logs
@@ -245,12 +256,18 @@ representation counts, and a machine-checkable `meets_minimum` result.
 
 Additional evaluation presets include `iid_behavior`, `equivalence_seen`,
 `equivalence_unseen`, `scale_ood`, `sampling_ood`, and `loops_bounded`.
+The gated remediation presets are `stage_a_tiny_overfit`,
+`stage_b_exact_alignment`, `stage_c_behavior_geometry`, and
+`stage_d_observation_curriculum`.
 
 Generator JSON uses nested `motifs`, `class_coverage`, `representations`,
 `logs`, and `validation` objects. Metadata records deterministic seeds, transformations,
 structural statistics, and exact/bounded language certificates.
 Log modes include uniform, resampled, long-tail, sparse, incomplete, and noisy;
 noisy logs retain exact edit provenance.
+The default corpus creates four independent clean views and asserts that exact
+behavior signatures are disjoint across train, validation, and test. Training
+collation fails on over-length traces instead of silently truncating them.
 
 Train the model:
 
@@ -259,14 +276,14 @@ Train the model:
   --data-dir data \
   --checkpoint checkpoints/proc_rosetta.pt \
   --epochs 100 \
-  --batch-size 32
+  --batch-size 128
 ```
 
 Training writes:
 
 ```text
 checkpoints/proc_rosetta.pt       # latest completed epoch
-checkpoints/proc_rosetta.best.pt  # best validation-loss epoch
+checkpoints/proc_rosetta.best.pt  # best ordinary trace-discovery epoch
 checkpoints/training_metrics.csv  # per-epoch metrics
 ```
 
@@ -291,14 +308,34 @@ Useful training controls:
 ```bash
 ./train.py --quiet
 ./train.py --device cuda
-./train.py --latent-dim 256 --hidden-dim 256
-./train.py --dropout 0.2 --weight-decay 1e-4
-./train.py --views-per-family 2
+./train.py --latent-dim 128 --hidden-dim 256 --memory-tokens 8
+./train.py --semantic-latent-mode deterministic
+./train.py --dropout 0.1 --weight-decay 1e-4
+./train.py --views-per-family 4
+./train.py --training-stage a  # disables metric objectives for the tiny overfit gate
 ./train.py --no-group-aware-batches
 ```
 
 Training, testing, and external-file scripts default to `cuda` when available,
 then `mps` when available, and otherwise `cpu`. Pass `--device cpu` to force CPU.
+
+The staged run sequence is intentionally gated:
+
+1. Generate 64 families with `--preset stage_a_tiny_overfit --train-families 64`
+   and train with `--training-stage a`. Training-family trace exact must reach
+   95%, while shuffled and zero source memories remain at or below 10%.
+2. Use `stage_b_exact_alignment` with `--training-stage b`. The logged gate
+   requires zero false negatives, effective rank above 32 for the default
+   128-D head, and exact-behavior Recall@1 of at least 90%.
+3. Enable `stage_c_behavior_geometry` / `--training-stage c` and inspect the
+   logged behavior-distance Spearman correlation.
+4. Add sparse, incomplete, long-tail, and noisy observations only with
+   `stage_d_observation_curriculum` / `--training-stage d` (six views including
+   the two clean baselines).
+
+Each epoch also records per-encoder reconstruction and metric gradient norms.
+Tune the exposed loss weights until the metric/reconstruction gradient ratio is
+roughly 0.3–1.0 rather than relying on nominal scalar weights alone.
 
 The tokenizer size is fixed by the data metadata stored when `sample.py` runs.
 For logs with many activities, generate data with a sufficiently large
@@ -341,12 +378,13 @@ For machine-readable output:
 The test report includes:
 
 - neural test losses;
-- greedy decode quality from tree, trace, Petri, and fused latent vectors;
+- grammar-constrained, length-normalized beam decode quality from tree, trace,
+  Petri, and fused sources;
 - process-discovery quality comparing `proc_rosetta_trace_mu` with PM4Py
   Inductive Miner using the selected token-based replay or footprint fitness,
   precision, and F1;
 - behavioral distance summaries over the test logs;
-- cross-modal retrieval metrics;
+- exact-behavior, partial-order, and analogy-neighborhood retrieval metrics;
 - behavior-family cosine, retrieval, equivalence margin, and distance by
   representation pair;
 - learned embedding quality versus deterministic log and Petri baselines;
@@ -414,10 +452,8 @@ scripts/decode_ptml.py \
 External logs are canonicalized internally to `A0`, `A1`, ... in first-seen
 order. The XES and PTML decoding scripts restore original activity labels by
 default; pass `--keep-canonical-labels` to keep the canonical labels. The
-external PNML tensor construction currently uses graph structure, node types,
-and markings but omits visible transition-label IDs; decoded PNML outputs
-therefore retain the model's canonical activity labels and are not presented as
-label-preserving.
+external PNML tensor construction includes visible transition-label IDs, so the
+activity-copy head can preserve the canonicalized PNML activity inventory.
 
 If a decoded model is invalid or the decoder does not emit `<eos>` within the
 decode limit, the conversion script exits with a clear error instead of writing
@@ -449,8 +485,8 @@ an unusable `.ptml` file.
 - `src/proc_rosetta/data.py`: JSONL datasets and batch collation.
 - `src/proc_rosetta/models.py`: PyTorch encoders, latent projections, decoder,
   and multimodal model.
-- `src/proc_rosetta/losses.py`: reconstruction, translation, KL, latent
-  alignment, and contrastive losses.
+- `src/proc_rosetta/losses.py`: structurally weighted translation, exact and
+  soft behavioral metric objectives, and anti-collapse losses.
 - `src/proc_rosetta/training.py`: training, validation, checkpointing, and
   loading utilities.
 - `src/proc_rosetta/benchmarks.py`: test report, embedding baselines,
@@ -464,5 +500,6 @@ an unusable `.ptml` file.
 
 `sample.py` uses a Python random seed for synthetic tree generation. PM4Py
 playout behavior can still depend on the installed PM4Py version. The training
-checkpoint stores the model weights, training configuration, and synthetic data
+checkpoint stores the model weights, every loss weight and temperature,
+deterministic/stochastic setting, training configuration, and synthetic data
 configuration needed to reconstruct the tokenizers and model dimensions.

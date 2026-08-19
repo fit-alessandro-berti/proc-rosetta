@@ -1,7 +1,9 @@
 import torch
+import pytest
+from dataclasses import replace
 from torch.utils.data import DataLoader
 
-from proc_rosetta.data import ProcessBatchCollator, SyntheticProcessDataset
+from proc_rosetta.data import BatchConfig, ProcessBatchCollator, SyntheticProcessDataset
 from proc_rosetta.losses import (
     cross_modal_contrastive_loss,
     multimodal_tree_loss,
@@ -9,9 +11,18 @@ from proc_rosetta.losses import (
 )
 from proc_rosetta.models import LatentDistribution
 from proc_rosetta.models import ProcRosettaModel
+from proc_rosetta.families import flatten_behavior_family, generate_behavior_family
 from proc_rosetta.synthetic import SyntheticConfig
 from proc_rosetta.tokenizers import ActivityTokenizer, TreeTokenizer
-from proc_rosetta.training import TrainConfig, train_synthetic
+from proc_rosetta.training import (
+    BehaviorFamilyBatchSampler,
+    TrainConfig,
+    _different_behavior_permutation,
+    loss_weights_from_checkpoint,
+    stage_acceptance_report,
+    train_synthetic,
+)
+from types import SimpleNamespace
 
 
 def test_model_forward_and_loss():
@@ -27,6 +38,14 @@ def test_model_forward_and_loss():
     losses = multimodal_tree_loss(outputs, batch["tree_tokens"])
 
     assert outputs["tree_logits"]["tree"].shape[:2] == batch["tree_tokens"][:, :-1].shape
+    assert outputs["dists"]["trace"].memory.shape == (3, 8, 32)
+    assert outputs["dists"]["trace"].activity_memory.shape == (3, 5, 32)
+    assert outputs["dists"]["tree"].activity_memory.shape == (3, 5, 32)
+    assert outputs["dists"]["petri"].activity_memory.shape == (3, 5, 32)
+    assert torch.allclose(
+        outputs["dists"]["trace"].sample(deterministic=False),
+        outputs["dists"]["trace"].mu,
+    )
     assert torch.isfinite(losses["loss"])
 
 
@@ -62,7 +81,9 @@ def test_multi_positive_contrastive_loss_does_not_make_family_views_negatives():
     )
 
     assert diagonal_only > 0
-    assert torch.allclose(family_positive, torch.zeros_like(family_positive))
+    # Every positive contributes its own log probability; two equally likely
+    # positives therefore produce the irreducible log(2) normalization term.
+    assert torch.allclose(family_positive, torch.log(torch.tensor(2.0)))
 
 
 def test_petri_batch_contains_visible_transition_label_ids():
@@ -78,6 +99,113 @@ def test_petri_batch_contains_visible_transition_label_ids():
 
     assert batch["petri"]["transition_label_ids"].gt(0).any()
     assert batch["positive_mask"].all()
+
+
+def test_strict_trace_collation_rejects_silent_prefix_truncation():
+    config = SyntheticConfig(max_depth=2, max_activities=4, traces_per_sample=1)
+    sample = SyntheticProcessDataset(1, config=config, seed=3).samples[0]
+    too_long = replace(sample, traces=(("A0",) * 129,))
+    collator = ProcessBatchCollator(
+        TreeTokenizer(max_activities=4),
+        ActivityTokenizer(max_activities=4),
+        BatchConfig(max_trace_length=128, strict_trace_lengths=True),
+    )
+
+    with pytest.raises(ValueError, match="strict mode"):
+        collator([too_long])
+
+
+def test_strong_positive_mask_distinguishes_partial_order_semantics():
+    config = SyntheticConfig(
+        max_activities=8,
+        traces_per_sample=2,
+        log_views_per_behavior=2,
+        motif_weights={"concurrent_vs_interleaved": 1.0},
+    )
+    samples = flatten_behavior_family(
+        generate_behavior_family(
+            config,
+            0,
+            seed=9,
+            split="training",
+            motif="concurrent_vs_interleaved",
+        ),
+        max_activities=8,
+    )
+    batch = ProcessBatchCollator(
+        TreeTokenizer(max_activities=8), ActivityTokenizer(max_activities=8)
+    )(samples)
+
+    assert len(set(batch["exact_behavior_ids"])) == 1
+    left = next(index for index, sample in enumerate(samples) if sample.partial_order_id.endswith("concurrent"))
+    right = next(index for index, sample in enumerate(samples) if sample.partial_order_id.endswith("interleaved"))
+    assert not batch["positive_mask"][left, right]
+    assert batch["analogy_mask"][left, right]
+    assert not batch["contrastive_candidate_mask"][left, right]
+    signature_cosine = torch.nn.functional.cosine_similarity(
+        batch["behavior_signatures"][left].unsqueeze(0),
+        batch["behavior_signatures"][right].unsqueeze(0),
+    ).item()
+    assert 0.8 < signature_cosine < 0.999
+
+
+def test_effective_contrastive_batch_contains_32_distinct_behaviors():
+    samples = [
+        SimpleNamespace(equivalence_id=f"behavior-{family}")
+        for family in range(40)
+        for _ in range(8)
+    ]
+    sampler = BehaviorFamilyBatchSampler(
+        samples,
+        batch_size=128,
+        views_per_family=4,
+        shuffle=False,
+    )
+    first_batch = next(iter(sampler))
+
+    assert len(first_batch) == 128
+    assert len({samples[index].equivalence_id for index in first_batch}) == 32
+
+
+def test_source_ablation_deranges_adjacent_views_of_the_same_behavior():
+    identifiers = [f"behavior-{family}" for family in range(4) for _ in range(2)]
+
+    permutation = _different_behavior_permutation(
+        identifiers, len(identifiers), torch.device("cpu")
+    )
+
+    assert all(
+        identifiers[row] != identifiers[int(permutation[row])]
+        for row in range(len(identifiers))
+    )
+
+
+def test_stage_a_acceptance_retains_auditable_measurements():
+    report = stage_acceptance_report(
+        "a",
+        {
+            "trace_canonical_exact": 0.96,
+            "shuffled_trace_canonical_exact": 0.02,
+            "zero_trace_canonical_exact": 0.0,
+        },
+        semantic_dimension=128,
+    )
+
+    assert report["evaluated"] is True
+    assert report["passed"] is True
+    assert report["measurements"]["training_trace_canonical_exact"] == 0.96
+
+
+def test_checkpoint_loss_payload_is_authoritative():
+    config = TrainConfig(trace_to_tree_weight=2.0)
+
+    restored = loss_weights_from_checkpoint(
+        {"loss_weights": {"trace_to_tree": 7.5, "label_smoothing": 0.02}},
+        config,
+    )
+
+    assert restored.trace_to_tree == 7.5
+    assert restored.label_smoothing == 0.02
 
 
 def test_activity_remapping_is_semantics_preserving_and_family_consistent():

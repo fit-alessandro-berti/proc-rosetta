@@ -34,9 +34,9 @@ from proc_rosetta.tree import NodeKind, ProcessTreeNode
 
 
 PETRI_LABEL_WARNING = (
-    "The current external Petri-net encoder path does not use visible transition labels. "
-    "This PNML-derived tree uses canonical activity labels and must not be interpreted as "
-    "preserving the original activity names or transition semantics."
+    "Legacy checkpoints may not have learned Petri transition-label embeddings; "
+    "retrain with the deterministic label-aware architecture before interpreting "
+    "activity-copy quality."
 )
 
 
@@ -265,13 +265,12 @@ def encode_artifact(
                 )
                 attention = _tensor_row(weights)
             else:
-                # This intentionally matches the established external PNML
-                # inference path: labels remain visible in source previews but
-                # are omitted from the model-facing graph tensor.
-                graph_tensors = petri_graph_to_tensors(prepared.model_input, checkpoint.device)
+                graph_tensors = petri_graph_to_tensors(
+                    prepared.model_input,
+                    checkpoint.device,
+                    checkpoint.model.activity_tokenizer,
+                )
                 distribution = checkpoint.model.encode_petri(graph_tensors)
-                if PETRI_LABEL_WARNING not in warnings:
-                    warnings.append(PETRI_LABEL_WARNING)
             mu = _tensor_row(distribution.mu)
             logvar = _tensor_row(distribution.logvar)
         except Exception as exc:  # retain a complete result for workspace diagnostics
@@ -318,7 +317,11 @@ def trace_collection_to_tensors(
     return {"tokens": tokens, "lengths": lengths, "mask": mask}
 
 
-def petri_graph_to_tensors(graph: PetriGraph, device: torch.device) -> dict[str, torch.Tensor]:
+def petri_graph_to_tensors(
+    graph: PetriGraph,
+    device: torch.device,
+    activity_tokenizer: Any | None = None,
+) -> dict[str, torch.Tensor]:
     node_count = graph.num_nodes
     node_types = torch.tensor([graph.node_types], dtype=torch.long, device=device)
     node_mask = torch.ones((1, node_count), dtype=torch.bool, device=device)
@@ -326,6 +329,13 @@ def petri_graph_to_tensors(graph: PetriGraph, device: torch.device) -> dict[str,
     markings[0, :, 0] = torch.tensor(graph.initial_marking, dtype=torch.float32, device=device)
     markings[0, :, 1] = torch.tensor(graph.final_marking, dtype=torch.float32, device=device)
     adjacency = torch.zeros((1, 2, node_count, node_count), dtype=torch.float32, device=device)
+    transition_label_ids = torch.zeros((1, node_count), dtype=torch.long, device=device)
+    if activity_tokenizer is not None:
+        for index, label in enumerate(graph.transition_labels):
+            if label is not None:
+                transition_label_ids[0, index] = activity_tokenizer.token_to_id.get(
+                    label, activity_tokenizer.unk_id
+                )
     for source, target, edge_type in graph.edges:
         adjacency[0, edge_type, source, target] = 1.0
     return {
@@ -333,6 +343,7 @@ def petri_graph_to_tensors(graph: PetriGraph, device: torch.device) -> dict[str,
         "node_mask": node_mask,
         "markings": markings,
         "adjacency": adjacency,
+        "transition_label_ids": transition_label_ids,
     }
 
 
@@ -351,15 +362,14 @@ def decode_latent_iter(
     device = next(model.parameters()).device
     z = _latent_tensor(latent, device)
     tokenizer = model.tree_tokenizer
-    hidden = torch.tanh(model.tree_decoder.latent_to_hidden(z)).unsqueeze(0)
-    current = torch.tensor([[tokenizer.bos_id]], dtype=torch.long, device=device)
     prefix_ids = [tokenizer.bos_id]
     prefix_names = [tokenizer.tokens[tokenizer.bos_id]]
 
     for step_index in range(1, max_length):
-        embedded = model.tree_decoder.embedding(current)
-        output, hidden = model.tree_decoder.gru(embedded, hidden)
-        raw_logits = model.tree_decoder.output(output[:, -1])[0]
+        prefix = torch.tensor([prefix_ids], dtype=torch.long, device=device)
+        raw_logits = model.tree_decoder(
+            z, prefix, apply_grammar_mask=False
+        )[0, -1]
         mask = tokenizer.next_token_mask(prefix_ids, device=device)
         masked_logits = raw_logits.masked_fill(~mask, -1e9)
         valid_ids = torch.where(mask)[0]
@@ -408,7 +418,6 @@ def decode_latent_iter(
         )
         if chosen_id == tokenizer.eos_id:
             break
-        current = torch.tensor([[chosen_id]], dtype=torch.long, device=device)
 
 
 def decode_latent(
@@ -421,18 +430,29 @@ def decode_latent(
     canonical_mapping: dict[str, str] | None = None,
     max_length: int = 512,
     top_k: int = 5,
+    beam_size: int = 5,
     progress_callback: Callable[[DecodeStep], None] | None = None,
 ) -> DecodeResult:
     start = perf_counter()
     steps: list[DecodeStep] = []
-    for step in decode_latent_iter(
-        checkpoint.model, latent, max_length=max_length, top_k=top_k
-    ):
-        steps.append(step)
-        if progress_callback is not None:
-            progress_callback(step)
-    token_ids = [checkpoint.model.tree_tokenizer.bos_id]
-    token_ids.extend(step.chosen_token_id for step in steps)
+    if beam_size > 1 and progress_callback is None:
+        source = _latent_tensor(latent, checkpoint.device)
+        decoded = checkpoint.model.tree_decoder.decode_beam(
+            source,
+            max_length=max_length,
+            beam_size=beam_size,
+            length_penalty=0.7,
+        )
+        token_ids = decoded[0].detach().cpu().tolist()
+    else:
+        for step in decode_latent_iter(
+            checkpoint.model, latent, max_length=max_length, top_k=top_k
+        ):
+            steps.append(step)
+            if progress_callback is not None:
+                progress_callback(step)
+        token_ids = [checkpoint.model.tree_tokenizer.bos_id]
+        token_ids.extend(step.chosen_token_id for step in steps)
     return build_decode_result(
         checkpoint.model,
         latent,
@@ -486,9 +506,6 @@ def build_decode_result(
     if not eos:
         warnings.append("Decoder did not emit <eos>; this is not a fully successful decode.")
     modalities = [ArtifactModality(item) for item in source_modalities]
-    if ArtifactModality.PETRI_NET in modalities:
-        warnings.append(PETRI_LABEL_WARNING)
-        canonical_mapping = None
     inverse = {canonical: original for original, canonical in (canonical_mapping or {}).items()}
     restored_tree = tree.relabel(inverse) if tree is not None and inverse else tree
     generated_labels = set(tree.activity_labels()) if tree is not None else set()

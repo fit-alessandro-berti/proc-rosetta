@@ -127,7 +127,9 @@ def _encode_sample_modalities(
     )
 
     start = perf_counter()
-    petri_dist = model.encode_petri(petri_graph_to_tensors(sample.petri_graph, device))
+    petri_dist = model.encode_petri(
+        petri_graph_to_tensors(sample.petri_graph, device, model.activity_tokenizer)
+    )
     entries.append(
         _entry(
             checkpoint,

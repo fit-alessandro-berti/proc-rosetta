@@ -64,6 +64,9 @@ def test_exact_behavior_family_motifs_share_language_and_ids():
         family = generate_behavior_family(config, 0, seed=7, split="test")
 
         assert family.equivalence_certificate.status == "exact"
+        assert len(family.exact_behavior_id) == 64
+        assert family.behavior_id == family.exact_behavior_id
+        assert len(family.behavior_signature) == 128
         assert family.equivalence_certificate.semantics == "visible_complete_trace_language"
         assert {variant.representation_kind for variant in family.model_variants} == expected_kinds
         assert all(view.traces for view in family.log_views)
@@ -76,7 +79,6 @@ def test_exact_behavior_family_motifs_share_language_and_ids():
         )
         assert completed
         assert canonical_language == set(family.clean_trace_pool)
-
         if motif == "m_nonfreechoice":
             nonfree = next(
                 variant
@@ -85,3 +87,38 @@ def test_exact_behavior_family_motifs_share_language_and_ids():
             )
             assert nonfree.structural_statistics["free_choice_violation_count"] > 0
             assert nonfree.structural_statistics["nonblock_reason"] == "non_free_choice_m_pattern"
+
+
+def test_controlled_families_receive_unique_random_structural_contexts():
+    config = SyntheticConfig(
+        max_activities=12,
+        traces_per_sample=4,
+        motif_weights={"duplicate_vs_silent": 1.0},
+    )
+    families = [
+        generate_behavior_family(
+            config, index, seed=17, split="training", motif="duplicate_vs_silent"
+        )
+        for index in range(3)
+    ]
+
+    assert len({family.exact_behavior_id for family in families}) == 3
+    assert all(
+        4 <= int(family.metadata["structural_context"]["node_count"]) <= 12
+        for family in families
+    )
+    assert all(family.metadata["structural_context"]["operators"] for family in families)
+
+
+def test_stage_d_curriculum_includes_each_observation_regime():
+    config = SyntheticConfig.preset("stage_d_observation_curriculum")
+
+    assert config.log_views_per_behavior == 6
+    assert set(config.log_view_modes) == {
+        "uniform_variants",
+        "resampled",
+        "sparse",
+        "incomplete",
+        "long_tail",
+        "noisy",
+    }

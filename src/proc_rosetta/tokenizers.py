@@ -60,8 +60,10 @@ class TreeTokenizer:
         return tuple(f"ARITY_{arity}" for arity in range(2, self.max_arity + 1))
 
     def encode_tree(self, tree: ProcessTreeNode, canonicalize: bool = True) -> list[int]:
-        if canonicalize:
-            tree = tree.canonicalize_activity_labels()
+        tree = tree.normalize(
+            self.max_arity,
+            canonicalize_activity_labels=canonicalize,
+        )
         tokens = ["<bos>", *tree.to_prefix_tokens(), "<eos>"]
         try:
             return [self.token_to_id[token] for token in tokens]
@@ -114,7 +116,9 @@ class TreeTokenizer:
         if state is GrammarState.NEED_ARITY:
             assert pending_operator is not None
             if pending_operator == "LOOP":
-                valid[self.token_to_id["ARITY_2"]] = True
+                for arity in (2, 3):
+                    if arity <= self.max_arity:
+                        valid[self.token_to_id[f"ARITY_{arity}"]] = True
             else:
                 for token in self.arity_tokens:
                     valid[self.token_to_id[token]] = True
@@ -199,7 +203,7 @@ class ActivityTokenizer:
     max_activities: int = DEFAULT_MAX_ACTIVITIES
 
     def __post_init__(self) -> None:
-        tokens = ["<pad>", *[f"A{idx}" for idx in range(self.max_activities)]]
+        tokens = ["<pad>", "<unk>", *[f"A{idx}" for idx in range(self.max_activities)]]
         object.__setattr__(self, "tokens", tuple(tokens))
         object.__setattr__(self, "token_to_id", {token: idx for idx, token in enumerate(tokens)})
 
@@ -208,14 +212,15 @@ class ActivityTokenizer:
         return 0
 
     @property
+    def unk_id(self) -> int:
+        return 1
+
+    @property
     def vocab_size(self) -> int:
         return len(self.tokens)
 
     def encode_trace(self, trace: Sequence[str]) -> list[int]:
-        # The generator can deliberately insert an out-of-alphabet event for
-        # robustness evaluation. ID 0 acts as the stable unknown embedding;
-        # sequence lengths still retain the event position.
-        return [self.token_to_id.get(label, self.pad_id) for label in trace]
+        return [self.token_to_id.get(label, self.unk_id) for label in trace]
 
     def encode_traces(self, traces: Sequence[Sequence[str]]) -> list[list[int]]:
         return [self.encode_trace(trace) for trace in traces]

@@ -120,17 +120,24 @@ class ProcessTreeNode:
         return (self.kind.value, tuple(child.canonical_key() for child in self.children))
 
     def canonicalize_activity_labels(self, prefix: str = "A") -> "ProcessTreeNode":
-        mapping: dict[str, str] = {}
+        mapping = self.activity_label_mapping(prefix)
 
         def visit(node: ProcessTreeNode) -> ProcessTreeNode:
             if node.kind is NodeKind.ACTIVITY:
                 assert node.label is not None
-                if node.label not in mapping:
-                    mapping[node.label] = f"{prefix}{len(mapping)}"
                 return ProcessTreeNode.activity(mapping[node.label])
             return ProcessTreeNode(node.kind, children=tuple(visit(child) for child in node.children))
 
         return visit(self)
+
+    def activity_label_mapping(self, prefix: str = "A") -> dict[str, str]:
+        """Return the deterministic first-tree-occurrence activity renaming."""
+
+        mapping: dict[str, str] = {}
+        for label in self.activity_labels():
+            if label not in mapping:
+                mapping[label] = f"{prefix}{len(mapping)}"
+        return mapping
 
     def relabel(self, mapping: dict[str, str]) -> "ProcessTreeNode":
         if self.kind is NodeKind.ACTIVITY:
@@ -160,6 +167,46 @@ class ProcessTreeNode:
             self.kind,
             children=(*children[: maximum_arity - 1], nested_tail),
         )
+
+    def normalize(
+        self,
+        maximum_arity: int | None = None,
+        *,
+        canonicalize_activity_labels: bool = True,
+    ) -> "ProcessTreeNode":
+        """Return the unique supported syntax for associative process trees.
+
+        Nested SEQ/XOR/AND nodes are flattened before commutative children are
+        sorted and wide nodes are right-associated.  Applying the function
+        twice is therefore idempotent, including for already reassociated
+        targets.
+        """
+
+        if maximum_arity is not None and maximum_arity < 2:
+            raise ValueError("maximum operator arity must be at least two")
+
+        def flatten(node: ProcessTreeNode) -> ProcessTreeNode:
+            if not node.children:
+                return node
+            children = tuple(flatten(child) for child in node.children)
+            if node.kind in {NodeKind.SEQ, NodeKind.XOR, NodeKind.AND}:
+                flattened: list[ProcessTreeNode] = []
+                for child in children:
+                    if child.kind is node.kind:
+                        flattened.extend(child.children)
+                    else:
+                        flattened.append(child)
+                children = tuple(flattened)
+            return ProcessTreeNode(node.kind, children=children)
+
+        normalized = flatten(self)
+        if canonicalize_activity_labels:
+            normalized = normalized.canonicalize_activity_labels()
+        # Relabeling can change commutative sort keys, so rebuild once more.
+        normalized = flatten(normalized)
+        if maximum_arity is not None:
+            normalized = normalized.reassociate_operators(maximum_arity)
+        return normalized
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {"kind": self.kind.value}

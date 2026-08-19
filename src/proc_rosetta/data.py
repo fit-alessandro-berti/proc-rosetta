@@ -26,6 +26,9 @@ class BatchConfig:
     max_traces: int = 128
     max_trace_length: int = 128
     max_petri_nodes: int = 512
+    strict_trace_lengths: bool = True
+    strict_tree_tokens: bool = True
+    strict_petri_nodes: bool = True
 
 
 @dataclass(frozen=True)
@@ -92,15 +95,62 @@ class ProcessBatchCollator:
 
     def __call__(self, samples: Sequence[ProcessSample]) -> dict[str, Any]:
         equivalence_ids = [sample.equivalence_id for sample in samples]
+        exact_behavior_ids = [sample.exact_behavior_id for sample in samples]
+        partial_order_ids = [sample.partial_order_id for sample in samples]
+        signatures = self._behavior_signatures(samples)
+        positive_mask = torch.tensor(
+            [
+                [
+                    left is not None
+                    and left == right
+                    and partial_order_ids[left_index] is not None
+                    and partial_order_ids[left_index] == partial_order_ids[right_index]
+                    for right_index, right in enumerate(exact_behavior_ids)
+                ]
+                for left_index, left in enumerate(exact_behavior_ids)
+            ],
+            dtype=torch.bool,
+        )
+        contrastive_candidate_mask = torch.tensor(
+            [
+                [
+                    left is not None
+                    and right is not None
+                    and (
+                        left != right
+                        or partial_order_ids[left_index]
+                        == partial_order_ids[right_index]
+                    )
+                    for right_index, right in enumerate(exact_behavior_ids)
+                ]
+                for left_index, left in enumerate(exact_behavior_ids)
+            ],
+            dtype=torch.bool,
+        )
         batch = {
             "tree_tokens": self._tree_tokens(samples),
             "traces": self._trace_tokens(samples),
             "petri": self._petri_graphs([sample.petri_graph for sample in samples]),
             "equivalence_ids": equivalence_ids,
-            "positive_mask": torch.tensor(
+            "exact_behavior_ids": exact_behavior_ids,
+            "exact_trace_language_ids": [
+                sample.exact_trace_language_id for sample in samples
+            ],
+            "partial_order_ids": partial_order_ids,
+            "structural_motif_ids": [sample.structural_motif_id for sample in samples],
+            "behavior_signatures": signatures,
+            "positive_mask": positive_mask,
+            "contrastive_candidate_mask": contrastive_candidate_mask,
+            "analogy_mask": torch.tensor(
                 [
-                    [left == right for right in equivalence_ids]
-                    for left in equivalence_ids
+                    [
+                        left is not None
+                        and left == right
+                        and partial_order_ids[left_index]
+                        != partial_order_ids[right_index]
+                        for right_index, right in enumerate(exact_behavior_ids)
+                    ]
+                    for left_index, left in enumerate(exact_behavior_ids)
                 ],
                 dtype=torch.bool,
             ),
@@ -108,6 +158,17 @@ class ProcessBatchCollator:
         }
         self._remap_activity_ids(batch, equivalence_ids)
         return batch
+
+    @staticmethod
+    def _behavior_signatures(samples: Sequence[ProcessSample]) -> torch.Tensor | None:
+        dimensions = {len(sample.behavior_signature) for sample in samples}
+        if dimensions == {0}:
+            return None
+        if len(dimensions) != 1 or 0 in dimensions:
+            raise ValueError("behavior signatures in one batch must have one non-zero size")
+        return torch.tensor(
+            [sample.behavior_signature for sample in samples], dtype=torch.float32
+        )
 
     def _remap_activity_ids(
         self,
@@ -167,7 +228,13 @@ class ProcessBatchCollator:
             self.tree_tokenizer.encode_tree(sample.tree, canonicalize=False)
             for sample in samples
         ]
-        max_len = min(max(len(row) for row in encoded), self.config.max_tree_tokens)
+        longest = max(len(row) for row in encoded)
+        if self.config.strict_tree_tokens and longest > self.config.max_tree_tokens:
+            raise ValueError(
+                "tree target exceeds the configured token maximum in strict mode: "
+                f"observed={longest}, maximum={self.config.max_tree_tokens}"
+            )
+        max_len = min(longest, self.config.max_tree_tokens)
         out = torch.full((len(samples), max_len), self.tree_tokenizer.pad_id, dtype=torch.long)
         for idx, row in enumerate(encoded):
             row = row[:max_len]
@@ -181,10 +248,15 @@ class ProcessBatchCollator:
             max(len(sample.traces) for sample in samples),
             self.config.max_traces,
         )
-        max_trace_length = min(
-            max((len(trace) for sample in samples for trace in sample.traces), default=1),
-            self.config.max_trace_length,
+        original_max_trace_length = max(
+            (len(trace) for sample in samples for trace in sample.traces), default=1
         )
+        if self.config.strict_trace_lengths and original_max_trace_length > self.config.max_trace_length:
+            raise ValueError(
+                "trace length exceeds the configured maximum in strict mode: "
+                f"observed={original_max_trace_length}, maximum={self.config.max_trace_length}"
+            )
+        max_trace_length = min(original_max_trace_length, self.config.max_trace_length)
         tokens = torch.full(
             (len(samples), max_traces, max_trace_length),
             self.activity_tokenizer.pad_id,
@@ -192,17 +264,33 @@ class ProcessBatchCollator:
         )
         lengths = torch.zeros((len(samples), max_traces), dtype=torch.long)
         mask = torch.zeros((len(samples), max_traces), dtype=torch.bool)
+        original_lengths = torch.zeros((len(samples), max_traces), dtype=torch.long)
+        was_truncated = torch.zeros((len(samples), max_traces), dtype=torch.bool)
         for batch_idx, sample in enumerate(samples):
             for trace_idx, trace in enumerate(sample.traces[:max_traces]):
                 encoded = self.activity_tokenizer.encode_trace(trace[:max_trace_length])
                 if encoded:
                     tokens[batch_idx, trace_idx, : len(encoded)] = torch.tensor(encoded, dtype=torch.long)
                 lengths[batch_idx, trace_idx] = len(encoded)
+                original_lengths[batch_idx, trace_idx] = len(trace)
+                was_truncated[batch_idx, trace_idx] = len(trace) > max_trace_length
                 mask[batch_idx, trace_idx] = True
-        return {"tokens": tokens, "lengths": lengths, "mask": mask}
+        return {
+            "tokens": tokens,
+            "lengths": lengths,
+            "original_lengths": original_lengths,
+            "was_truncated": was_truncated,
+            "mask": mask,
+        }
 
     def _petri_graphs(self, graphs: Sequence[PetriGraph]) -> dict[str, torch.Tensor]:
-        max_nodes = min(max(graph.num_nodes for graph in graphs), self.config.max_petri_nodes)
+        largest_graph = max(graph.num_nodes for graph in graphs)
+        if self.config.strict_petri_nodes and largest_graph > self.config.max_petri_nodes:
+            raise ValueError(
+                "Petri graph exceeds the configured node maximum in strict mode: "
+                f"observed={largest_graph}, maximum={self.config.max_petri_nodes}"
+            )
+        max_nodes = min(largest_graph, self.config.max_petri_nodes)
         batch_size = len(graphs)
         node_types = torch.zeros((batch_size, max_nodes), dtype=torch.long)
         node_mask = torch.zeros((batch_size, max_nodes), dtype=torch.bool)
@@ -214,18 +302,12 @@ class ProcessBatchCollator:
             node_count = min(graph.num_nodes, max_nodes)
             node_types[batch_idx, :node_count] = torch.tensor(graph.node_types[:node_count], dtype=torch.long)
             node_mask[batch_idx, :node_count] = True
-            fallback_labels: dict[str, int] = {}
             for node_idx, label in enumerate(graph.transition_labels[:node_count]):
                 if label is None:
                     continue
                 token_id = self.activity_tokenizer.token_to_id.get(label)
                 if token_id is None:
-                    if label not in fallback_labels:
-                        fallback_labels[label] = min(
-                            len(fallback_labels) + 1,
-                            self.activity_tokenizer.vocab_size - 1,
-                        )
-                    token_id = fallback_labels[label]
+                    token_id = self.activity_tokenizer.unk_id
                 transition_label_ids[batch_idx, node_idx] = token_id
             markings[batch_idx, :node_count, 0] = torch.tensor(
                 graph.initial_marking[:node_count], dtype=torch.float32
@@ -315,7 +397,25 @@ def sample_statistics(samples: Sequence[ProcessSample]) -> dict[str, Any]:
         "avg_trace_length": _mean(trace_lengths),
         "max_petri_nodes": max((sample.petri_graph.num_nodes for sample in samples), default=0),
         "max_petri_edges": max((sample.petri_graph.num_edges for sample in samples), default=0),
+        "max_trace_length": max(trace_lengths, default=0),
+        "unexpected_truncation_count": sum(
+            int(bool(sample.metadata.get("was_truncated", False))) for sample in samples
+        ),
         "behavior_count": len({sample.equivalence_id for sample in samples}),
+        "exact_behavior_count": len(
+            {
+                sample.exact_behavior_id
+                for sample in samples
+                if sample.exact_behavior_id is not None
+            }
+        ),
+        "bounded_behavior_count": len(
+            {
+                sample.equivalence_id
+                for sample in samples
+                if sample.exact_behavior_id is None
+            }
+        ),
         "family_counts_by_motif": dict(
             sorted(_counts(family_motifs.values()).items())
         ),
@@ -429,6 +529,8 @@ def recreate_data_splits(
     data_dir.mkdir(parents=True)
 
     split_metadata: dict[str, object] = {}
+    exact_signatures_by_split: dict[str, set[str]] = {}
+    reserved_exact_behavior_ids: set[str] = set()
     for split, count in counts.items():
         with progress_bar(
             total=count,
@@ -466,7 +568,22 @@ def recreate_data_splits(
                     seed,
                     split=split,
                     progress_update=progress.update,
+                    excluded_exact_behavior_ids=reserved_exact_behavior_ids,
                 )
+        split_exact_ids = {
+            sample.exact_behavior_id
+            for sample in samples
+            if sample.exact_behavior_id is not None
+        }
+        for prior_split, prior_ids in exact_signatures_by_split.items():
+            overlap = prior_ids & split_exact_ids
+            if overlap:
+                raise RuntimeError(
+                    f"exact behavior signatures overlap between {prior_split} and {split}: "
+                    f"{sorted(overlap)[:3]}"
+                )
+        exact_signatures_by_split[split] = split_exact_ids
+        reserved_exact_behavior_ids.update(split_exact_ids)
         path = split_samples_path(data_dir, split)
         write_samples_jsonl(path, samples)
         statistics = sample_statistics(samples)
@@ -481,11 +598,15 @@ def recreate_data_splits(
         }
 
     metadata = {
-        "version": 3,
-        "schema": "proc-rosetta.behavior-family-splits.v3",
-        "sample_format": "jsonl/process-sample.v2",
+        "version": 4,
+        "schema": "proc-rosetta.behavior-family-splits.v4",
+        "sample_format": "jsonl/process-sample.v3",
         "seed": seed,
         "synthetic_config": config.to_dict(),
+        "exact_behavior_signatures_disjoint": True,
+        "exact_behavior_signature_counts": {
+            split: len(values) for split, values in exact_signatures_by_split.items()
+        },
         "splits": split_metadata,
     }
     with (data_dir / METADATA_FILENAME).open("w", encoding="utf-8") as handle:

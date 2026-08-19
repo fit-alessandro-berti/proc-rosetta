@@ -6,13 +6,15 @@
   "curriculum_phase": 3,
   "leaf_probability": 0.55,
   "motif_context_size": 6,
+  "motif_context_min_nodes": 4,
+  "motif_context_max_nodes": 12,
   "min_tree_depth": 4,
   "min_tree_size": 20,
   "motifs": {
-    "ordinary_tree": 0.55,
-    "duplicate_vs_silent": 0.15,
-    "concurrent_vs_interleaved": 0.15,
-    "m_nonfreechoice": 0.15
+    "ordinary_tree": 0.75,
+    "duplicate_vs_silent": 0.0833333333,
+    "concurrent_vs_interleaved": 0.0833333333,
+    "m_nonfreechoice": 0.0833333334
   },
   "class_coverage": {
     "mode": "strict",
@@ -24,14 +26,17 @@
   },
   "representations": {
     "variants_per_behavior": 2,
-    "exact_equivalence_only_for_training": false
+    "exact_equivalence_only_for_training": true
   },
   "logs": {
-    "log_views_per_behavior": 1,
+    "log_views_per_behavior": 4,
     "traces_per_log": 128,
+    "max_trace_length": 128,
     "sampling_modes": [
       "uniform_variants",
-      "resampled"
+      "resampled",
+      "sparse",
+      "long_tail"
     ]
   },
   "noise": {

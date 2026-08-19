@@ -21,11 +21,10 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert split_counts.training == 8192
     assert split_counts.validation == 1024
     assert split_counts.test == 1024
-    rows_per_family = 2
-    active_motifs = 4
-    assert split_counts.training // rows_per_family // active_motifs == 1024
-    assert split_counts.validation // rows_per_family // active_motifs == 128
-    assert split_counts.test // rows_per_family // active_motifs == 128
+    rows_per_family = 8
+    assert split_counts.training // rows_per_family == 1024
+    assert split_counts.validation // rows_per_family == 128
+    assert split_counts.test // rows_per_family == 128
     assert sample_args.max_depth == 8
     assert sample_args.max_activities == 30
     assert sample_args.max_arity == 3
@@ -33,15 +32,16 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert sample_args.curriculum_phase == 3
     assert not sample_args.quiet
     assert train_args.epochs == 100
-    assert train_args.batch_size == 32
-    assert train_args.latent_dim == 256
+    assert train_args.batch_size == 128
+    assert train_args.latent_dim == 128
     assert train_args.device == default_device()
-    assert train_args.hidden_dim == 96
-    assert train_args.dropout == 0.25
-    assert train_args.weight_decay == 1e-3
-    assert train_args.label_smoothing == 0.08
-    assert train_args.early_stopping_patience == 4
-    assert train_args.activity_remap_probability == 0.5
+    assert train_args.hidden_dim == 256
+    assert train_args.semantic_latent_mode == "deterministic"
+    assert train_args.dropout == 0.10
+    assert train_args.weight_decay == 1e-4
+    assert train_args.label_smoothing == 0.0
+    assert train_args.early_stopping_patience == 12
+    assert train_args.activity_remap_probability == 0.0
     assert not train_args.resume
     assert test_args.device == default_device()
     assert not test_args.quiet
@@ -145,6 +145,8 @@ def test_sample_cli_recreates_data_splits(tmp_path, capsys):
     assert (data_dir / "validation" / "samples.jsonl").exists()
     assert (data_dir / "test" / "samples.jsonl").exists()
     assert metadata["splits"]["training"]["statistics"]["count"] == 2
+    assert metadata["exact_behavior_signatures_disjoint"] is True
+    assert metadata["synthetic_config"]["logs"]["log_views_per_behavior"] == 4
     coverage = metadata["splits"]["training"]["class_coverage"]
     assert coverage["mode"] == "best_effort"
     assert not coverage["meets_minimum"]
@@ -160,11 +162,11 @@ def test_strict_sample_coverage_hits_each_motif_and_representation(tmp_path, cap
             "--data-dir",
             str(data_dir),
             "--train-count",
-            "8",
+            "32",
             "--validation-count",
-            "8",
+            "32",
             "--test-count",
-            "8",
+            "32",
             "--min-families-per-motif",
             "1",
             "--max-depth",
@@ -195,7 +197,7 @@ def test_strict_sample_coverage_rejects_infeasible_counts_before_replacing_data(
     marker = data_dir / "keep.txt"
     marker.write_text("keep", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="cannot provide at least"):
+    with pytest.raises(ValueError, match="divisible|cannot provide at least"):
         main(
             [
                 "sample",
@@ -283,7 +285,9 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert rows[0]["validation_loss"]
 
     saved = torch.load(checkpoint, map_location="cpu", weights_only=False)
-    assert saved["version"] == 3
+    assert saved["version"] == 4
+    assert saved["semantic_latent_stochastic"] is False
+    assert saved["loss_weights"]["kl"] == 0.0
     assert "optimizer_state_dict" in saved
     assert "scheduler_state_dict" in saved
     assert "rng_state" in saved

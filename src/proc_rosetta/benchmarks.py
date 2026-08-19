@@ -176,7 +176,12 @@ def rich_test_report(
         },
         "decode_quality": decode_quality,
         "discovery_quality": discovery_quality,
-        "cross_modal_retrieval": cross_modal_retrieval(neural_embeddings),
+        "cross_modal_retrieval": cross_modal_retrieval(
+            neural_embeddings,
+            exact_behavior_ids=[sample.exact_behavior_id for sample in samples],
+            partial_order_ids=[sample.partial_order_id for sample in samples],
+            behavior_signatures=[sample.behavior_signature for sample in samples],
+        ),
         "equivalence_families": equivalence_family_embedding_report(
             samples,
             neural_embeddings,
@@ -335,12 +340,13 @@ def discovery_quality_report(
             batch_samples = samples[start : start + batch_size]
             batch = _move_batch_to_device(collator(batch_samples), torch_device)
             trace_dist = model.encode_traces(batch["traces"])
-            decoded = model.tree_decoder.decode_greedy(
-                trace_dist.mu,
+            decoded_rows = decode_trace_with_conformance_reranking(
+                model,
+                trace_dist,
+                batch_samples,
                 max_length=max_decode_length,
-                apply_grammar_mask=True,
             )
-            for sample, token_ids in zip(batch_samples, decoded.detach().cpu().tolist()):
+            for sample, token_ids in zip(batch_samples, decoded_rows):
                 proc_rosetta_row = evaluate_proc_rosetta_discovery(
                     model,
                     sample,
@@ -814,19 +820,17 @@ def decode_quality_report(
             trace_dist = model.encode_traces(batch["traces"])
             petri_dist = model.encode_petri(batch["petri"])
             latents = {
-                "proc_rosetta_tree_mu": tree_dist.mu,
-                "proc_rosetta_trace_mu": trace_dist.mu,
-                "proc_rosetta_petri_mu": petri_dist.mu,
+                "proc_rosetta_tree_mu": tree_dist,
+                "proc_rosetta_trace_mu": trace_dist,
+                "proc_rosetta_petri_mu": petri_dist,
+                "proc_rosetta_fused_mu": torch.stack(
+                    (tree_dist.mu, trace_dist.mu, petri_dist.mu), dim=0
+                ).mean(dim=0),
             }
-            latents["proc_rosetta_fused_mu"] = torch.stack(tuple(latents.values()), dim=0).mean(
-                dim=0
-            )
 
             for name, latent in latents.items():
-                decoded = model.tree_decoder.decode_greedy(
-                    latent,
-                    max_length=max_decode_length,
-                    apply_grammar_mask=True,
+                decoded = decode_with_beam(
+                    model.tree_decoder, latent, max_length=max_decode_length
                 )
                 for sample, token_ids in zip(batch_samples, decoded.detach().cpu().tolist()):
                     row = evaluate_single_decode(
@@ -846,7 +850,7 @@ def decode_quality_report(
 
     return {
         "description": (
-            "Greedy decodes from each ProcRosetta latent into the grammar-masked "
+            "Length-normalized beam decodes from each ProcRosetta source into the grammar-masked "
             "process-tree decoder. Petri validity is measured by converting the "
             "decoded process tree to a Petri net."
         ),
@@ -854,6 +858,69 @@ def decode_quality_report(
         "behavior_traces_per_sample": int(behavior_traces_per_sample),
         "methods": {name: summarize_decode_quality(values) for name, values in rows.items()},
     }
+
+
+def decode_with_beam(decoder, source, *, max_length: int, beam_size: int = 5):
+    if hasattr(decoder, "decode_beam"):
+        return decoder.decode_beam(
+            source,
+            max_length=max_length,
+            beam_size=beam_size,
+            length_penalty=0.7,
+        )
+    return decoder.decode_greedy(
+        source.mu if hasattr(source, "mu") else source,
+        max_length=max_length,
+        apply_grammar_mask=True,
+    )
+
+
+def decode_trace_with_conformance_reranking(
+    model,
+    source,
+    samples: Sequence[ProcessSample],
+    *,
+    max_length: int,
+    beam_size: int = 5,
+    fitness_weight: float = 0.25,
+    footprint_precision_weight: float = 0.25,
+) -> list[list[int]]:
+    decoder = model.tree_decoder
+    if not hasattr(decoder, "decode_beam_candidates"):
+        decoded = decode_with_beam(
+            decoder, source, max_length=max_length, beam_size=beam_size
+        )
+        return decoded.detach().cpu().tolist()
+    candidate_rows = decoder.decode_beam_candidates(
+        source,
+        max_length=max_length,
+        beam_size=beam_size,
+        length_penalty=0.7,
+    )
+    selected: list[list[int]] = []
+    for sample, candidates in zip(samples, candidate_rows):
+        scored: list[tuple[float, list[int]]] = []
+        for token_ids, log_probability in candidates:
+            normalized_log_probability = log_probability / max(len(token_ids), 1) ** 0.7
+            score = normalized_log_probability
+            try:
+                tree = model.tree_tokenizer.decode_tree(token_ids)
+                simulated = simulate_traces(
+                    tree,
+                    num_traces=max(1, min(len(sample.traces), 32)),
+                )
+                distance = behavioral_distance(sample.traces, simulated)
+                fitness = 1.0 - min(1.0, float(distance["mean_l1"]) / 2.0)
+                footprint_precision = 1.0 - min(
+                    1.0, float(distance["directly_follows_l1"]) / 2.0
+                )
+                score += fitness_weight * fitness
+                score += footprint_precision_weight * footprint_precision
+            except Exception:
+                score -= 1.0
+            scored.append((score, token_ids))
+        selected.append(max(scored, key=lambda item: item[0])[1])
+    return selected
 
 
 def evaluate_single_decode(
@@ -869,6 +936,17 @@ def evaluate_single_decode(
     normalized_denominator = max(len(target_tokens), len(decoded_tokens), 1)
     token_edit_distance = levenshtein_distance(target_tokens, decoded_tokens)
     row: dict[str, object] = {
+        "motif": str(sample.metadata.get("motif", "ordinary_tree")),
+        "contains_loop": tree_contains_loop(sample.tree),
+        "tree_size": sample.tree.size(),
+        "tree_depth": sample.tree.max_depth(),
+        "activity_count": len(sample.tree.unique_activity_labels()),
+        "observation_quality": str(
+            sample.metadata.get(
+                "observation_quality",
+                sample.metadata.get("sampling_mode", "unknown"),
+            )
+        ),
         "terminated": tokenizer.eos_id in [int(token_id) for token_id in token_ids],
         "valid_tree": False,
         "exact_tree_match": False,
@@ -914,7 +992,7 @@ def summarize_decode_quality(rows: Sequence[dict[str, object]]) -> dict[str, obj
         float(row["behavior_l1"]) for row in rows if isinstance(row.get("behavior_l1"), (int, float))
     ]
     first_error = next((str(row["error"]) for row in rows if row.get("error")), None)
-    return {
+    summary = {
         "count": int(count),
         "terminated_rate": rate(rows, "terminated"),
         "valid_tree_rate": rate(rows, "valid_tree"),
@@ -932,6 +1010,60 @@ def summarize_decode_quality(rows: Sequence[dict[str, object]]) -> dict[str, obj
         "behavior_error_count": count_false(rows, "behavior_evaluable"),
         "first_error": first_error,
     }
+    summary["strata"] = decode_quality_strata(rows)
+    return summary
+
+
+def decode_quality_strata(
+    rows: Sequence[dict[str, object]],
+) -> dict[str, dict[str, float | int]]:
+    groups: dict[str, list[dict[str, object]]] = {}
+    for row in rows:
+        motif = str(row.get("motif", "unknown"))
+        groups.setdefault(f"motif:{motif}", []).append(row)
+        groups.setdefault(
+            "loop:loop" if bool(row.get("contains_loop")) else "loop:non_loop", []
+        ).append(row)
+        size = int(row.get("tree_size", 0))
+        size_bin = "small_1_20" if size <= 20 else "medium_21_40" if size <= 40 else "large_41_plus"
+        groups.setdefault(f"tree_size:{size_bin}", []).append(row)
+        depth = int(row.get("tree_depth", 0))
+        depth_bin = "shallow_1_4" if depth <= 4 else "medium_5_7" if depth <= 7 else "deep_8_plus"
+        groups.setdefault(f"tree_depth:{depth_bin}", []).append(row)
+        activities = int(row.get("activity_count", 0))
+        activity_bin = (
+            "few_1_8"
+            if activities <= 8
+            else "medium_9_16"
+            if activities <= 16
+            else "many_17_plus"
+        )
+        groups.setdefault(f"activities:{activity_bin}", []).append(row)
+        quality = str(row.get("observation_quality", "unknown"))
+        groups.setdefault(f"observation:{quality}", []).append(row)
+    return {
+        name: {
+            "count": len(selected),
+            "canonical_exact_rate": round_float(
+                sum(bool(row.get("exact_tree_match")) for row in selected)
+                / max(len(selected), 1)
+            ),
+            "mean_normalized_tree_edit": round_float(
+                mean(float(row["normalized_token_edit_distance"]) for row in selected)
+            ),
+            "behavior_eval_success_rate": round_float(
+                sum(bool(row.get("behavior_evaluable")) for row in selected)
+                / max(len(selected), 1)
+            ),
+        }
+        for name, selected in sorted(groups.items())
+    }
+
+
+def tree_contains_loop(tree) -> bool:
+    from proc_rosetta.tree import NodeKind
+
+    return tree.kind is NodeKind.LOOP or any(tree_contains_loop(child) for child in tree.children)
 
 
 def trim_tree_token_sequence(token_ids: Sequence[int], tokenizer) -> list[int]:
@@ -1639,7 +1771,12 @@ def format_rate(value: object) -> str:
         return str(value)
 
 
-def cross_modal_retrieval(embeddings: dict[str, np.ndarray]) -> dict[str, dict[str, float | int]]:
+def cross_modal_retrieval(
+    embeddings: dict[str, np.ndarray],
+    exact_behavior_ids: Sequence[str | None] | None = None,
+    partial_order_ids: Sequence[str | None] | None = None,
+    behavior_signatures: Sequence[Sequence[float]] | None = None,
+) -> dict[str, dict[str, float | int]]:
     pairs = {
         "tree_to_trace": ("proc_rosetta_tree_mu", "proc_rosetta_trace_mu"),
         "trace_to_tree": ("proc_rosetta_trace_mu", "proc_rosetta_tree_mu"),
@@ -1648,26 +1785,98 @@ def cross_modal_retrieval(embeddings: dict[str, np.ndarray]) -> dict[str, dict[s
         "trace_to_petri": ("proc_rosetta_trace_mu", "proc_rosetta_petri_mu"),
         "petri_to_trace": ("proc_rosetta_petri_mu", "proc_rosetta_trace_mu"),
     }
-    return {
-        name: retrieval_metrics(embeddings[left], embeddings[right])
-        for name, (left, right) in pairs.items()
-    }
+    report: dict[str, dict[str, float | int]] = {}
+    for name, (left, right) in pairs.items():
+        metrics = retrieval_metrics(
+            embeddings[left],
+            embeddings[right],
+            query_labels=exact_behavior_ids,
+            candidate_labels=exact_behavior_ids,
+        )
+        if partial_order_ids is not None:
+            partial = retrieval_metrics(
+                embeddings[left],
+                embeddings[right],
+                query_labels=partial_order_ids,
+                candidate_labels=partial_order_ids,
+            )
+            metrics.update(
+                {
+                    "partial_order_recall_at_1": partial["top1_accuracy"],
+                    "partial_order_recall_at_5": partial["recall_at_5"],
+                }
+            )
+        if behavior_signatures is not None and behavior_signatures:
+            signature_matrix = np.asarray(behavior_signatures, dtype=float)
+            if signature_matrix.ndim == 2 and signature_matrix.shape[1] > 0:
+                metrics["analogy_neighborhood_spearman"] = round_float(
+                    neighborhood_distance_correlation(
+                        embeddings[left], signature_matrix
+                    )
+                )
+        report[name] = metrics
+    return report
 
 
-def retrieval_metrics(query: np.ndarray, candidates: np.ndarray) -> dict[str, float | int]:
+def retrieval_metrics(
+    query: np.ndarray,
+    candidates: np.ndarray,
+    query_labels: Sequence[str | None] | None = None,
+    candidate_labels: Sequence[str | None] | None = None,
+) -> dict[str, float | int]:
     similarity = cosine_similarity_matrix(query, candidates)
     ranks = []
+    recall_at_5 = []
     for idx in range(similarity.shape[0]):
         order = np.argsort(-similarity[idx])
-        rank = int(np.where(order == idx)[0][0]) + 1
+        if query_labels is None or candidate_labels is None:
+            relevant = np.asarray([idx], dtype=int)
+        else:
+            label = query_labels[idx]
+            if label is None:
+                continue
+            relevant = np.asarray(
+                [
+                    candidate_index
+                    for candidate_index, candidate_label in enumerate(candidate_labels)
+                    if candidate_label == label
+                ],
+                dtype=int,
+            )
+            if not len(relevant):
+                continue
+        positions = [int(np.where(order == candidate)[0][0]) + 1 for candidate in relevant]
+        rank = min(positions)
         ranks.append(rank)
+        recall_at_5.append(float(rank <= 5))
     ranks_array = np.asarray(ranks, dtype=float)
     return {
         "count": int(len(ranks)),
         "top1_accuracy": round_float(float(np.mean(ranks_array == 1.0))) if len(ranks) else 0.0,
         "mean_rank": round_float(float(np.mean(ranks_array))) if len(ranks) else 0.0,
         "mrr": round_float(float(np.mean(1.0 / ranks_array))) if len(ranks) else 0.0,
+        "recall_at_5": round_float(float(np.mean(recall_at_5))) if recall_at_5 else 0.0,
     }
+
+
+def neighborhood_distance_correlation(
+    embeddings: np.ndarray,
+    behavior_signatures: np.ndarray,
+) -> float:
+    if len(embeddings) < 3:
+        return 0.0
+    latent_distance = 1.0 - cosine_similarity_matrix(embeddings, embeddings)
+    behavior_distance = 1.0 - cosine_similarity_matrix(
+        behavior_signatures, behavior_signatures
+    )
+    upper = np.triu_indices(len(embeddings), k=1)
+    latent = latent_distance[upper]
+    behavior = behavior_distance[upper]
+    latent_rank = np.argsort(np.argsort(latent)).astype(float)
+    behavior_rank = np.argsort(np.argsort(behavior)).astype(float)
+    if np.std(latent_rank) == 0 or np.std(behavior_rank) == 0:
+        return 0.0
+    return float(np.corrcoef(latent_rank, behavior_rank)[0, 1])
 
 
 def activity_count_features(traces: Iterable[Trace]) -> FeatureDict:

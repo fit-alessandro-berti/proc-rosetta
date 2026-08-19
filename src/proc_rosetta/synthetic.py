@@ -18,23 +18,31 @@ class SyntheticConfig:
     min_activities: int = 8
     max_arity: int = 3
     traces_per_sample: int = 128
+    max_trace_length: int = 128
     curriculum_phase: int = 3
     reuse_activity_probability: float = 0.15
     leaf_probability: float = 0.55
     motif_context_size: int = 6
+    motif_context_min_nodes: int = 4
+    motif_context_max_nodes: int = 12
     min_tree_depth: int = 4
     min_tree_size: int = 20
     generator: str = "behavior_families"
     variants_per_behavior: int = 2
-    exact_equivalence_only_for_training: bool = False
-    log_views_per_behavior: int = 1
-    log_view_modes: tuple[str, ...] = ("uniform_variants", "resampled")
+    exact_equivalence_only_for_training: bool = True
+    log_views_per_behavior: int = 4
+    log_view_modes: tuple[str, ...] = (
+        "uniform_variants",
+        "resampled",
+        "sparse",
+        "long_tail",
+    )
     motif_weights: dict[str, float] = field(
         default_factory=lambda: {
-            "ordinary_tree": 0.55,
-            "duplicate_vs_silent": 0.15,
-            "concurrent_vs_interleaved": 0.15,
-            "m_nonfreechoice": 0.15,
+            "ordinary_tree": 0.75,
+            "duplicate_vs_silent": 1.0 / 12.0,
+            "concurrent_vs_interleaved": 1.0 / 12.0,
+            "m_nonfreechoice": 1.0 / 12.0,
         }
     )
     min_families_per_motif: dict[str, int] = field(
@@ -72,6 +80,8 @@ class SyntheticConfig:
             "reuse_activity_probability": self.reuse_activity_probability,
             "leaf_probability": self.leaf_probability,
             "motif_context_size": self.motif_context_size,
+            "motif_context_min_nodes": self.motif_context_min_nodes,
+            "motif_context_max_nodes": self.motif_context_max_nodes,
             "min_tree_depth": self.min_tree_depth,
             "min_tree_size": self.min_tree_size,
             "generator": self.generator,
@@ -85,6 +95,7 @@ class SyntheticConfig:
                 "log_views_per_behavior": self.log_views_per_behavior,
                 "sampling_modes": list(self.log_view_modes),
                 "traces_per_log": self.traces_per_sample,
+                "max_trace_length": self.max_trace_length,
             },
             "motifs": dict(self.motif_weights),
             "class_coverage": {
@@ -125,30 +136,36 @@ class SyntheticConfig:
             min_activities=int(data.get("min_activities", 8)),
             max_arity=int(data.get("max_arity", 3)),
             traces_per_sample=int(logs.get("traces_per_log", data.get("traces_per_sample", 128))),
+            max_trace_length=int(logs.get("max_trace_length", 128)),
             curriculum_phase=int(data.get("curriculum_phase", 3)),
             reuse_activity_probability=float(data.get("reuse_activity_probability", 0.15)),
             leaf_probability=float(data.get("leaf_probability", 0.55)),
             motif_context_size=int(data.get("motif_context_size", 6)),
+            motif_context_min_nodes=int(data.get("motif_context_min_nodes", 4)),
+            motif_context_max_nodes=int(data.get("motif_context_max_nodes", 12)),
             min_tree_depth=int(data.get("min_tree_depth", 4)),
             min_tree_size=int(data.get("min_tree_size", 20)),
             generator=str(data.get("generator", "behavior_families")),
             variants_per_behavior=int(representations.get("variants_per_behavior", 2)),
             exact_equivalence_only_for_training=bool(
-                representations.get("exact_equivalence_only_for_training", False)
+                representations.get("exact_equivalence_only_for_training", True)
             ),
-            log_views_per_behavior=int(logs.get("log_views_per_behavior", 1)),
+            log_views_per_behavior=int(logs.get("log_views_per_behavior", 4)),
             log_view_modes=tuple(
                 str(value)
-                for value in logs.get("sampling_modes", ("uniform_variants", "resampled"))
+                for value in logs.get(
+                    "sampling_modes",
+                    ("uniform_variants", "resampled", "sparse", "long_tail"),
+                )
             ),
             motif_weights={
                 str(key): float(value) for key, value in motif_weights.items()
             }
             or {
-                "ordinary_tree": 0.55,
-                "duplicate_vs_silent": 0.15,
-                "concurrent_vs_interleaved": 0.15,
-                "m_nonfreechoice": 0.15,
+                "ordinary_tree": 0.75,
+                "duplicate_vs_silent": 1.0 / 12.0,
+                "concurrent_vs_interleaved": 1.0 / 12.0,
+                "m_nonfreechoice": 1.0 / 12.0,
             },
             min_families_per_motif={
                 str(key): int(value)
@@ -191,6 +208,55 @@ class SyntheticConfig:
     @staticmethod
     def preset(name: str) -> "SyntheticConfig":
         presets: dict[str, dict[str, object]] = {
+            "stage_a_tiny_overfit": {
+                "curriculum_phase": 2,
+                "max_depth": 3,
+                "max_activities": 6,
+                "min_activities": 3,
+                "min_tree_depth": 2,
+                "min_tree_size": 5,
+                "motifs": {"ordinary_tree": 1.0},
+                "representations": {
+                    "variants_per_behavior": 1,
+                    "exact_equivalence_only_for_training": True,
+                },
+                "logs": {
+                    "log_views_per_behavior": 2,
+                    "sampling_modes": ["uniform_variants", "resampled"],
+                    "traces_per_log": 32,
+                },
+                "class_coverage": {"mode": "best_effort"},
+            },
+            "stage_b_exact_alignment": {
+                "curriculum_phase": 2,
+                "representations": {
+                    "variants_per_behavior": 2,
+                    "exact_equivalence_only_for_training": True,
+                },
+                "logs": {
+                    "log_views_per_behavior": 4,
+                    "sampling_modes": [
+                        "uniform_variants",
+                        "resampled",
+                        "sparse",
+                        "long_tail",
+                    ],
+                },
+            },
+            "stage_c_behavior_geometry": {},
+            "stage_d_observation_curriculum": {
+                "logs": {
+                    "log_views_per_behavior": 6,
+                    "sampling_modes": [
+                        "uniform_variants",
+                        "resampled",
+                        "sparse",
+                        "incomplete",
+                        "long_tail",
+                        "noisy",
+                    ],
+                },
+            },
             "smoke": {
                 "max_depth": 2,
                 "max_activities": 8,
@@ -283,6 +349,11 @@ class ProcessSample:
     traces: tuple[tuple[str, ...], ...]
     petri_graph: PetriGraph
     equivalence_id: str
+    exact_behavior_id: str | None = None
+    behavior_signature: tuple[float, ...] = ()
+    exact_trace_language_id: str | None = None
+    partial_order_id: str | None = None
+    structural_motif_id: str | None = None
     model_variant_id: str | None = None
     log_view_id: str | None = None
     representation_kind: str = "canonical_block_pm4py"
@@ -295,6 +366,11 @@ class ProcessSample:
             "traces": [list(trace) for trace in self.traces],
             "petri_graph": self.petri_graph.to_dict(),
             "equivalence_id": self.equivalence_id,
+            "exact_behavior_id": self.exact_behavior_id,
+            "behavior_signature": list(self.behavior_signature),
+            "exact_trace_language_id": self.exact_trace_language_id,
+            "partial_order_id": self.partial_order_id,
+            "structural_motif_id": self.structural_motif_id,
             "model_variant_id": self.model_variant_id,
             "log_view_id": self.log_view_id,
             "representation_kind": self.representation_kind,
@@ -311,6 +387,27 @@ class ProcessSample:
             traces=tuple(tuple(str(event) for event in trace) for trace in data["traces"]),
             petri_graph=PetriGraph.from_dict(data["petri_graph"]),
             equivalence_id=str(data["equivalence_id"]),
+            exact_behavior_id=(
+                None
+                if data.get("exact_behavior_id") is None
+                else str(data["exact_behavior_id"])
+            ),
+            behavior_signature=tuple(
+                float(value) for value in data.get("behavior_signature", ())
+            ),
+            exact_trace_language_id=(
+                None
+                if data.get("exact_trace_language_id") is None
+                else str(data["exact_trace_language_id"])
+            ),
+            partial_order_id=(
+                None if data.get("partial_order_id") is None else str(data["partial_order_id"])
+            ),
+            structural_motif_id=(
+                None
+                if data.get("structural_motif_id") is None
+                else str(data["structural_motif_id"])
+            ),
             model_variant_id=(
                 None if data.get("model_variant_id") is None else str(data["model_variant_id"])
             ),

@@ -53,6 +53,20 @@ def test_retrieval_metrics_and_trace_features():
     assert features[("activity", "A0")] == 0.5
 
 
+def test_retrieval_accepts_any_candidate_with_the_same_exact_behavior_id():
+    query = np.asarray([[1.0, 0.0], [1.0, 0.0]])
+    candidates = np.asarray([[1.0, 0.0], [1.0, 0.0]])
+    metrics = retrieval_metrics(
+        query,
+        candidates,
+        query_labels=["same", "same"],
+        candidate_labels=["same", "same"],
+    )
+
+    assert metrics["top1_accuracy"] == 1.0
+    assert metrics["recall_at_5"] == 1.0
+
+
 def test_decode_token_edit_helpers():
     tokenizer = TreeTokenizer(max_activities=4)
     tokens = [

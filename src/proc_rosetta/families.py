@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
-from hashlib import blake2b
+from dataclasses import dataclass, replace
+from hashlib import blake2b, sha256
+import math
 import random
 from typing import Any, Callable, Sequence
 
@@ -50,6 +51,7 @@ class ModelVariant:
     transformation_sequence: tuple[str, ...]
     structural_statistics: dict[str, object]
     equivalence_level: str
+    partial_order_equivalent: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -141,6 +143,9 @@ class TraceCorruptor:
 @dataclass(frozen=True)
 class BehaviorFamily:
     behavior_id: str
+    exact_behavior_id: str | None
+    exact_trace_language_id: str | None
+    behavior_signature: tuple[float, ...]
     canonical_tree: ProcessTreeNode
     model_variants: tuple[ModelVariant, ...]
     clean_trace_pool: tuple[tuple[str, ...], ...]
@@ -275,28 +280,30 @@ def generate_behavior_family(
         tree, NodeKind.LOOP
     )
 
-    context_labels: tuple[str, ...] = ()
+    context_metadata: dict[str, object] = {}
     if motif != "ordinary_tree":
-        used_labels = set(tree.unique_activity_labels())
-        context_limit = max(0, int(getattr(config, "max_activities", 30)) - len(used_labels))
-        context_size = min(
-            max(0, int(getattr(config, "motif_context_size", 2))), context_limit
+        tree, runtime_variants, context_metadata = _apply_random_structural_context(
+            tree,
+            runtime_variants,
+            rng,
+            behavior_id,
+            max_activities=int(getattr(config, "max_activities", 30)),
+            min_nodes=int(getattr(config, "motif_context_min_nodes", 4)),
+            max_nodes=int(getattr(config, "motif_context_max_nodes", 12)),
         )
-        next_index = 0
-        labels: list[str] = []
-        while len(labels) < context_size:
-            label = f"A{next_index}"
-            next_index += 1
-            if label not in used_labels:
-                labels.append(label)
-        context_labels = tuple(labels)
-        if context_labels:
-            for label in context_labels:
-                tree = ProcessTreeNode.seq(tree, ProcessTreeNode.activity(label))
-            runtime_variants = tuple(
-                _append_visible_suffix(variant, context_labels, behavior_id)
-                for variant in runtime_variants
-            )
+    tree = tree.normalize(
+        int(getattr(config, "max_arity", 3)),
+        canonicalize_activity_labels=False,
+    )
+    family_label_mapping = tree.activity_label_mapping()
+    tree = tree.relabel(family_label_mapping).normalize(
+        int(getattr(config, "max_arity", 3)),
+        canonicalize_activity_labels=False,
+    )
+    runtime_variants = tuple(
+        _relabel_runtime_variant(variant, family_label_mapping)
+        for variant in runtime_variants
+    )
 
     runtime_variants = list(runtime_variants)
     requested_variants = max(1, int(getattr(config, "variants_per_behavior", 2)))
@@ -384,6 +391,7 @@ def generate_behavior_family(
                     nonblock_reason=variant.nonblock_reason,
                 ),
                 equivalence_level=equivalence_level,
+                partial_order_equivalent=variant.partial_order_equivalent,
             )
             for variant in runtime_variants[:requested_variants]
         )
@@ -410,8 +418,12 @@ def generate_behavior_family(
             max_visible_length=max(len(trace) for trace in trace_pool),
         )
         log_views = _make_log_views(config, trace_pool, behavior_id, seed_bundle["log_view"])
+        signature = bounded_behavior_signature(trace_pool, tree)
         return BehaviorFamily(
             behavior_id=behavior_id,
+            exact_behavior_id=None,
+            exact_trace_language_id=None,
+            behavior_signature=signature,
             canonical_tree=tree,
             model_variants=variants,
             clean_trace_pool=trace_pool,
@@ -425,7 +437,7 @@ def generate_behavior_family(
                 "equivalence_semantics": EQUIVALENCE_SEMANTICS,
                 "trace_language_equivalent": True,
                 "partial_order_equivalent": None,
-                "context_suffix": list(context_labels),
+                "structural_context": context_metadata,
                 "trace_pool_source": "process_tree_playout",
                 "playout_trace_count": playout_count,
             },
@@ -478,6 +490,7 @@ def generate_behavior_family(
                 nonblock_reason=variant.nonblock_reason,
             ),
             equivalence_level=equivalence_level,
+            partial_order_equivalent=variant.partial_order_equivalent,
         )
         for variant in runtime_variants[:requested_variants]
     )
@@ -489,9 +502,28 @@ def generate_behavior_family(
         raise ValueError(f"family {behavior_id} contains an unsound structural variant")
 
     trace_pool = tuple(sorted(reference_language))
-    log_views = _make_log_views(config, trace_pool, behavior_id, seed_bundle["log_view"])
+    exact_behavior_id = (
+        exact_language_behavior_id(reference_language, tree) if exact else None
+    )
+    signature = bounded_behavior_signature(reference_language, tree)
+    semantic_behavior_id = exact_behavior_id or behavior_id
+    variants = tuple(
+        replace(
+            variant,
+            variant_id=f"{semantic_behavior_id}:{variant.representation_kind}",
+        )
+        for variant in variants
+    )
+    # IDs exposed to learning are behavior-derived whenever equivalence was
+    # completely certified; split/index IDs remain only for bounded families.
+    log_views = _make_log_views(
+        config, trace_pool, semantic_behavior_id, seed_bundle["log_view"]
+    )
     return BehaviorFamily(
-        behavior_id=behavior_id,
+        behavior_id=semantic_behavior_id,
+        exact_behavior_id=exact_behavior_id,
+        exact_trace_language_id=exact_behavior_id,
+        behavior_signature=signature,
         canonical_tree=tree,
         model_variants=variants,
         clean_trace_pool=trace_pool,
@@ -507,7 +539,7 @@ def generate_behavior_family(
             "partial_order_equivalent": (
                 False if motif == "concurrent_vs_interleaved" else None
             ),
-            "context_suffix": list(context_labels),
+            "structural_context": context_metadata,
         },
     )
 
@@ -593,12 +625,33 @@ def flatten_behavior_family(
         )
         view_edits = _relabel_trace_edits(log_view.trace_edits, mapping)
         for representation_slot, variant in enumerate(family.model_variants):
+            if family.exact_behavior_id is None:
+                partial_order_id = None
+                partial_order_kind = None
+            elif variant.partial_order_equivalent is False:
+                partial_order_id = f"{family.exact_behavior_id}:partial-order:interleaved"
+                partial_order_kind = "interleaved"
+            elif variant.partial_order_equivalent is True:
+                partial_order_id = f"{family.exact_behavior_id}:partial-order:concurrent"
+                partial_order_kind = "concurrent"
+            else:
+                partial_order_id = f"{family.exact_behavior_id}:partial-order:shared"
+                partial_order_kind = None
+            row_signature = behavior_signature_with_partial_order(
+                family.behavior_signature,
+                partial_order_kind,
+            )
             rows.append(
                 ProcessSample(
                     tree=view_tree,
                     traces=view_traces,
                     petri_graph=variant.petri_graph.relabel(mapping),
                     equivalence_id=family.behavior_id,
+                    exact_behavior_id=family.exact_behavior_id,
+                    behavior_signature=row_signature,
+                    exact_trace_language_id=family.exact_trace_language_id,
+                    partial_order_id=partial_order_id,
+                    structural_motif_id=str(family.metadata.get("motif", "unknown")),
                     model_variant_id=variant.variant_id,
                     log_view_id=log_view.log_view_id,
                     representation_kind=variant.representation_kind,
@@ -612,12 +665,22 @@ def flatten_behavior_family(
                             [edit.to_dict() for edit in trace_edits]
                             for trace_edits in view_edits
                         ],
+                        "original_trace_lengths": [
+                            len(trace) for trace in view_traces
+                        ],
+                        "was_truncated": False,
                         "observation_quality": (
                             "noisy" if any(log_view.trace_edits) else log_view.sampling_mode
                         ),
                         "transformation_sequence": list(variant.transformation_sequence),
                         "structural_statistics": variant.structural_statistics,
                         "equivalence_certificate": family.equivalence_certificate.to_dict(),
+                        "exact_behavior_id": family.exact_behavior_id,
+                        "exact_trace_language_id": family.exact_trace_language_id,
+                        "partial_order_id": partial_order_id,
+                        "structural_motif_id": str(
+                            family.metadata.get("motif", "unknown")
+                        ),
                     },
                 )
             )
@@ -630,13 +693,14 @@ def generate_family_samples(
     seed: int,
     split: str,
     progress_update: Callable[[int], None] | None = None,
+    excluded_exact_behavior_ids: set[str] | None = None,
 ) -> list[Any]:
     if count < 0:
         raise ValueError("count must be non-negative")
     if count == 0:
         return []
     rows_per_family = max(1, int(getattr(config, "variants_per_behavior", 2))) * max(
-        1, int(getattr(config, "log_views_per_behavior", 1))
+        1, int(getattr(config, "log_views_per_behavior", 4))
     )
     mode = str(getattr(config, "class_coverage_mode", "strict"))
     if mode == "strict" and split in getattr(config, "min_families_per_motif", {}):
@@ -649,6 +713,7 @@ def generate_family_samples(
     family_count = (count + rows_per_family - 1) // rows_per_family
     motif_plan, _, _, _ = motif_quota_plan(family_count, config, seed, split)
     rows: list[Any] = []
+    seen_exact_behavior_ids = set(excluded_exact_behavior_ids or ())
     family_index = 0
     attempts = 0
     max_attempts = max(100, count * 20)
@@ -670,12 +735,21 @@ def generate_family_samples(
                 and family.equivalence_certificate.status != "exact"
             ):
                 continue
+            if (
+                family.exact_behavior_id is not None
+                and family.exact_behavior_id in seen_exact_behavior_ids
+            ):
+                continue
             family_rows = flatten_behavior_family(
                 family,
                 max_activities=int(getattr(config, "max_activities", 30)),
             )
             accepted_rows = family_rows[: count - len(rows)]
             rows.extend(accepted_rows)
+            if family.exact_behavior_id is not None:
+                seen_exact_behavior_ids.add(family.exact_behavior_id)
+                if excluded_exact_behavior_ids is not None:
+                    excluded_exact_behavior_ids.add(family.exact_behavior_id)
             if progress_update is not None:
                 progress_update(len(accepted_rows))
             accepted = True
@@ -769,11 +843,321 @@ def structural_statistics(
     }
 
 
+def normalized_visible_language(
+    language: Sequence[Sequence[str]],
+    tree: ProcessTreeNode,
+) -> tuple[tuple[str, ...], ...]:
+    """Canonicalize activity identity before hashing behavioral evidence."""
+
+    normalized_tree = tree.normalize(canonicalize_activity_labels=False)
+    mapping = normalized_tree.activity_label_mapping()
+    normalized = {
+        tuple(mapping.get(str(label), str(label)) for label in trace)
+        for trace in language
+    }
+    return tuple(sorted(normalized))
+
+
+def exact_language_behavior_id(
+    language: Sequence[Sequence[str]],
+    tree: ProcessTreeNode,
+) -> str:
+    payload = "\n".join(
+        "|".join(trace) for trace in normalized_visible_language(language, tree)
+    )
+    return sha256(payload.encode("utf-8")).hexdigest()
+
+
+def bounded_behavior_signature(
+    language: Sequence[Sequence[str]],
+    tree: ProcessTreeNode,
+    dimensions: int = 128,
+) -> tuple[float, ...]:
+    """Build a compact feature-hashed language/footprint signature."""
+
+    if dimensions <= 0:
+        raise ValueError("behavior signature dimensions must be positive")
+    traces = normalized_visible_language(language, tree)
+    features: Counter[str] = Counter()
+    for trace in traces:
+        features[f"length:{len(trace)}"] += 1
+        if trace:
+            features[f"start:{trace[0]}"] += 1
+            features[f"end:{trace[-1]}"] += 1
+        features.update(f"activity:{label}" for label in trace)
+        features.update(
+            f"direct:{left}>{right}" for left, right in zip(trace, trace[1:])
+        )
+        features.update(
+            f"eventual:{trace[left]}>{trace[right]}"
+            for left in range(len(trace))
+            for right in range(left + 1, len(trace))
+        )
+        features[f"variant:{'|'.join(trace)}"] += 1
+
+    vector = [0.0] * dimensions
+    for feature, count in features.items():
+        digest = blake2b(feature.encode("utf-8"), digest_size=9).digest()
+        index = int.from_bytes(digest[:8], "big") % dimensions
+        sign = 1.0 if digest[8] & 1 else -1.0
+        vector[index] += sign * float(count)
+    norm = math.sqrt(sum(value * value for value in vector))
+    if norm:
+        vector = [value / norm for value in vector]
+    return tuple(round(value, 8) for value in vector)
+
+
+def behavior_signature_with_partial_order(
+    signature: Sequence[float],
+    partial_order_kind: str | None,
+    strength: float = 0.25,
+) -> tuple[float, ...]:
+    """Add a small partial-order component without turning analogues into negatives."""
+
+    values = [float(value) for value in signature]
+    if partial_order_kind is None or not values:
+        return tuple(values)
+    direction = [0.0] * len(values)
+    for index in range(len(values)):
+        digest = blake2b(
+            f"partial-order:{partial_order_kind}:{index}".encode("utf-8"),
+            digest_size=1,
+        ).digest()[0]
+        direction[index] = 1.0 if digest & 1 else -1.0
+    direction_norm = math.sqrt(sum(value * value for value in direction))
+    combined = [
+        value + strength * component / max(direction_norm, 1e-12)
+        for value, component in zip(values, direction)
+    ]
+    norm = math.sqrt(sum(value * value for value in combined))
+    if norm:
+        combined = [value / norm for value in combined]
+    return tuple(round(value, 8) for value in combined)
+
+
+_CONTEXT_PLACEHOLDER = "__PROC_ROSETTA_MOTIF__"
+
+
+def _apply_random_structural_context(
+    motif_tree: ProcessTreeNode,
+    variants: Sequence[_RuntimeVariant],
+    rng: random.Random,
+    behavior_id: str,
+    *,
+    max_activities: int,
+    min_nodes: int,
+    max_nodes: int,
+) -> tuple[ProcessTreeNode, tuple[_RuntimeVariant, ...], dict[str, object]]:
+    """Insert a motif into one randomized structural context for every view."""
+
+    used = set(motif_tree.unique_activity_labels())
+    available = max_activities - len(used)
+    if available < 2:
+        raise ValueError("controlled motifs require room for at least two context activities")
+    # The template also contains the placeholder leaf, so a binary tree with
+    # ``n`` context activities has 2*n+1 nodes.  Cap at four context leaves to
+    # keep an all-AND complete language exactly enumerable under default gates.
+    min_leaves = max(2, math.ceil((min_nodes - 1) / 2))
+    max_leaves = min(available, 4, max(2, (max_nodes - 1) // 2))
+    if min_leaves > max_leaves:
+        raise ValueError(
+            "structural context bounds are infeasible for the activity and language limits"
+        )
+    leaf_count = rng.randint(min_leaves, max_leaves)
+    labels: list[str] = []
+    candidate = 0
+    while len(labels) < leaf_count:
+        label = f"CTX{candidate}"
+        candidate += 1
+        if label not in used:
+            labels.append(label)
+
+    nodes = [ProcessTreeNode.activity(_CONTEXT_PLACEHOLDER)]
+    nodes.extend(ProcessTreeNode.activity(label) for label in labels)
+    rng.shuffle(nodes)
+    operators: list[str] = []
+    while len(nodes) > 1:
+        left_index, right_index = sorted(rng.sample(range(len(nodes)), 2), reverse=True)
+        left = nodes.pop(left_index)
+        right = nodes.pop(right_index)
+        kind = rng.choice((NodeKind.SEQ, NodeKind.XOR, NodeKind.AND))
+        operators.append(kind.value)
+        if kind is NodeKind.SEQ and rng.random() < 0.5:
+            left, right = right, left
+        nodes.append(ProcessTreeNode(kind, children=(left, right)))
+    template = nodes[0]
+    completed_tree = _replace_context_placeholder(template, motif_tree)
+    completed_variants = tuple(
+        _compile_context_variant(template, variant, f"{behavior_id}-context-{index}")
+        for index, variant in enumerate(variants)
+    )
+    return completed_tree, completed_variants, {
+        "template": template.to_dict(),
+        "node_count": template.size(),
+        "activity_count": leaf_count,
+        "operators": operators,
+    }
+
+
+def _replace_context_placeholder(
+    template: ProcessTreeNode,
+    motif_tree: ProcessTreeNode,
+) -> ProcessTreeNode:
+    if template.kind is NodeKind.ACTIVITY and template.label == _CONTEXT_PLACEHOLDER:
+        return motif_tree
+    if not template.children:
+        return template
+    return ProcessTreeNode(
+        template.kind,
+        children=tuple(
+            _replace_context_placeholder(child, motif_tree) for child in template.children
+        ),
+    )
+
+
+def _contains_context_placeholder(node: ProcessTreeNode) -> bool:
+    return (
+        node.kind is NodeKind.ACTIVITY
+        and node.label == _CONTEXT_PLACEHOLDER
+    ) or any(_contains_context_placeholder(child) for child in node.children)
+
+
+def _compile_context_variant(
+    template: ProcessTreeNode,
+    motif: _RuntimeVariant,
+    name: str,
+) -> _RuntimeVariant:
+    if template.kind is NodeKind.ACTIVITY and template.label == _CONTEXT_PLACEHOLDER:
+        clone = _clone_isomorphic(
+            motif.net, motif.initial_marking, motif.final_marking, f"{name}-motif"
+        )
+        return _RuntimeVariant(
+            motif.representation_kind,
+            clone[0],
+            clone[1],
+            clone[2],
+            motif.transformations,
+            nonblock_reason=motif.nonblock_reason,
+            partial_order_equivalent=motif.partial_order_equivalent,
+        )
+    if not _contains_context_placeholder(template):
+        bundle = tree_to_petri_net(template)
+        return _RuntimeVariant(
+            "structural_context",
+            bundle.net,
+            bundle.initial_marking,
+            bundle.final_marking,
+            ("context_tree_to_petri",),
+        )
+    if template.kind not in {NodeKind.SEQ, NodeKind.XOR, NodeKind.AND}:
+        raise ValueError("random structural context supports SEQ, XOR, and AND")
+    children = tuple(
+        _compile_context_variant(child, motif, f"{name}-{index}")
+        for index, child in enumerate(template.children)
+    )
+    composed = _compose_runtime_variants(template.kind, children, name)
+    return _RuntimeVariant(
+        motif.representation_kind,
+        composed[0],
+        composed[1],
+        composed[2],
+        (*motif.transformations, f"shared_{template.kind.value}_context"),
+        nonblock_reason=motif.nonblock_reason,
+        partial_order_equivalent=motif.partial_order_equivalent,
+    )
+
+
+def _compose_runtime_variants(
+    kind: NodeKind,
+    components: Sequence[_RuntimeVariant],
+    name: str,
+):
+    from pm4py.objects.petri_net.obj import Marking, PetriNet
+    from pm4py.objects.petri_net.utils import petri_utils
+
+    net = PetriNet(name)
+    markings: list[tuple[Any, Any]] = []
+    for component_index, component in enumerate(components):
+        places = sorted(component.net.places, key=lambda place: str(place.name))
+        transitions = sorted(
+            component.net.transitions, key=lambda transition: str(transition.name)
+        )
+        place_map = {
+            place: PetriNet.Place(f"c{component_index}_p{index}_{place.name}")
+            for index, place in enumerate(places)
+        }
+        transition_map = {
+            transition: PetriNet.Transition(
+                f"c{component_index}_t{index}_{transition.name}", transition.label
+            )
+            for index, transition in enumerate(transitions)
+        }
+        net.places.update(place_map.values())
+        net.transitions.update(transition_map.values())
+        node_map = {**place_map, **transition_map}
+        for arc in component.net.arcs:
+            petri_utils.add_arc_from_to(
+                node_map[arc.source], node_map[arc.target], net, int(arc.weight)
+            )
+        markings.append(
+            (
+                Marking({place_map[p]: int(tokens) for p, tokens in component.initial_marking.items()}),
+                Marking({place_map[p]: int(tokens) for p, tokens in component.final_marking.items()}),
+            )
+        )
+
+    def connect(marking: Any, transition: Any, outgoing: bool) -> None:
+        for place, tokens in marking.items():
+            if outgoing:
+                petri_utils.add_arc_from_to(transition, place, net, int(tokens))
+            else:
+                petri_utils.add_arc_from_to(place, transition, net, int(tokens))
+
+    if kind is NodeKind.SEQ:
+        for index in range(len(markings) - 1):
+            bridge = PetriNet.Transition(f"context_seq_{index}", None)
+            net.transitions.add(bridge)
+            connect(markings[index][1], bridge, False)
+            connect(markings[index + 1][0], bridge, True)
+        return net, markings[0][0], markings[-1][1]
+
+    source = PetriNet.Place("context_source")
+    sink = PetriNet.Place("context_sink")
+    net.places.update({source, sink})
+    if kind is NodeKind.XOR:
+        for index, (initial, final) in enumerate(markings):
+            enter = PetriNet.Transition(f"context_xor_enter_{index}", None)
+            leave = PetriNet.Transition(f"context_xor_leave_{index}", None)
+            net.transitions.update({enter, leave})
+            petri_utils.add_arc_from_to(source, enter, net)
+            connect(initial, enter, True)
+            connect(final, leave, False)
+            petri_utils.add_arc_from_to(leave, sink, net)
+    elif kind is NodeKind.AND:
+        split = PetriNet.Transition("context_and_split", None)
+        join = PetriNet.Transition("context_and_join", None)
+        net.transitions.update({split, join})
+        petri_utils.add_arc_from_to(source, split, net)
+        for initial, final in markings:
+            connect(initial, split, True)
+            connect(final, join, False)
+        petri_utils.add_arc_from_to(join, sink, net)
+    else:
+        raise ValueError(f"unsupported context operator: {kind.value}")
+    return net, Marking({source: 1}), Marking({sink: 1})
+
+
 def _ordinary_tree_family(config: Any, rng: random.Random, behavior_id: str):
     # Local import avoids coupling the neutral family structures to the legacy API.
     from proc_rosetta.synthetic import generate_process_tree
 
-    tree = generate_process_tree(config, rng)
+    generation_config = config
+    if bool(getattr(config, "exact_equivalence_only_for_training", False)):
+        generation_config = replace(
+            config,
+            curriculum_phase=min(int(getattr(config, "curriculum_phase", 3)), 2),
+        )
+    tree = generate_process_tree(generation_config, rng)
     bundle = tree_to_petri_net(tree)
     renamed = _clone_isomorphic(
         bundle.net, bundle.initial_marking, bundle.final_marking, f"{behavior_id}-renamed"
@@ -794,6 +1178,16 @@ def _ordinary_tree_family(config: Any, rng: random.Random, behavior_id: str):
             ("process_tree_to_petri", "isomorphic_renaming"),
         ),
     )
+
+
+def _relabel_runtime_variant(
+    variant: _RuntimeVariant,
+    mapping: dict[str, str],
+) -> _RuntimeVariant:
+    for transition in variant.net.transitions:
+        if transition.label is not None:
+            transition.label = mapping.get(str(transition.label), str(transition.label))
+    return variant
 
 
 def _duplicate_vs_silent_family(behavior_id: str):
@@ -1085,9 +1479,15 @@ def _make_log_views(
     behavior_id: str,
     seed: int,
 ) -> tuple[LogView, ...]:
-    count = max(1, int(getattr(config, "log_views_per_behavior", 1)))
+    count = max(1, int(getattr(config, "log_views_per_behavior", 4)))
     traces_per_view = max(1, int(getattr(config, "traces_per_sample", 128)))
     modes = tuple(getattr(config, "log_view_modes", ("uniform_variants", "resampled")))
+    maximum_length = max(1, int(getattr(config, "max_trace_length", 128)))
+    trace_pool = tuple(trace for trace in trace_pool if len(trace) <= maximum_length)
+    if not trace_pool:
+        raise ValueError(
+            f"behavior {behavior_id} has no traces within max_trace_length={maximum_length}"
+        )
     alphabet = tuple(sorted({label for trace in trace_pool for label in trace}))
     views: list[LogView] = []
     for index in range(count):
@@ -1131,6 +1531,10 @@ def _make_log_views(
                 noisy_traces.append(noisy)
                 trace_edits.append(edits)
             traces = noisy_traces
+            for trace_index, trace in enumerate(traces):
+                if len(trace) > maximum_length:
+                    traces[trace_index] = rng.choice(trace_pool)
+                    trace_edits[trace_index] = ()
         views.append(
             LogView(
                 log_view_id=f"{behavior_id}:log-{index:02d}",
