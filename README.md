@@ -287,6 +287,11 @@ checkpoints/proc_rosetta.best.pt  # best ordinary trace-discovery epoch
 checkpoints/training_metrics.csv  # per-epoch metrics
 ```
 
+Best-checkpoint selection is strictly lexicographic: ordinary trace canonical
+exact match, normalized tree-edit score, exact-behavior Recall@1, then
+behavior-distance Spearman correlation. The full key is persisted so resumed
+runs preserve the same ordering.
+
 Resume an interrupted run from the latest completed epoch:
 
 ```bash

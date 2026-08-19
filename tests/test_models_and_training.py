@@ -18,6 +18,7 @@ from proc_rosetta.training import (
     BehaviorFamilyBatchSampler,
     TrainConfig,
     _different_behavior_permutation,
+    checkpoint_selection_key,
     loss_weights_from_checkpoint,
     stage_acceptance_report,
     train_synthetic,
@@ -57,6 +58,39 @@ def test_label_smoothing_ignores_grammar_masked_logits():
 
     assert torch.isfinite(loss)
     assert loss.item() < 1.0
+
+
+def test_checkpoint_selection_is_strictly_lexicographic():
+    baseline = {
+        "checkpoint_selection_primary_exact": 0.90,
+        "checkpoint_selection_edit_score": 0.90,
+        "checkpoint_selection_recall_at_1": 0.90,
+        "checkpoint_selection_spearman": 0.90,
+    }
+    lower_exact = {**baseline, "checkpoint_selection_primary_exact": 0.8999999}
+    lower_exact.update(
+        checkpoint_selection_edit_score=1.0,
+        checkpoint_selection_recall_at_1=1.0,
+        checkpoint_selection_spearman=1.0,
+    )
+    tied_exact_better_edit = {
+        **baseline,
+        "checkpoint_selection_edit_score": 0.91,
+        "checkpoint_selection_recall_at_1": 0.0,
+        "checkpoint_selection_spearman": -1.0,
+    }
+
+    assert checkpoint_selection_key(lower_exact) < checkpoint_selection_key(baseline)
+    assert checkpoint_selection_key(tied_exact_better_edit) > checkpoint_selection_key(
+        baseline
+    )
+    legacy_metrics = {
+        "ordinary_trace_canonical_exact": 0.75,
+        "trace_normalized_tree_edit": 0.20,
+        "exact_behavior_recall_at_1": 0.60,
+        "behavior_distance_spearman": 0.40,
+    }
+    assert checkpoint_selection_key(legacy_metrics) == (0.75, 0.80, 0.60, 0.40)
 
 
 def test_train_synthetic_smoke():

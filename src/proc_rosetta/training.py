@@ -627,9 +627,11 @@ def _summarize_discovery_metrics(
     }
     for name, matrix in matrices.items():
         metrics[f"effective_rank_{name}"] = float(_effective_rank_tensor(matrix))
-        metrics[f"mean_dimension_std_{name}"] = float(
-            matrix.std(dim=0, unbiased=False).mean()
-        )
+        dimension_std = matrix.std(dim=0, unbiased=False)
+        metrics[f"min_dimension_std_{name}"] = float(dimension_std.min())
+        metrics[f"median_dimension_std_{name}"] = float(dimension_std.median())
+        metrics[f"mean_dimension_std_{name}"] = float(dimension_std.mean())
+        metrics[f"max_dimension_std_{name}"] = float(dimension_std.max())
     recalls: list[float] = []
     for left_name, left in matrices.items():
         for right_name, right in matrices.items():
@@ -700,12 +702,52 @@ def _summarize_discovery_metrics(
         if ordinary
         else metrics["trace_canonical_exact"]
     )
+    # Retain a scalar proxy for schedulers and tabular logs. Checkpoint choice
+    # itself uses checkpoint_selection_key(), so the ordering is exact rather
+    # than dependent on validation-set size or floating-point scale.
+    behavior_spearman = metrics.get("behavior_distance_spearman", -1.0)
+    metrics["checkpoint_selection_primary_exact"] = primary_exact
+    metrics["checkpoint_selection_edit_score"] = 1.0 - metrics[
+        "trace_normalized_tree_edit"
+    ]
+    metrics["checkpoint_selection_recall_at_1"] = metrics[
+        "exact_behavior_recall_at_1"
+    ]
+    metrics["checkpoint_selection_spearman"] = behavior_spearman
     metrics["checkpoint_selection_score"] = (
         primary_exact
-        - 0.01 * metrics["trace_normalized_tree_edit"]
-        + 0.001 * metrics["exact_behavior_recall_at_1"]
+        + 1e-6 * metrics["checkpoint_selection_edit_score"]
+        + 1e-9 * metrics["exact_behavior_recall_at_1"]
+        + 1e-12 * ((behavior_spearman + 1.0) / 2.0)
     )
     return metrics
+
+
+def checkpoint_selection_key(metrics: dict[str, float]) -> tuple[float, ...]:
+    """Return the strict discovery-first ordering used to choose checkpoints."""
+
+    primary_exact = metrics.get(
+        "checkpoint_selection_primary_exact",
+        metrics.get(
+            "ordinary_trace_canonical_exact",
+            metrics.get("trace_canonical_exact", float("-inf")),
+        ),
+    )
+    return (
+        primary_exact,
+        metrics.get(
+            "checkpoint_selection_edit_score",
+            1.0 - metrics.get("trace_normalized_tree_edit", float("inf")),
+        ),
+        metrics.get(
+            "checkpoint_selection_recall_at_1",
+            metrics.get("exact_behavior_recall_at_1", float("-inf")),
+        ),
+        metrics.get(
+            "checkpoint_selection_spearman",
+            metrics.get("behavior_distance_spearman", -1.0),
+        ),
+    )
 
 
 def _effective_rank_tensor(matrix: torch.Tensor) -> torch.Tensor:
@@ -1012,6 +1054,7 @@ def train_from_data_dir(
     history: list[dict[str, object]] = []
     best_validation_loss = float("inf")
     best_validation_score = float("-inf")
+    best_validation_key = (float("-inf"),) * 4
     epochs_without_improvement = 0
     start_epoch = 1
     if resume_checkpoint is not None:
@@ -1029,6 +1072,26 @@ def train_from_data_dir(
         stored_best_score = resume_checkpoint.get("best_validation_score")
         if stored_best_score is not None:
             best_validation_score = float(stored_best_score)
+        stored_best_key = resume_checkpoint.get("best_validation_key")
+        if isinstance(stored_best_key, (list, tuple)) and len(stored_best_key) == 4:
+            best_validation_key = tuple(float(value) for value in stored_best_key)
+        elif history:
+            validation_rows = [
+                row.get("validation") for row in history if isinstance(row, dict)
+            ]
+            compatible_rows = [
+                row
+                for row in validation_rows
+                if isinstance(row, dict)
+                and (
+                    "ordinary_trace_canonical_exact" in row
+                    or "trace_canonical_exact" in row
+                )
+            ]
+            if compatible_rows:
+                best_validation_key = max(
+                    checkpoint_selection_key(row) for row in compatible_rows
+                )
         if history:
             epochs_without_improvement = int(
                 history[-1].get("epochs_without_improvement", 0)
@@ -1129,8 +1192,10 @@ def train_from_data_dir(
 
         validation_loss = validation_metrics["loss"]
         best_validation_loss = min(best_validation_loss, validation_loss)
-        improved = validation_score > (best_validation_score + train_config.min_delta)
+        validation_key = checkpoint_selection_key(validation_metrics)
+        improved = validation_key > best_validation_key
         if improved:
+            best_validation_key = validation_key
             best_validation_score = validation_score
             epochs_without_improvement = 0
         else:
@@ -1154,6 +1219,7 @@ def train_from_data_dir(
             "epoch_seconds": elapsed,
             "best_validation_loss": best_validation_loss,
             "best_validation_score": best_validation_score,
+            "best_validation_key": list(best_validation_key),
             "is_best": improved,
             "epochs_without_improvement": epochs_without_improvement,
             "stage_acceptance": acceptance,
@@ -1170,6 +1236,7 @@ def train_from_data_dir(
             epoch=epoch,
             best_validation_loss=best_validation_loss,
             best_validation_score=best_validation_score,
+            best_validation_key=best_validation_key,
             is_best=False,
             optimizer=optimizer,
             scheduler=scheduler,
@@ -1186,6 +1253,7 @@ def train_from_data_dir(
                 epoch=epoch,
                 best_validation_loss=best_validation_loss,
                 best_validation_score=best_validation_score,
+                best_validation_key=best_validation_key,
                 is_best=True,
                 optimizer=optimizer,
                 scheduler=scheduler,
@@ -1209,8 +1277,8 @@ def train_from_data_dir(
             and epochs_without_improvement >= train_config.early_stopping_patience
         ):
             debug(
-                f"Early stopping after {epoch} epochs; ordinary trace discovery did not improve by "
-                f"{train_config.min_delta:g} for {train_config.early_stopping_patience} epochs.",
+                f"Early stopping after {epoch} epochs; the discovery-first checkpoint key did not "
+                f"improve for {train_config.early_stopping_patience} epochs.",
                 enabled=show_progress,
             )
             break
@@ -1397,6 +1465,10 @@ CSV_METRIC_NAMES = (
     "exact_behavior_recall_at_1",
     "behavior_distance_spearman",
     "false_negative_rate",
+    "checkpoint_selection_primary_exact",
+    "checkpoint_selection_edit_score",
+    "checkpoint_selection_recall_at_1",
+    "checkpoint_selection_spearman",
     "checkpoint_selection_score",
 )
 
@@ -1476,6 +1548,7 @@ def save_checkpoint(
     epoch: int,
     best_validation_loss: float | None = None,
     best_validation_score: float | None = None,
+    best_validation_key: tuple[float, ...] | None = None,
     is_best: bool = False,
     optimizer: torch.optim.Optimizer | None = None,
     scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau | None = None,
@@ -1493,6 +1566,9 @@ def save_checkpoint(
         "history": history,
         "best_validation_loss": best_validation_loss,
         "best_validation_score": best_validation_score,
+        "best_validation_key": (
+            None if best_validation_key is None else list(best_validation_key)
+        ),
         "loss_weights": asdict(loss_weights_from_config(train_config)),
         "semantic_latent_mode": train_config.semantic_latent_mode,
         "semantic_latent_stochastic": train_config.semantic_latent_mode != "deterministic",

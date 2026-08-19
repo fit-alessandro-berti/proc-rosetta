@@ -548,7 +548,10 @@ def generate_sample(
         tuple(dict.fromkeys(tree.activity_labels())),
         config.max_activities,
     )
-    tree = tree.relabel(mapping)
+    tree = tree.relabel(mapping).normalize(
+        config.max_arity,
+        canonicalize_activity_labels=False,
+    )
     traces = tuple(tuple(mapping.get(label, label) for label in trace) for trace in traces)
     petri = tree_to_petri_net(tree)
     return ProcessSample(
