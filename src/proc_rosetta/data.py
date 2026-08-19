@@ -244,8 +244,17 @@ class ProcessBatchCollator:
         return out
 
     def _trace_tokens(self, samples: Sequence[ProcessSample]) -> dict[str, torch.Tensor]:
+        original_trace_counts = torch.tensor(
+            [len(sample.traces) for sample in samples], dtype=torch.long
+        )
+        largest_trace_count = int(original_trace_counts.max().item())
+        if self.config.strict_trace_lengths and largest_trace_count > self.config.max_traces:
+            raise ValueError(
+                "trace-set size exceeds the configured maximum in strict mode: "
+                f"observed={largest_trace_count}, maximum={self.config.max_traces}"
+            )
         max_traces = min(
-            max(len(sample.traces) for sample in samples),
+            largest_trace_count,
             self.config.max_traces,
         )
         original_max_trace_length = max(
@@ -280,6 +289,8 @@ class ProcessBatchCollator:
             "lengths": lengths,
             "original_lengths": original_lengths,
             "was_truncated": was_truncated,
+            "original_trace_counts": original_trace_counts,
+            "trace_sets_were_truncated": original_trace_counts.gt(max_traces),
             "mask": mask,
         }
 

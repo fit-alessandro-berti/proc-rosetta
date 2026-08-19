@@ -115,6 +115,20 @@ def test_strict_trace_collation_rejects_silent_prefix_truncation():
         collator([too_long])
 
 
+def test_strict_trace_collation_rejects_silent_trace_set_truncation():
+    config = SyntheticConfig(max_depth=2, max_activities=4, traces_per_sample=1)
+    sample = SyntheticProcessDataset(1, config=config, seed=3).samples[0]
+    too_many = replace(sample, traces=tuple(("A0",) for _ in range(129)))
+    collator = ProcessBatchCollator(
+        TreeTokenizer(max_activities=4),
+        ActivityTokenizer(max_activities=4),
+        BatchConfig(max_traces=128, strict_trace_lengths=True),
+    )
+
+    with pytest.raises(ValueError, match="trace-set size"):
+        collator([too_many])
+
+
 def test_strong_positive_mask_distinguishes_partial_order_semantics():
     config = SyntheticConfig(
         max_activities=8,

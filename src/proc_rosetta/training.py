@@ -83,20 +83,6 @@ def loss_weights_from_config(config: TrainConfig) -> LossWeights:
     within_weight = (
         0.0 if config.training_stage == "a" else config.within_modality_contrastive_weight
     )
-
-
-def loss_weights_from_checkpoint(
-    checkpoint: dict[str, object], config: TrainConfig
-) -> LossWeights:
-    """Restore the exact serialized objective, falling back for legacy checkpoints."""
-
-    values = asdict(loss_weights_from_config(config))
-    stored = checkpoint.get("loss_weights")
-    if isinstance(stored, dict):
-        values.update(
-            {name: stored[name] for name in values if name in stored}
-        )
-    return LossWeights(**values)
     soft_weight = (
         config.soft_behavior_geometry_weight
         if config.training_stage in {"c", "d", "full"}
@@ -120,6 +106,18 @@ def loss_weights_from_checkpoint(
         behavior_temperature=config.behavior_temperature,
         latent_temperature=config.latent_temperature,
     )
+
+
+def loss_weights_from_checkpoint(
+    checkpoint: dict[str, object], config: TrainConfig
+) -> LossWeights:
+    """Restore the exact serialized objective, falling back for legacy checkpoints."""
+
+    values = asdict(loss_weights_from_config(config))
+    stored = checkpoint.get("loss_weights")
+    if isinstance(stored, dict):
+        values.update({name: stored[name] for name in values if name in stored})
+    return LossWeights(**values)
 
 
 def scheduled_sampling_probability(config: TrainConfig, epoch: int | None) -> float:
