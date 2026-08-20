@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, replace
 from hashlib import blake2b, sha256
+from itertools import repeat
 import math
 import random
 from typing import Any, Callable, Sequence
@@ -700,6 +702,7 @@ def generate_family_samples(
     split: str,
     progress_update: Callable[[int], None] | None = None,
     excluded_exact_behavior_ids: set[str] | None = None,
+    num_workers: int | None = None,
 ) -> list[Any]:
     if count < 0:
         raise ValueError("count must be non-negative")
@@ -718,6 +721,18 @@ def generate_family_samples(
             )
     family_count = (count + rows_per_family - 1) // rows_per_family
     motif_plan, _, _, _ = motif_quota_plan(family_count, config, seed, split)
+    if num_workers is not None:
+        return _generate_family_samples_parallel(
+            count=count,
+            config=config,
+            seed=seed,
+            split=split,
+            motif_plan=motif_plan,
+            rows_per_family=rows_per_family,
+            num_workers=num_workers,
+            progress_update=progress_update,
+            excluded_exact_behavior_ids=excluded_exact_behavior_ids,
+        )
     rows: list[Any] = []
     seen_exact_behavior_ids = set(excluded_exact_behavior_ids or ())
     family_index = 0
@@ -764,6 +779,103 @@ def generate_family_samples(
     if len(rows) != count:
         raise RuntimeError(f"generated {len(rows)} of {count} requested family samples")
     return rows
+
+
+def _generate_family_samples_parallel(
+    *,
+    count: int,
+    config: Any,
+    seed: int,
+    split: str,
+    motif_plan: Sequence[str],
+    rows_per_family: int,
+    num_workers: int,
+    progress_update: Callable[[int], None] | None,
+    excluded_exact_behavior_ids: set[str] | None,
+) -> list[Any]:
+    if num_workers < 1:
+        raise ValueError("num_workers must be positive")
+
+    seen_exact_behavior_ids = set(excluded_exact_behavior_ids or ())
+    accepted_rows: list[list[Any] | None] = [None] * len(motif_plan)
+    unresolved = list(range(len(motif_plan)))
+    next_family_index = 0
+    attempts = 0
+    max_attempts = max(100, count * 20)
+
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        while unresolved and attempts < max_attempts:
+            batch_size = min(len(unresolved), max_attempts - attempts)
+            slots = unresolved[:batch_size]
+            family_indices = range(next_family_index, next_family_index + batch_size)
+            candidates = executor.map(
+                _generate_behavior_family_candidate,
+                repeat(config),
+                family_indices,
+                repeat(seed),
+                repeat(split),
+                (motif_plan[slot] for slot in slots),
+            )
+            attempts += batch_size
+            next_family_index += batch_size
+            retry_slots = unresolved[batch_size:]
+
+            for slot, family in zip(slots, candidates):
+                if family is None:
+                    retry_slots.append(slot)
+                    continue
+                if (
+                    split == "training"
+                    and bool(getattr(config, "exact_equivalence_only_for_training", True))
+                    and family.equivalence_certificate.status != "exact"
+                ):
+                    retry_slots.append(slot)
+                    continue
+                if (
+                    family.exact_behavior_id is not None
+                    and family.exact_behavior_id in seen_exact_behavior_ids
+                ):
+                    retry_slots.append(slot)
+                    continue
+
+                family_rows = flatten_behavior_family(
+                    family,
+                    max_activities=int(getattr(config, "max_activities", 30)),
+                )
+                row_offset = slot * rows_per_family
+                rows_for_slot = family_rows[: max(0, min(rows_per_family, count - row_offset))]
+                accepted_rows[slot] = rows_for_slot
+                if family.exact_behavior_id is not None:
+                    seen_exact_behavior_ids.add(family.exact_behavior_id)
+                    if excluded_exact_behavior_ids is not None:
+                        excluded_exact_behavior_ids.add(family.exact_behavior_id)
+                if progress_update is not None:
+                    progress_update(len(rows_for_slot))
+            unresolved = retry_slots
+
+    rows = [row for family_rows in accepted_rows if family_rows for row in family_rows]
+    if len(rows) != count:
+        raise RuntimeError(f"generated {len(rows)} of {count} requested family samples")
+    return rows
+
+
+def _generate_behavior_family_candidate(
+    config: Any,
+    family_index: int,
+    seed: int,
+    split: str,
+    motif: str,
+) -> BehaviorFamily | None:
+    try:
+        return generate_behavior_family(
+            config,
+            family_index,
+            seed,
+            split=split,
+            motif=motif,
+        )
+    except (RuntimeError, ValueError):
+        return None
 
 
 def enumerate_visible_language(

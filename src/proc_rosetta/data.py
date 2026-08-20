@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 import json
+import os
 import random
 import shutil
 from dataclasses import dataclass, replace
@@ -618,6 +619,7 @@ def recreate_data_splits(
     config: SyntheticConfig | None = None,
     seed: int = 13,
     show_progress: bool = False,
+    use_multiprocessing: bool = False,
 ) -> dict[str, object]:
     data_dir = Path(data_dir)
     counts = counts or SplitCounts()
@@ -645,6 +647,7 @@ def recreate_data_splits(
     split_metadata: dict[str, object] = {}
     exact_signatures_by_split: dict[str, set[str]] = {}
     reserved_exact_behavior_ids: set[str] = set()
+    worker_processes = multiprocessing_worker_count() if use_multiprocessing else None
     for split, count in counts.items():
         with progress_bar(
             total=count,
@@ -658,6 +661,7 @@ def recreate_data_splits(
                     config=config,
                     seed=seed + SPLIT_NAMES.index(split),
                     progress_update=progress.update,
+                    num_workers=worker_processes,
                 )
                 samples = [
                     ProcessSample(
@@ -684,6 +688,7 @@ def recreate_data_splits(
                     split=split,
                     progress_update=progress.update,
                     excluded_exact_behavior_ids=reserved_exact_behavior_ids,
+                    num_workers=worker_processes,
                 )
         split_exact_ids = {
             sample.exact_behavior_id
@@ -718,6 +723,10 @@ def recreate_data_splits(
         "sample_format": "jsonl/process-sample.v4",
         "tree_normalization_version": "pm4py-fold-v1",
         "seed": seed,
+        "generation": {
+            "multiprocessing": use_multiprocessing,
+            "worker_processes": worker_processes or 0,
+        },
         "synthetic_config": config.to_dict(),
         "exact_behavior_signatures_disjoint": True,
         "exact_behavior_signature_counts": {
@@ -729,6 +738,12 @@ def recreate_data_splits(
         json.dump(metadata, handle, indent=2, sort_keys=True)
         handle.write("\n")
     return metadata
+
+
+def multiprocessing_worker_count() -> int:
+    """Reserve one logical CPU for the OS while always leaving one worker."""
+
+    return max(1, (os.cpu_count() or 1) - 1)
 
 
 def load_data_metadata(data_dir: str | Path) -> dict[str, object]:

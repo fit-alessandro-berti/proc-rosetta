@@ -121,6 +121,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Fail on infeasible class quotas (strict) or record deficits (best_effort).",
     )
+    sample.add_argument(
+        "--multiprocessing",
+        action="store_true",
+        help="generate samples in parallel with all but one available CPU core",
+    )
     sample.add_argument("--quiet", action="store_true", help="disable generation progress bars")
 
     train = subparsers.add_parser("train", help="train the first-stage multimodal model")
@@ -386,6 +391,7 @@ def run_sample(args: argparse.Namespace) -> int:
         config=config,
         seed=args.seed,
         show_progress=not args.quiet,
+        use_multiprocessing=args.multiprocessing,
     )
     print(json.dumps(metadata, sort_keys=True))
     return 0

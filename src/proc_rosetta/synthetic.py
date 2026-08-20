@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import random
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
+from itertools import repeat
 from typing import Callable, Sequence
 
 from proc_rosetta.pm4py_bridge import (
@@ -620,9 +622,25 @@ def generate_samples(
     config: SyntheticConfig | None = None,
     seed: int | None = None,
     progress_update: Callable[[int], None] | None = None,
+    num_workers: int | None = None,
 ) -> list[ProcessSample]:
     config = config or SyntheticConfig()
     if config.generator == "isolated":
+        if num_workers is not None:
+            if num_workers < 1:
+                raise ValueError("num_workers must be positive")
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                samples = list(
+                    executor.map(
+                        _generate_isolated_sample,
+                        repeat(config),
+                        repeat(seed or 0),
+                        range(count),
+                    )
+                )
+            if progress_update is not None:
+                progress_update(len(samples))
+            return samples
         rng = random.Random(seed)
         samples: list[ProcessSample] = []
         for idx in range(count):
@@ -640,4 +658,18 @@ def generate_samples(
         seed or 0,
         split="synthetic",
         progress_update=progress_update,
+        num_workers=num_workers,
+    )
+
+
+def _generate_isolated_sample(
+    config: SyntheticConfig,
+    seed: int,
+    index: int,
+) -> ProcessSample:
+    rng = random.Random(f"{seed}:isolated:{index}")
+    return generate_sample(
+        config=config,
+        rng=rng,
+        equivalence_id=f"synthetic-{index}",
     )

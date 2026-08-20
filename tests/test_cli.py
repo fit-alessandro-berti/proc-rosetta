@@ -5,7 +5,11 @@ import torch
 
 from proc_rosetta.cli import main
 from proc_rosetta.cli import build_parser, checkpoint_for_selection, split_counts_from_args
-from proc_rosetta.data import SplitCounts, recreate_data_splits
+from proc_rosetta.data import (
+    SplitCounts,
+    multiprocessing_worker_count,
+    recreate_data_splits,
+)
 from proc_rosetta.devices import default_device
 from proc_rosetta.synthetic import SyntheticConfig
 
@@ -30,6 +34,7 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert sample_args.max_arity == 3
     assert sample_args.traces_per_sample == 128
     assert sample_args.curriculum_phase == 3
+    assert not sample_args.multiprocessing
     assert not sample_args.quiet
     assert train_args.epochs == 100
     assert train_args.batch_size == 128
@@ -50,6 +55,28 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert not test_args.quiet
     assert test_args.conformance_method == "token_based_replay"
     assert test_args.checkpoint_selection == "best"
+
+
+@pytest.mark.parametrize(("cpu_count", "expected"), [(16, 15), (2, 1), (1, 1), (None, 1)])
+def test_multiprocessing_worker_count_reserves_one_core(monkeypatch, cpu_count, expected):
+    monkeypatch.setattr("proc_rosetta.data.os.cpu_count", lambda: cpu_count)
+
+    assert multiprocessing_worker_count() == expected
+
+
+def test_sample_multiprocessing_flag_is_forwarded(monkeypatch, capsys):
+    calls = {}
+
+    def recreate(**kwargs):
+        calls.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr("proc_rosetta.cli.recreate_data_splits", recreate)
+
+    assert main(["sample", "--multiprocessing", "--quiet"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True}
+    assert calls["use_multiprocessing"] is True
+    assert calls["show_progress"] is False
 
 
 def test_checkpoint_selection_resolves_best_and_latest_paths():

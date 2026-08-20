@@ -227,6 +227,8 @@ metadata cannot make incompatible tensor shapes valid.
 
 `sample.py` shows per-split `tqdm` progress on stderr while triplets are
 generated. Pass `--quiet` to suppress the progress bars.
+Pass `--multiprocessing` to generate behavior families concurrently with
+`max(1, N - 1)` worker processes, where `N` is the available logical CPU count.
 
 These are also the command defaults: 4,096 independent training behavior
 families and 512 families in each evaluation split. With two representations
