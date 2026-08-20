@@ -527,7 +527,14 @@ def test_gradient_diagnostics_do_not_change_optimizer_updates():
             + weights.covariance * losses["covariance"]
         )
         if diagnose:
-            gradient_norm_diagnostics(model, losses, weights)
+            diagnostics = gradient_norm_diagnostics(model, losses, weights)
+            for modality in ("tree", "trace", "petri"):
+                for name in (
+                    "reconstruction_exact_gradient_cosine",
+                    "reconstruction_soft_geometry_gradient_cosine",
+                    "exact_soft_geometry_gradient_cosine",
+                ):
+                    assert -1.0 <= diagnostics[f"{name}_{modality}"] <= 1.0
         total.backward()
         optimizer.step()
 

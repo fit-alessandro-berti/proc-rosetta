@@ -59,6 +59,7 @@ def rich_test_report(
     pm4py_petri_config: Pm4pyPetriEmbeddingConfig | None = None,
     show_progress: bool = False,
     conformance_method: str = "token_based_replay",
+    max_decode_length: int = 512,
 ) -> dict[str, object]:
     validate_conformance_method(conformance_method)
     started = perf_counter()
@@ -100,6 +101,7 @@ def rich_test_report(
         samples,
         batch_size=batch_size,
         device=device_name,
+        max_decode_length=max_decode_length,
         show_progress=show_progress,
     )
     test_debug(
@@ -113,6 +115,7 @@ def rich_test_report(
         samples,
         batch_size=batch_size,
         device=device_name,
+        max_decode_length=max_decode_length,
         show_progress=show_progress,
         conformance_method=conformance_method,
     )

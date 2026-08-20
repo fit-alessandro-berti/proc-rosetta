@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from collections import defaultdict
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,8 +31,8 @@ from proc_rosetta.synthetic import SyntheticConfig
 from proc_rosetta.tokenizers import ActivityTokenizer, TreeTokenizer
 
 
-CHECKPOINT_FORMAT_VERSION = 5
-MODEL_ARCHITECTURE_VERSION = "proc-rosetta-latent-transformer-v5"
+CHECKPOINT_FORMAT_VERSION = 6
+MODEL_ARCHITECTURE_VERSION = "proc-rosetta-latent-transformer-v6"
 
 
 @dataclass(frozen=True)
@@ -40,42 +41,62 @@ class TrainConfig:
     epochs: int = 100
     batch_size: int = 128
     learning_rate: float = 3e-4
-    latent_dim: int = 128
-    hidden_dim: int = 256
+    latent_dim: int = 96
+    hidden_dim: int = 192
     seed: int = 13
     device: str = default_device()
     semantic_latent_mode: str = "deterministic"
-    dropout: float = 0.10
-    weight_decay: float = 1e-4
-    label_smoothing: float = 0.0
-    early_stopping_patience: int = 12
-    min_delta: float = 0.001
-    lr_patience: int = 2
+    # ``dropout`` is a deprecated compatibility override; new runs should use
+    # the modality-specific controls below.
+    dropout: float | None = None
+    tree_encoder_dropout: float = 0.12
+    trace_encoder_dropout: float = 0.20
+    petri_encoder_dropout: float = 0.12
+    decoder_dropout: float = 0.20
+    projection_dropout: float = 0.20
+    weight_decay: float = 5e-4
+    label_smoothing: float = 0.04
+    early_stopping_patience: int = 6
+    min_delta: float = 0.005
+    lr_patience: int = 1
     lr_factor: float = 0.5
     min_lr: float = 1e-5
     group_aware_batches: bool = True
-    views_per_family: int = 4
-    activity_remap_probability: float = 0.0
-    memory_tokens: int = 8
-    decoder_layers: int = 4
-    decoder_input_dropout: float = 0.10
-    scheduled_sampling_max: float = 0.20
+    views_per_family: int = 2
+    activity_remap_probability: float = 0.5
+    memory_tokens: int = 6
+    decoder_layers: int = 3
+    tree_encoder_layers: int = 3
+    trace_event_layers: int = 1
+    trace_set_layers: int = 1
+    petri_message_passing_steps: int = 5
+    decoder_input_dropout: float = 0.15
+    scheduled_sampling_max: float = 0.075
     scheduled_sampling_start_epoch: int = 20
     scheduled_sampling_ramp_epochs: int = 20
     gradient_clip_norm: float = 5.0
     tree_reconstruction_weight: float = 0.5
     trace_to_tree_weight: float = 2.0
     petri_to_tree_weight: float = 0.5
-    exact_contrastive_weight: float = 0.5
+    exact_contrastive_weight: float = 0.30
     within_modality_contrastive_weight: float = 0.25
     soft_behavior_geometry_weight: float = 0.25
     variance_weight: float = 0.1
     covariance_weight: float = 0.01
     kl_weight: float = 0.0
-    latent_alignment_weight: float = 0.0
-    contrastive_temperature: float = 0.2
+    latent_alignment_weight: float = 0.075
+    contrastive_temperature: float = 0.3
     behavior_temperature: float = 0.2
     latent_temperature: float = 0.2
+    exact_contrastive_start_epoch: int = 3
+    exact_contrastive_ramp_epochs: int = 4
+    soft_geometry_start_epoch: int = 5
+    soft_geometry_ramp_epochs: int = 6
+    scheduler_monitor: str = "trace_to_tree"
+    restore_best_weights: bool = True
+    use_ema: bool = True
+    ema_start_epoch: int = 3
+    ema_decay: float = 0.995
     training_stage: str = "full"
     stage_gate_interval: int = 5
     gradient_diagnostics_interval: int = 0
@@ -84,8 +105,39 @@ class TrainConfig:
     loader_persistent_workers: bool = True
     loader_prefetch_factor: int = 2
 
+    def __post_init__(self) -> None:
+        if self.kl_weight != 0.0:
+            raise ValueError(
+                "kl_weight is unsupported: the supervised semantic path is deterministic"
+            )
+        if self.scheduler_monitor not in {
+            "trace_to_tree",
+            "reconstruction_composite",
+            "loss",
+        }:
+            raise ValueError(
+                "scheduler_monitor must be trace_to_tree, reconstruction_composite, or loss"
+            )
+        for name in (
+            "activity_remap_probability",
+            "tree_encoder_dropout",
+            "trace_encoder_dropout",
+            "petri_encoder_dropout",
+            "decoder_dropout",
+            "projection_dropout",
+            "decoder_input_dropout",
+            "scheduled_sampling_max",
+            "ema_decay",
+        ):
+            value = getattr(self, name)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be in [0, 1]")
 
-def loss_weights_from_config(config: TrainConfig) -> LossWeights:
+
+def loss_weights_from_config(
+    config: TrainConfig,
+    epoch: int | None = None,
+) -> LossWeights:
     if config.training_stage not in {"a", "b", "c", "d", "full"}:
         raise ValueError("training_stage must be one of: a, b, c, d, full")
     exact_weight = 0.0 if config.training_stage == "a" else config.exact_contrastive_weight
@@ -99,22 +151,45 @@ def loss_weights_from_config(config: TrainConfig) -> LossWeights:
     )
     variance_weight = 0.0 if config.training_stage == "a" else config.variance_weight
     covariance_weight = 0.0 if config.training_stage == "a" else config.covariance_weight
+    exact_scale = _objective_ramp(
+        epoch,
+        start_epoch=config.exact_contrastive_start_epoch,
+        ramp_epochs=config.exact_contrastive_ramp_epochs,
+    )
+    soft_scale = _objective_ramp(
+        epoch,
+        start_epoch=config.soft_geometry_start_epoch,
+        ramp_epochs=config.soft_geometry_ramp_epochs,
+    )
     return LossWeights(
         tree_reconstruction=config.tree_reconstruction_weight,
         trace_to_tree=config.trace_to_tree_weight,
         petri_to_tree=config.petri_to_tree_weight,
-        exact_contrastive=exact_weight,
-        within_modality_contrastive=within_weight,
-        soft_behavior_geometry=soft_weight,
-        variance=variance_weight,
-        covariance=covariance_weight,
-        latent_alignment=config.latent_alignment_weight,
-        kl=config.kl_weight,
+        exact_contrastive=exact_weight * exact_scale,
+        within_modality_contrastive=within_weight * exact_scale,
+        soft_behavior_geometry=soft_weight * soft_scale,
+        variance=variance_weight * exact_scale,
+        covariance=covariance_weight * exact_scale,
+        latent_alignment=config.latent_alignment_weight * exact_scale,
+        kl=0.0,
         label_smoothing=config.label_smoothing,
         contrastive_temperature=config.contrastive_temperature,
         behavior_temperature=config.behavior_temperature,
         latent_temperature=config.latent_temperature,
     )
+
+
+def _objective_ramp(
+    epoch: int | None,
+    *,
+    start_epoch: int,
+    ramp_epochs: int,
+) -> float:
+    if epoch is None:
+        return 1.0
+    if epoch < start_epoch:
+        return 0.0
+    return min(1.0, (epoch - start_epoch + 1) / max(ramp_epochs, 1))
 
 
 def loss_weights_from_checkpoint(
@@ -167,6 +242,7 @@ def train_epoch(
     epoch: int | None = None,
     show_progress: bool = False,
     train_config: TrainConfig | None = None,
+    ema: ModelEMA | None = None,
 ) -> dict[str, float]:
     model.train()
     totals: dict[str, float | torch.Tensor] = {}
@@ -224,6 +300,13 @@ def train_epoch(
             max_norm=(5.0 if train_config is None else train_config.gradient_clip_norm),
         )
         optimizer.step()
+        if (
+            ema is not None
+            and train_config is not None
+            and epoch is not None
+            and epoch >= train_config.ema_start_epoch
+        ):
+            ema.update(model)
 
         for name, value in losses.items():
             totals[name] = totals.get(name, 0.0) + value.detach()
@@ -233,13 +316,11 @@ def train_epoch(
     return {
         name: (
             float(value.detach().cpu())
-            if isinstance(value, torch.Tensor) and (
-                "gradient_norm" in name or "gradient_ratio" in name
-            )
+            if isinstance(value, torch.Tensor) and "gradient_" in name
             else float(value.detach().cpu()) / max(batches, 1)
             if isinstance(value, torch.Tensor)
             else value
-            if "gradient_norm" in name or "gradient_ratio" in name
+            if "gradient_" in name
             else value / max(batches, 1)
         )
         for name, value in totals.items()
@@ -287,12 +368,41 @@ def gradient_norm_diagnostics(
             retain_graph=True,
             allow_unused=True,
         )
+        exact_gradients = torch.autograd.grad(
+            losses["exact_contrastive"],
+            parameters,
+            retain_graph=True,
+            allow_unused=True,
+        )
+        soft_gradients = torch.autograd.grad(
+            losses["soft_behavior_geometry"],
+            parameters,
+            retain_graph=True,
+            allow_unused=True,
+        )
+        raw_reconstruction_gradients = torch.autograd.grad(
+            losses[f"{name}_reconstruction" if name == "tree" else f"{name}_to_tree"],
+            parameters,
+            retain_graph=True,
+            allow_unused=True,
+        )
         reconstruction_norm = _gradient_norm(reconstruction_gradients)
         metric_norm = _gradient_norm(metric_gradients)
         result[f"reconstruction_gradient_norm_{name}"] = reconstruction_norm
         result[f"metric_gradient_norm_{name}"] = metric_norm
         result[f"metric_to_reconstruction_gradient_ratio_{name}"] = (
             metric_norm / max(reconstruction_norm, 1e-12)
+        )
+        result[f"reconstruction_exact_gradient_cosine_{name}"] = _gradient_cosine(
+            raw_reconstruction_gradients,
+            exact_gradients,
+        )
+        result[f"reconstruction_soft_geometry_gradient_cosine_{name}"] = (
+            _gradient_cosine(raw_reconstruction_gradients, soft_gradients)
+        )
+        result[f"exact_soft_geometry_gradient_cosine_{name}"] = _gradient_cosine(
+            exact_gradients,
+            soft_gradients,
         )
     return result
 
@@ -304,6 +414,25 @@ def _gradient_norm(gradients: tuple[torch.Tensor | None, ...]) -> float:
         if gradient is not None
     )
     return squared**0.5
+
+
+def _gradient_cosine(
+    left: tuple[torch.Tensor | None, ...],
+    right: tuple[torch.Tensor | None, ...],
+) -> float:
+    dot = 0.0
+    left_squared = 0.0
+    right_squared = 0.0
+    for left_gradient, right_gradient in zip(left, right):
+        if left_gradient is None or right_gradient is None:
+            continue
+        left_flat = left_gradient.detach().reshape(-1)
+        right_flat = right_gradient.detach().reshape(-1)
+        dot += float((left_flat * right_flat).sum().cpu())
+        left_squared += float(left_flat.square().sum().cpu())
+        right_squared += float(right_flat.square().sum().cpu())
+    denominator = (left_squared * right_squared) ** 0.5
+    return 0.0 if denominator <= 1e-24 else dot / denominator
 
 
 @torch.no_grad()
@@ -1040,7 +1169,12 @@ def _loader_worker_options(
 
 
 class BehaviorFamilyBatchSampler(Sampler[list[int]]):
-    """Keep multiple views of a behavior together so batches contain positives."""
+    """Batch strong-positive classes while retaining many exact behaviors.
+
+    Strong positives require both exact behavior and partial-order identity.
+    Grouping only by the broader equivalence family can place incompatible
+    representations in a chunk and leave a row without a valid positive.
+    """
 
     def __init__(
         self,
@@ -1056,9 +1190,15 @@ class BehaviorFamilyBatchSampler(Sampler[list[int]]):
         self.shuffle = shuffle
         self.seed = int(seed)
         self.epoch = 0
-        grouped: dict[str, list[int]] = defaultdict(list)
+        grouped: dict[tuple[str, ...], list[int]] = defaultdict(list)
         for index, sample in enumerate(samples):
-            grouped[str(sample.equivalence_id)].append(index)
+            exact_behavior_id = getattr(sample, "exact_behavior_id", None)
+            partial_order_id = getattr(sample, "partial_order_id", None)
+            if exact_behavior_id is not None and partial_order_id is not None:
+                key = ("strong", str(exact_behavior_id), str(partial_order_id))
+            else:
+                key = ("legacy", str(getattr(sample, "equivalence_id", index)))
+            grouped[key].append(index)
         self.groups = list(grouped.values())
         self.sample_costs = [
             (
@@ -1086,13 +1226,7 @@ class BehaviorFamilyBatchSampler(Sampler[list[int]]):
             for group in groups:
                 rng.shuffle(group)
 
-        per_group_chunks = [
-            [
-                group[start : start + self.views_per_family]
-                for start in range(0, len(group), self.views_per_family)
-            ]
-            for group in groups
-        ]
+        per_group_chunks = [self._positive_chunks(group) for group in groups]
         # Interleave chunk rounds so a 128-row batch with four views contains
         # 32 distinct behaviors before any family contributes a second chunk.
         chunks: list[list[int]] = []
@@ -1123,6 +1257,28 @@ class BehaviorFamilyBatchSampler(Sampler[list[int]]):
     def __len__(self) -> int:
         return (self.sample_count + self.batch_size - 1) // self.batch_size
 
+    def _positive_chunks(self, group: list[int]) -> list[list[int]]:
+        if len(group) <= 1:
+            return [group]
+        # Balance chunks so a trailing singleton is avoided whenever the class
+        # has at least two views.  For three views and a target width of two, a
+        # single three-view chunk is preferable to one positive pair plus an
+        # orphan row.
+        target_width = max(self.views_per_family, 2)
+        chunk_count = min(
+            (len(group) + target_width - 1) // target_width,
+            len(group) // 2,
+        )
+        chunk_count = max(chunk_count, 1)
+        base, extra = divmod(len(group), chunk_count)
+        chunks: list[list[int]] = []
+        start = 0
+        for chunk_index in range(chunk_count):
+            size = base + (1 if chunk_index < extra else 0)
+            chunks.append(group[start : start + size])
+            start += size
+        return chunks
+
 
 def build_model(
     train_config: TrainConfig,
@@ -1145,9 +1301,109 @@ def build_model(
         latent_dim=train_config.latent_dim,
         hidden_dim=train_config.hidden_dim,
         dropout=train_config.dropout,
+        tree_encoder_dropout=train_config.tree_encoder_dropout,
+        trace_encoder_dropout=train_config.trace_encoder_dropout,
+        petri_encoder_dropout=train_config.petri_encoder_dropout,
+        decoder_dropout=train_config.decoder_dropout,
+        projection_dropout=train_config.projection_dropout,
         memory_tokens=train_config.memory_tokens,
         decoder_layers=train_config.decoder_layers,
+        tree_encoder_layers=train_config.tree_encoder_layers,
+        trace_event_layers=train_config.trace_event_layers,
+        trace_set_layers=train_config.trace_set_layers,
+        petri_message_passing_steps=train_config.petri_message_passing_steps,
     ).to(device)
+
+
+def build_optimizer(
+    model: ProcRosettaModel,
+    train_config: TrainConfig,
+) -> torch.optim.AdamW:
+    """Apply AdamW decay to matrix weights, never biases or normalization scales."""
+
+    decay: list[torch.nn.Parameter] = []
+    no_decay: list[torch.nn.Parameter] = []
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        if name.endswith(".bias") or parameter.ndim < 2:
+            no_decay.append(parameter)
+        else:
+            decay.append(parameter)
+    return torch.optim.AdamW(
+        [
+            {"params": decay, "weight_decay": train_config.weight_decay},
+            {"params": no_decay, "weight_decay": 0.0},
+        ],
+        lr=train_config.learning_rate,
+    )
+
+
+class ModelEMA:
+    """Exponential moving average with resumable, temporary weight swapping."""
+
+    def __init__(self, decay: float) -> None:
+        self.decay = float(decay)
+        self.shadow: dict[str, torch.Tensor] = {}
+        self.updates = 0
+
+    @property
+    def initialized(self) -> bool:
+        return bool(self.shadow)
+
+    @torch.no_grad()
+    def update(self, model: ProcRosettaModel) -> None:
+        current = model.state_dict()
+        if not self.shadow:
+            self.shadow = {
+                name: value.detach().clone() for name, value in current.items()
+            }
+        else:
+            for name, value in current.items():
+                target = self.shadow[name]
+                if torch.is_floating_point(target):
+                    target.mul_(self.decay).add_(value.detach(), alpha=1.0 - self.decay)
+                else:
+                    target.copy_(value.detach())
+        self.updates += 1
+
+    def state_dict(self) -> dict[str, object]:
+        return {
+            "decay": self.decay,
+            "updates": self.updates,
+            "shadow": self.shadow,
+        }
+
+    def load_state_dict(self, state: dict[str, object]) -> None:
+        stored_decay = float(state.get("decay", self.decay))
+        if stored_decay != self.decay:
+            raise ValueError(
+                f"EMA decay differs from checkpoint ({stored_decay} != {self.decay})"
+            )
+        shadow = state.get("shadow", {})
+        if not isinstance(shadow, dict) or not all(
+            isinstance(value, torch.Tensor) for value in shadow.values()
+        ):
+            raise ValueError("checkpoint contains an invalid EMA state")
+        self.shadow = {
+            str(name): value.detach().clone() for name, value in shadow.items()
+        }
+        self.updates = int(state.get("updates", 0))
+
+    @contextmanager
+    def average_parameters(self, model: ProcRosettaModel):
+        if not self.initialized:
+            yield
+            return
+        ordinary = {
+            name: value.detach().clone()
+            for name, value in model.state_dict().items()
+        }
+        model.load_state_dict(self.shadow, strict=True)
+        try:
+            yield
+        finally:
+            model.load_state_dict(ordinary, strict=True)
 
 
 def build_lr_scheduler(
@@ -1162,7 +1418,26 @@ def build_lr_scheduler(
         factor=train_config.lr_factor,
         patience=train_config.lr_patience,
         min_lr=train_config.min_lr,
+        threshold=train_config.min_delta,
+        threshold_mode="abs",
     )
+
+
+def scheduler_monitor_value(
+    metrics: dict[str, float],
+    monitor: str,
+) -> float:
+    if monitor == "trace_to_tree":
+        return metrics["trace_to_tree"]
+    if monitor == "reconstruction_composite":
+        return (
+            0.5 * metrics["tree_reconstruction"]
+            + 2.0 * metrics["trace_to_tree"]
+            + 0.5 * metrics["petri_to_tree"]
+        )
+    if monitor == "loss":
+        return metrics["loss"]
+    raise ValueError(f"unsupported scheduler monitor: {monitor}")
 
 
 def train_synthetic(
@@ -1188,21 +1463,18 @@ def train_synthetic(
         persistent_workers=train_config.loader_persistent_workers,
         prefetch_factor=train_config.loader_prefetch_factor,
     )
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=train_config.learning_rate,
-        weight_decay=train_config.weight_decay,
-    )
-    weights = loss_weights_from_config(train_config)
+    optimizer = build_optimizer(model, train_config)
+    ema = ModelEMA(train_config.ema_decay) if train_config.use_ema else None
     history = [
         train_epoch(
             model,
             dataloader,
             optimizer,
             device,
-            weights=weights,
+            weights=loss_weights_from_config(train_config, epoch=epoch),
             epoch=epoch,
             train_config=train_config,
+            ema=ema,
         )
         for epoch in range(1, train_config.epochs + 1)
     ]
@@ -1234,7 +1506,11 @@ def train_from_data_dir(
         "Training configuration: "
         f"epochs={train_config.epochs}, batch_size={train_config.batch_size}, "
         f"lr={train_config.learning_rate}, latent_dim={train_config.latent_dim}, "
-        f"hidden_dim={train_config.hidden_dim}, dropout={train_config.dropout}, "
+        f"hidden_dim={train_config.hidden_dim}, "
+        f"dropout(tree/trace/petri/decoder/projection)="
+        f"{train_config.tree_encoder_dropout}/{train_config.trace_encoder_dropout}/"
+        f"{train_config.petri_encoder_dropout}/{train_config.decoder_dropout}/"
+        f"{train_config.projection_dropout}, "
         f"weight_decay={train_config.weight_decay}, label_smoothing={train_config.label_smoothing}, "
         f"activity_remap_probability={train_config.activity_remap_probability}, "
         f"early_stopping_patience={train_config.early_stopping_patience}, device={device}",
@@ -1305,15 +1581,17 @@ def train_from_data_dir(
     )
     debug_split("training", train_loader.dataset.samples, len(train_loader), enabled=show_progress)
     debug_split("validation", validation_loader.dataset.samples, len(validation_loader), enabled=show_progress)
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=train_config.learning_rate,
-        weight_decay=train_config.weight_decay,
-    )
+    optimizer = build_optimizer(model, train_config)
     scheduler = build_lr_scheduler(optimizer, train_config)
-    weights = loss_weights_from_config(train_config)
+    ema = ModelEMA(train_config.ema_decay) if train_config.use_ema else None
+    if ema is not None and resume_checkpoint is not None:
+        ema_state = resume_checkpoint.get("ema_state_dict")
+        if isinstance(ema_state, dict):
+            ema.load_state_dict(ema_state)
+    evaluation_weights = loss_weights_from_config(train_config)
     history: list[dict[str, object]] = []
     best_validation_loss = float("inf")
+    best_early_stopping_metric = float("inf")
     best_validation_score = float("-inf")
     best_validation_key = (float("-inf"),) * 4
     epochs_without_improvement = 0
@@ -1357,6 +1635,18 @@ def train_from_data_dir(
             epochs_without_improvement = int(
                 history[-1].get("epochs_without_improvement", 0)
             )
+            best_early_stopping_metric = min(
+                float(
+                    row.get(
+                        "early_stopping_metric",
+                        scheduler_monitor_value(
+                            row["validation"], train_config.scheduler_monitor
+                        ),
+                    )
+                )
+                for row in history
+                if isinstance(row.get("validation"), dict)
+            )
         restore_training_state(
             checkpoint=resume_checkpoint,
             optimizer=optimizer,
@@ -1365,6 +1655,7 @@ def train_from_data_dir(
             device=device,
             completed_epoch=completed_epoch,
             history=history,
+            scheduler_monitor=train_config.scheduler_monitor,
             seed=train_config.seed,
             show_progress=show_progress,
         )
@@ -1374,35 +1665,71 @@ def train_from_data_dir(
             enabled=show_progress,
         )
     best_checkpoint_path = best_checkpoint_for(checkpoint_path)
+    objective_checkpoint_paths = {
+        name: best_checkpoint_for(checkpoint_path, name)
+        for name in ("loss", "trace", "edit", "latent")
+    }
+    best_objectives = best_objectives_from_history(history)
     metrics_csv_path = Path(metrics_csv_path)
     write_metrics_csv(metrics_csv_path, history)
     debug(f"Per-epoch metrics CSV: {metrics_csv_path}", enabled=show_progress)
     for epoch in range(start_epoch, train_config.epochs + 1):
         epoch_start = perf_counter()
         debug(f"Starting epoch {epoch}/{train_config.epochs}", enabled=show_progress)
+        epoch_weights = loss_weights_from_config(train_config, epoch=epoch)
         training_metrics = train_epoch(
             model,
             train_loader,
             optimizer,
             device,
-            weights=weights,
+            weights=epoch_weights,
             epoch=epoch,
             show_progress=show_progress,
             train_config=train_config,
+            ema=ema,
         )
         debug(
             f"Epoch {epoch} training complete: {format_metrics(training_metrics)}",
             enabled=show_progress,
         )
-        validation_metrics = evaluate_epoch(
+        ordinary_validation_metrics = evaluate_epoch(
             model,
             validation_loader,
             device,
-            weights=weights,
+            weights=evaluation_weights,
             epoch=epoch,
             show_progress=show_progress,
             compute_discovery_metrics=True,
         )
+        ema_validation_metrics: dict[str, float] | None = None
+        validation_weights = "ordinary"
+        if ema is not None and ema.initialized:
+            with ema.average_parameters(model):
+                ema_validation_metrics = evaluate_epoch(
+                    model,
+                    validation_loader,
+                    device,
+                    weights=evaluation_weights,
+                    epoch=epoch,
+                    show_progress=show_progress,
+                    progress_desc=f"Epoch {epoch} EMA validation",
+                    compute_discovery_metrics=True,
+                )
+            ordinary_monitor = scheduler_monitor_value(
+                ordinary_validation_metrics,
+                train_config.scheduler_monitor,
+            )
+            ema_monitor = scheduler_monitor_value(
+                ema_validation_metrics,
+                train_config.scheduler_monitor,
+            )
+            if ema_monitor < ordinary_monitor:
+                validation_metrics = ema_validation_metrics
+                validation_weights = "ema"
+            else:
+                validation_metrics = ordinary_validation_metrics
+        else:
+            validation_metrics = ordinary_validation_metrics
         run_stage_gate = (
             stage_training_loader is not None
             and (
@@ -1415,7 +1742,7 @@ def train_from_data_dir(
                 model,
                 stage_training_loader,
                 device,
-                weights=weights,
+                weights=evaluation_weights,
                 progress_desc="Stage A training-family gate",
                 compute_discovery_metrics=True,
                 source_ablation=True,
@@ -1443,8 +1770,11 @@ def train_from_data_dir(
             )
         current_lr = optimizer.param_groups[0]["lr"]
         validation_score = validation_metrics["checkpoint_selection_score"]
-        validation_loss = validation_metrics["loss"]
-        scheduler.step(validation_loss)
+        monitor_value = scheduler_monitor_value(
+            validation_metrics,
+            train_config.scheduler_monitor,
+        )
+        scheduler.step(monitor_value)
         new_lr = optimizer.param_groups[0]["lr"]
         if new_lr < current_lr:
             debug(
@@ -1453,11 +1783,48 @@ def train_from_data_dir(
             )
 
         validation_key = checkpoint_selection_key(validation_metrics)
-        improved = validation_loss < best_validation_loss - train_config.min_delta
+        ordinary_objectives = checkpoint_objective_values(
+            ordinary_validation_metrics
+        )
+        ema_objectives = (
+            None
+            if ema_validation_metrics is None
+            else checkpoint_objective_values(ema_validation_metrics)
+        )
+        objective_values: dict[str, float | tuple[float, ...]] = {}
+        objective_candidate_weights: dict[str, str] = {}
+        for name, ordinary_value in ordinary_objectives.items():
+            if (
+                ema_objectives is not None
+                and objective_is_better(name, ema_objectives[name], ordinary_value)
+            ):
+                objective_values[name] = ema_objectives[name]
+                objective_candidate_weights[name] = "ema"
+            else:
+                objective_values[name] = ordinary_value
+                objective_candidate_weights[name] = "ordinary"
+        objective_improvements = {
+            name: objective_is_better(name, value, best_objectives[name]["value"])
+            for name, value in objective_values.items()
+        }
+        for name, improved_objective in objective_improvements.items():
+            if improved_objective:
+                best_objectives[name] = {
+                    "value": objective_values[name],
+                    "epoch": epoch,
+                    "weights": objective_candidate_weights[name],
+                }
+        improved = objective_improvements["loss"]
         if improved:
-            best_validation_loss = validation_loss
+            best_validation_loss = float(objective_values["loss"])
+        if validation_key > best_validation_key:
             best_validation_key = validation_key
             best_validation_score = validation_score
+        early_stopping_improved = (
+            monitor_value < best_early_stopping_metric - train_config.min_delta
+        )
+        if early_stopping_improved:
+            best_early_stopping_metric = monitor_value
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
@@ -1467,6 +1834,7 @@ def train_from_data_dir(
             f"Epoch {epoch} validation complete: {format_metrics(validation_metrics)} "
             f"| gap={gap:+.4f} | discovery_selection={validation_score:.4f} "
             f"| best_loss={best_validation_loss:.4f} "
+            f"| {train_config.scheduler_monitor}={monitor_value:.4f} "
             f"| patience={epochs_without_improvement}/{train_config.early_stopping_patience}",
             enabled=show_progress,
         )
@@ -1475,17 +1843,28 @@ def train_from_data_dir(
             "epoch": epoch,
             "training": training_metrics,
             "validation": validation_metrics,
+            "validation_ordinary": ordinary_validation_metrics,
+            "validation_ema": ema_validation_metrics,
+            "validation_weights": validation_weights,
+            "objective_candidate_weights": objective_candidate_weights,
             "generalization_gap": metric_gaps(training_metrics, validation_metrics),
             "learning_rate": new_lr,
-            "lr_scheduler_metric": validation_loss,
+            "lr_scheduler_metric": monitor_value,
+            "scheduler_monitor": train_config.scheduler_monitor,
+            "early_stopping_metric": monitor_value,
+            "best_early_stopping_metric": best_early_stopping_metric,
             "lr_reduced": new_lr < current_lr,
             "epoch_seconds": elapsed,
             "best_validation_loss": best_validation_loss,
             "best_validation_score": best_validation_score,
             "best_validation_key": list(best_validation_key),
+            "best_objectives": {
+                name: dict(details) for name, details in best_objectives.items()
+            },
             "is_best": improved,
             "epochs_without_improvement": epochs_without_improvement,
             "stage_acceptance": acceptance,
+            "loss_weights": asdict(epoch_weights),
         }
         if stage_metrics is not None and run_stage_gate:
             row["stage_metrics"] = stage_metrics
@@ -1500,29 +1879,62 @@ def train_from_data_dir(
             best_validation_loss=best_validation_loss,
             best_validation_score=best_validation_score,
             best_validation_key=best_validation_key,
+            best_objectives=best_objectives,
             is_best=False,
             optimizer=optimizer,
             scheduler=scheduler,
             train_loader=train_loader,
             device=device,
+            ema=ema,
         )
-        if improved:
-            save_checkpoint(
-                checkpoint_path=best_checkpoint_path,
-                model=model,
-                train_config=train_config,
-                synthetic_config=synthetic_config,
-                history=history,
-                epoch=epoch,
-                best_validation_loss=best_validation_loss,
-                best_validation_score=best_validation_score,
-                best_validation_key=best_validation_key,
-                is_best=True,
-                optimizer=optimizer,
-                scheduler=scheduler,
-                train_loader=train_loader,
-                device=device,
+        for objective, objective_improved in objective_improvements.items():
+            if not objective_improved:
+                continue
+            best_weight_context = (
+                ema.average_parameters(model)
+                if objective_candidate_weights[objective] == "ema" and ema is not None
+                else nullcontext()
             )
+            with best_weight_context:
+                save_checkpoint(
+                    checkpoint_path=objective_checkpoint_paths[objective],
+                    model=model,
+                    train_config=train_config,
+                    synthetic_config=synthetic_config,
+                    history=history,
+                    epoch=epoch,
+                    best_validation_loss=best_validation_loss,
+                    best_validation_score=best_validation_score,
+                    best_validation_key=best_validation_key,
+                    best_objectives=best_objectives,
+                    is_best=True,
+                    checkpoint_objective=objective,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    train_loader=train_loader,
+                    device=device,
+                    ema=ema,
+                )
+                if objective == "loss":
+                    save_checkpoint(
+                        checkpoint_path=best_checkpoint_path,
+                        model=model,
+                        train_config=train_config,
+                        synthetic_config=synthetic_config,
+                        history=history,
+                        epoch=epoch,
+                        best_validation_loss=best_validation_loss,
+                        best_validation_score=best_validation_score,
+                        best_validation_key=best_validation_key,
+                        best_objectives=best_objectives,
+                        is_best=True,
+                        checkpoint_objective="loss",
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        train_loader=train_loader,
+                        device=device,
+                        ema=ema,
+                    )
         append_metrics_csv(metrics_csv_path, row)
         debug(
             f"Epoch {epoch} checkpoint saved to {checkpoint_path}; "
@@ -1541,10 +1953,17 @@ def train_from_data_dir(
         ):
             debug(
                 f"Early stopping after {epoch} epochs; validation loss did not improve by at least "
-                f"{train_config.min_delta:g} for {train_config.early_stopping_patience} epochs.",
+                f"{train_config.min_delta:g} on {train_config.scheduler_monitor} for "
+                f"{train_config.early_stopping_patience} epochs.",
                 enabled=show_progress,
             )
             break
+    if train_config.restore_best_weights and best_checkpoint_path.exists():
+        restore_model_weights(model, best_checkpoint_path, device)
+        debug(
+            f"Restored best validation-loss weights from {best_checkpoint_path} before return.",
+            enabled=show_progress,
+        )
     return model, history
 
 
@@ -1675,8 +2094,15 @@ def debug_split(
     if not enabled:
         return
     stats = sample_statistics(samples)
+    family_count = len(
+        {
+            str(getattr(sample, "equivalence_id", index))
+            for index, sample in enumerate(samples)
+        }
+    )
     debug(
-        f"{split}: {stats['count']} samples, {batch_count} batches, "
+        f"{split}: {stats['count']} rows, {family_count} unique behavior families, "
+        f"{batch_count} batches, "
         f"avg_tree_size={stats['avg_tree_size']:.2f}, "
         f"avg_trace_count={stats['avg_trace_count']:.2f}, "
         f"avg_trace_length={stats['avg_trace_length']:.2f}, "
@@ -1703,9 +2129,86 @@ def metric_gaps(training_metrics: dict[str, float], validation_metrics: dict[str
     return {key: validation_metrics[key] - training_metrics[key] for key in keys}
 
 
-def best_checkpoint_for(checkpoint_path: str | Path) -> Path:
+def best_checkpoint_for(
+    checkpoint_path: str | Path,
+    objective: str | None = None,
+) -> Path:
     checkpoint_path = Path(checkpoint_path)
-    return checkpoint_path.with_name(f"{checkpoint_path.stem}.best{checkpoint_path.suffix}")
+    suffix = "best" if objective is None else f"best_{objective}"
+    return checkpoint_path.with_name(
+        f"{checkpoint_path.stem}.{suffix}{checkpoint_path.suffix}"
+    )
+
+
+def checkpoint_objective_values(
+    metrics: dict[str, float],
+) -> dict[str, float | tuple[float, ...]]:
+    return {
+        "loss": metrics["loss"],
+        "trace": metrics["trace_to_tree"],
+        "edit": metrics.get("trace_normalized_tree_edit", float("inf")),
+        "latent": (
+            metrics.get("exact_behavior_recall_at_1", float("-inf")),
+            metrics.get("behavior_distance_spearman", float("-inf")),
+            metrics.get("effective_rank", float("-inf")),
+        ),
+    }
+
+
+def objective_is_better(
+    objective: str,
+    value: float | tuple[float, ...],
+    best: float | tuple[float, ...],
+) -> bool:
+    if objective in {"loss", "trace", "edit"}:
+        return float(value) < float(best)
+    return tuple(value) > tuple(best)
+
+
+def best_objectives_from_history(
+    history: list[dict[str, object]],
+) -> dict[str, dict[str, object]]:
+    best: dict[str, dict[str, object]] = {
+        "loss": {"value": float("inf"), "epoch": 0},
+        "trace": {"value": float("inf"), "epoch": 0},
+        "edit": {"value": float("inf"), "epoch": 0},
+        "latent": {"value": (float("-inf"),) * 3, "epoch": 0},
+    }
+    if history:
+        stored = history[-1].get("best_objectives")
+        if isinstance(stored, dict) and set(best).issubset(stored):
+            restored: dict[str, dict[str, object]] = {}
+            for objective in best:
+                details = stored[objective]
+                if not isinstance(details, dict) or "value" not in details:
+                    break
+                value = details["value"]
+                if objective == "latent" and isinstance(value, list):
+                    value = tuple(float(item) for item in value)
+                restored[objective] = {**details, "value": value}
+            if len(restored) == len(best):
+                return restored
+    for row in history:
+        metrics = row.get("validation")
+        if not isinstance(metrics, dict):
+            continue
+        values = checkpoint_objective_values(metrics)
+        for objective, value in values.items():
+            if objective_is_better(objective, value, best[objective]["value"]):
+                best[objective] = {
+                    "value": value,
+                    "epoch": int(row.get("epoch", 0)),
+                }
+    return best
+
+
+def restore_model_weights(
+    model: ProcRosettaModel,
+    checkpoint_path: str | Path,
+    device: torch.device,
+) -> None:
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(checkpoint["model_state_dict"], strict=True)
 
 
 CSV_METRIC_NAMES = (
@@ -1733,6 +2236,18 @@ CSV_METRIC_NAMES = (
     "checkpoint_selection_recall_at_1",
     "checkpoint_selection_spearman",
     "checkpoint_selection_score",
+    *(
+        f"{kind}_{modality}"
+        for modality in ("tree", "trace", "petri")
+        for kind in (
+            "reconstruction_gradient_norm",
+            "metric_gradient_norm",
+            "metric_to_reconstruction_gradient_ratio",
+            "reconstruction_exact_gradient_cosine",
+            "reconstruction_soft_geometry_gradient_cosine",
+            "exact_soft_geometry_gradient_cosine",
+        )
+    ),
 )
 
 
@@ -1745,6 +2260,9 @@ def metrics_csv_columns() -> list[str]:
         "epoch_seconds",
         "best_validation_loss",
         "best_validation_score",
+        "scheduler_monitor",
+        "early_stopping_metric",
+        "best_early_stopping_metric",
         "is_best",
         "epochs_without_improvement",
     ]
@@ -1796,6 +2314,9 @@ def flatten_epoch_row(row: dict[str, object]) -> dict[str, object]:
         "epoch_seconds": row["epoch_seconds"],
         "best_validation_loss": row["best_validation_loss"],
         "best_validation_score": row.get("best_validation_score", ""),
+        "scheduler_monitor": row.get("scheduler_monitor", ""),
+        "early_stopping_metric": row.get("early_stopping_metric", ""),
+        "best_early_stopping_metric": row.get("best_early_stopping_metric", ""),
         "is_best": row["is_best"],
         "epochs_without_improvement": row["epochs_without_improvement"],
     }
@@ -1816,11 +2337,14 @@ def save_checkpoint(
     best_validation_loss: float | None = None,
     best_validation_score: float | None = None,
     best_validation_key: tuple[float, ...] | None = None,
+    best_objectives: dict[str, dict[str, object]] | None = None,
     is_best: bool = False,
+    checkpoint_objective: str | None = None,
     optimizer: torch.optim.Optimizer | None = None,
     scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau | None = None,
     train_loader: DataLoader | None = None,
     device: torch.device | None = None,
+    ema: ModelEMA | None = None,
 ) -> None:
     checkpoint_path = Path(checkpoint_path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1839,10 +2363,15 @@ def save_checkpoint(
         "best_validation_key": (
             None if best_validation_key is None else list(best_validation_key)
         ),
+        "best_objectives": best_objectives,
         "loss_weights": asdict(loss_weights_from_config(train_config)),
         "semantic_latent_mode": train_config.semantic_latent_mode,
         "semantic_latent_stochastic": train_config.semantic_latent_mode != "deterministic",
         "is_best": is_best,
+        "checkpoint_objective": checkpoint_objective,
+        "ema_state_dict": (
+            None if ema is None or not ema.initialized else ema.state_dict()
+        ),
     }
     if optimizer is not None and scheduler is not None and train_loader is not None:
         payload.update(
@@ -1872,7 +2401,7 @@ def validate_resume_configuration(
     differences = {
         name: (checkpoint_values[name], requested_values[name])
         for name in checkpoint_values
-        if name not in {"epochs", "device"}
+        if name not in {"epochs", "device", "restore_best_weights"}
         and checkpoint_values[name] != requested_values[name]
     }
     if differences:
@@ -1967,11 +2496,19 @@ def restore_training_loader_state(
 def replay_scheduler_history(
     scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau,
     history: list[dict[str, object]],
+    scheduler_monitor: str = "loss",
 ) -> None:
     for row in history:
         validation = row.get("validation")
-        if isinstance(validation, dict) and "loss" in validation:
-            scheduler.step(float(validation["loss"]))
+        if isinstance(validation, dict):
+            scheduler.step(
+                float(
+                    row.get(
+                        "lr_scheduler_metric",
+                        scheduler_monitor_value(validation, scheduler_monitor),
+                    )
+                )
+            )
 
 
 def restore_training_state(
@@ -1983,6 +2520,7 @@ def restore_training_state(
     device: torch.device,
     completed_epoch: int,
     history: list[dict[str, object]],
+    scheduler_monitor: str,
     seed: int,
     show_progress: bool,
 ) -> None:
@@ -1992,7 +2530,7 @@ def restore_training_state(
         raise ValueError("checkpoint contains incomplete optimizer/scheduler resume state")
 
     if optimizer_state is None:
-        replay_scheduler_history(scheduler, history)
+        replay_scheduler_history(scheduler, history, scheduler_monitor)
         batch_sampler = getattr(train_loader, "batch_sampler", None)
         if hasattr(batch_sampler, "epoch"):
             batch_sampler.epoch = completed_epoch
@@ -2015,7 +2553,7 @@ def restore_training_state(
         # mode="max" discovery-score scheduler. Replaying loss history avoids
         # silently restoring that conflicting objective while preserving the
         # optimizer, RNG, and loader continuation state.
-        replay_scheduler_history(scheduler, history)
+        replay_scheduler_history(scheduler, history, scheduler_monitor)
         scheduler_restored = False
     rng_state = checkpoint.get("rng_state")
     loader_state = checkpoint.get("training_loader_state")
@@ -2062,7 +2600,7 @@ def load_checkpoint(
         incompatible = model.load_state_dict(checkpoint["model_state_dict"], strict=False)
     except RuntimeError as exc:
         raise RuntimeError(
-            "checkpoint tensors are incompatible with the current v5 architecture; "
+            "checkpoint tensors are incompatible with the current v6 architecture; "
             "checkpoint migration is unsafe, so retrain from schema-v5 data"
         ) from exc
     allowed_missing = {"petri_encoder.transition_label_embedding.weight"}

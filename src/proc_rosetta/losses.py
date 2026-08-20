@@ -14,15 +14,15 @@ class LossWeights:
     tree_reconstruction: float = 0.5
     trace_to_tree: float = 2.0
     petri_to_tree: float = 0.5
-    exact_contrastive: float = 0.5
+    exact_contrastive: float = 0.30
     within_modality_contrastive: float = 0.25
     soft_behavior_geometry: float = 0.25
     variance: float = 0.1
     covariance: float = 0.01
-    latent_alignment: float = 0.0
+    latent_alignment: float = 0.075
     kl: float = 0.0
-    label_smoothing: float = 0.0
-    contrastive_temperature: float = 0.2
+    label_smoothing: float = 0.04
+    contrastive_temperature: float = 0.3
     behavior_temperature: float = 0.2
     latent_temperature: float = 0.2
 
@@ -95,18 +95,18 @@ def all_positive_supcon(
 
 
 def cross_modal_contrastive_loss(
-    dists: dict[str, LatentDistribution],
+    dists: dict[str, LatentDistribution | torch.Tensor],
     temperature: float = 0.2,
     positive_mask: torch.Tensor | None = None,
     candidate_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
     names = list(dists)
-    total = dists[names[0]].mu.sum() * 0.0
+    total = _embedding(dists[names[0]]).sum() * 0.0
     directions = 0
     for left_idx, left_name in enumerate(names):
         for right_name in names[left_idx + 1 :]:
-            left = F.normalize(dists[left_name].mu, dim=-1)
-            right = F.normalize(dists[right_name].mu, dim=-1)
+            left = F.normalize(_embedding(dists[left_name]), dim=-1)
+            right = F.normalize(_embedding(dists[right_name]), dim=-1)
             logits = left @ right.T / temperature
             mask = (
                 torch.eye(logits.shape[0], dtype=torch.bool, device=logits.device)
@@ -134,18 +134,18 @@ def cross_modal_contrastive_loss(
 
 
 def within_modality_contrastive_loss(
-    dists: dict[str, LatentDistribution],
+    dists: dict[str, LatentDistribution | torch.Tensor],
     positive_mask: torch.Tensor | None,
     candidate_mask: torch.Tensor | None = None,
     temperature: float = 0.2,
 ) -> torch.Tensor:
-    first = next(iter(dists.values())).mu
+    first = _embedding(next(iter(dists.values())))
     if positive_mask is None:
         return first.sum() * 0.0
     total = first.sum() * 0.0
     valid_modalities = 0
     for distribution in dists.values():
-        embedding = F.normalize(distribution.mu, dim=-1)
+        embedding = F.normalize(_embedding(distribution), dim=-1)
         logits = embedding @ embedding.T / temperature
         mask = positive_mask.to(device=logits.device, dtype=torch.bool).clone()
         mask.fill_diagonal_(False)
@@ -159,6 +159,48 @@ def within_modality_contrastive_loss(
             total = total + all_positive_supcon(logits, mask, candidates)
             valid_modalities += 1
     return total / max(valid_modalities, 1)
+
+
+def _embedding(value: LatentDistribution | torch.Tensor) -> torch.Tensor:
+    return value.mu if isinstance(value, LatentDistribution) else value
+
+
+def positive_latent_alignment_loss(
+    dists: dict[str, LatentDistribution],
+    positive_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Align semantic latents only across known matching multimodal rows/views."""
+
+    names = list(dists)
+    first = dists[names[0]].mu
+    total = first.sum() * 0.0
+    comparisons = 0
+    for left_index, left_name in enumerate(names):
+        for right_name in names[left_index + 1 :]:
+            left = F.normalize(dists[left_name].mu, dim=-1)
+            right = F.normalize(dists[right_name].mu, dim=-1)
+            similarity = left @ right.T
+            if positive_mask is None:
+                mask = torch.eye(
+                    similarity.shape[0],
+                    dtype=torch.bool,
+                    device=similarity.device,
+                )
+            else:
+                mask = positive_mask.to(device=similarity.device, dtype=torch.bool)
+                if mask.shape != similarity.shape:
+                    raise ValueError(
+                        f"positive mask shape {tuple(mask.shape)} does not match "
+                        f"alignment similarities {tuple(similarity.shape)}"
+                    )
+                # Matching rows are always cross-modal positives, including for
+                # legacy batches whose family IDs were unavailable.
+                mask = mask.clone()
+                mask.fill_diagonal_(True)
+            if mask.any():
+                total = total + (1.0 - similarity[mask]).mean()
+                comparisons += 1
+    return total / max(comparisons, 1)
 
 
 def soft_behavior_geometry_loss(
@@ -271,14 +313,16 @@ def multimodal_tree_loss(
     rec_tree = reconstruction("tree")
     trace_to_tree = reconstruction("trace")
     petri_to_tree = reconstruction("petri")
+    contrastive_embeddings = outputs.get("contrastive_embeddings", dists)
+    assert isinstance(contrastive_embeddings, dict)
     exact = cross_modal_contrastive_loss(
-        dists,
+        contrastive_embeddings,
         temperature=weights.contrastive_temperature,
         positive_mask=positive_mask,
         candidate_mask=contrastive_candidate_mask,
     )
     within = within_modality_contrastive_loss(
-        dists,
+        contrastive_embeddings,
         positive_mask,
         contrastive_candidate_mask,
         temperature=weights.contrastive_temperature,
@@ -290,6 +334,7 @@ def multimodal_tree_loss(
         latent_temperature=weights.latent_temperature,
     )
     variance, covariance = variance_covariance_loss(dists)
+    latent_alignment = positive_latent_alignment_loss(dists, positive_mask)
     total = (
         weights.tree_reconstruction * rec_tree
         + weights.trace_to_tree * trace_to_tree
@@ -299,6 +344,7 @@ def multimodal_tree_loss(
         + weights.soft_behavior_geometry * soft
         + weights.variance * variance
         + weights.covariance * covariance
+        + weights.latent_alignment * latent_alignment
     )
     ranks = torch.stack(
         [effective_rank(distribution.mu.detach()) for distribution in dists.values()]
@@ -318,6 +364,6 @@ def multimodal_tree_loss(
         # Compatibility report keys are retained with deliberately zeroed
         # objectives for old CSV/UI consumers.
         "contrastive": exact,
-        "latent_alignment": zero,
+        "latent_alignment": latent_alignment,
         "kl": zero,
     }

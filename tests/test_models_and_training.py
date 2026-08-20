@@ -3,10 +3,17 @@ import pytest
 from dataclasses import replace
 from torch.utils.data import DataLoader
 
-from proc_rosetta.data import BatchConfig, ProcessBatchCollator, SyntheticProcessDataset
+from proc_rosetta.data import (
+    BatchConfig,
+    ProcessBatchCollator,
+    SplitCounts,
+    SyntheticProcessDataset,
+    recreate_data_splits,
+)
 from proc_rosetta.losses import (
     cross_modal_contrastive_loss,
     multimodal_tree_loss,
+    positive_latent_alignment_loss,
     sequence_cross_entropy,
 )
 from proc_rosetta.models import LatentDistribution
@@ -19,11 +26,15 @@ from proc_rosetta.training import (
     TrainConfig,
     _different_behavior_permutation,
     build_lr_scheduler,
+    build_model,
+    build_optimizer,
     checkpoint_selection_key,
     loss_weights_from_checkpoint,
+    loss_weights_from_config,
     replay_scheduler_history,
     stage_acceptance_report,
     train_synthetic,
+    train_from_data_dir,
 )
 from types import SimpleNamespace
 
@@ -41,7 +52,7 @@ def test_model_forward_and_loss():
     losses = multimodal_tree_loss(outputs, batch["tree_tokens"])
 
     assert outputs["tree_logits"]["tree"].shape[:2] == batch["tree_tokens"][:, :-1].shape
-    assert outputs["dists"]["trace"].memory.shape == (3, 8, 32)
+    assert outputs["dists"]["trace"].memory.shape == (3, 6, 32)
     assert outputs["dists"]["trace"].activity_memory.shape == (3, 5, 32)
     assert outputs["dists"]["tree"].activity_memory.shape == (3, 5, 32)
     assert outputs["dists"]["petri"].activity_memory.shape == (3, 5, 32)
@@ -50,6 +61,83 @@ def test_model_forward_and_loss():
         outputs["dists"]["trace"].mu,
     )
     assert torch.isfinite(losses["loss"])
+    assert set(outputs["contrastive_embeddings"]) == {"tree", "trace", "petri"}
+
+    model.zero_grad(set_to_none=True)
+    losses["exact_contrastive"].backward()
+    assert any(parameter.grad is not None for parameter in model.contrastive_head.parameters())
+    assert all(parameter.grad is None for parameter in model.tree_decoder.parameters())
+
+    model.zero_grad(set_to_none=True)
+    sampled_outputs = model(
+        batch,
+        deterministic=True,
+        scheduled_sampling_probability=1.0,
+    )
+    assert all(
+        torch.isfinite(logits).any(dim=-1).all()
+        for logits in sampled_outputs["tree_logits"].values()
+    )
+
+
+def test_positive_latent_alignment_is_real_and_uses_family_views():
+    values = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+    swapped = values.flip(0)
+    dists = {
+        "tree": LatentDistribution(values, torch.zeros_like(values)),
+        "trace": LatentDistribution(swapped, torch.zeros_like(swapped)),
+    }
+
+    diagonal = positive_latent_alignment_loss(dists)
+    all_views = positive_latent_alignment_loss(
+        dists, torch.ones((2, 2), dtype=torch.bool)
+    )
+
+    assert diagonal == pytest.approx(1.0)
+    assert all_views == pytest.approx(0.5)
+
+
+def test_metric_objective_ramps_replace_hard_stage_switches():
+    config = TrainConfig()
+
+    epoch_two = loss_weights_from_config(config, epoch=2)
+    epoch_three = loss_weights_from_config(config, epoch=3)
+    epoch_six = loss_weights_from_config(config, epoch=6)
+    epoch_ten = loss_weights_from_config(config, epoch=10)
+
+    assert epoch_two.exact_contrastive == 0.0
+    assert epoch_three.exact_contrastive == pytest.approx(0.30 / 4)
+    assert epoch_six.exact_contrastive == pytest.approx(0.30)
+    assert epoch_three.soft_behavior_geometry == 0.0
+    assert epoch_ten.soft_behavior_geometry == pytest.approx(0.25)
+
+
+def test_default_capacity_and_adamw_parameter_groups_are_regularized():
+    config = TrainConfig(device="cpu")
+    model = build_model(config, SyntheticConfig(), torch.device("cpu"))
+    optimizer = build_optimizer(model, config)
+
+    assert sum(parameter.numel() for parameter in model.parameters()) < 7_500_000
+    assert config.hidden_dim == 192
+    assert config.latent_dim == 96
+    assert config.tree_encoder_layers == 3
+    assert config.trace_event_layers == 1
+    assert config.trace_set_layers == 1
+    assert {group["weight_decay"] for group in optimizer.param_groups} == {
+        0.0,
+        config.weight_decay,
+    }
+    no_decay_ids = {
+        id(parameter)
+        for group in optimizer.param_groups
+        if group["weight_decay"] == 0.0
+        for parameter in group["params"]
+    }
+    assert all(
+        id(parameter) in no_decay_ids
+        for name, parameter in model.named_parameters()
+        if name.endswith(".bias") or parameter.ndim < 2
+    )
 
 
 def test_label_smoothing_ignores_grammar_masked_logits():
@@ -118,6 +206,8 @@ def test_lr_scheduler_tracks_validation_loss_instead_of_discovery_score():
     replay_scheduler_history(scheduler, history)
 
     assert scheduler.mode == "min"
+    assert scheduler.threshold == config.min_delta
+    assert scheduler.threshold_mode == "abs"
     assert optimizer.param_groups[0]["lr"] == pytest.approx(5e-4)
 
 
@@ -129,6 +219,89 @@ def test_train_synthetic_smoke():
 
     assert len(history) == 1
     assert history[0]["loss"] > 0
+
+
+def test_train_from_data_dir_restores_best_weights_before_return(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    checkpoint = tmp_path / "model.pt"
+    recreate_data_splits(
+        data_dir,
+        counts=SplitCounts(training=1, validation=1, test=1),
+        config=SyntheticConfig(
+            generator="isolated",
+            max_depth=2,
+            max_activities=4,
+            min_activities=1,
+            traces_per_sample=1,
+            class_coverage_mode="best_effort",
+        ),
+        show_progress=False,
+    )
+
+    def fake_train_epoch(model, *args, epoch=None, **kwargs):
+        with torch.no_grad():
+            next(model.parameters()).add_(float(epoch))
+        return {
+            "loss": float(epoch),
+            "tree_reconstruction": 0.1,
+            "trace_to_tree": 0.2,
+            "petri_to_tree": 0.1,
+        }
+
+    def fake_evaluate_epoch(model, *args, epoch=None, **kwargs):
+        value = float(epoch)
+        return {
+            "loss": value,
+            "tree_reconstruction": value,
+            "trace_to_tree": value,
+            "petri_to_tree": value,
+            "trace_normalized_tree_edit": value / 10.0,
+            "exact_behavior_recall_at_1": 1.0 / value,
+            "behavior_distance_spearman": 1.0 / value,
+            "effective_rank": 1.0 / value,
+            "trace_canonical_exact": 1.0 / value,
+            "checkpoint_selection_score": 1.0 / value,
+            "checkpoint_selection_primary_exact": 1.0 / value,
+            "checkpoint_selection_edit_score": 1.0 - value / 10.0,
+            "checkpoint_selection_recall_at_1": 1.0 / value,
+            "checkpoint_selection_spearman": 1.0 / value,
+        }
+
+    monkeypatch.setattr("proc_rosetta.training.train_epoch", fake_train_epoch)
+    monkeypatch.setattr("proc_rosetta.training.evaluate_epoch", fake_evaluate_epoch)
+    model, history = train_from_data_dir(
+        data_dir=data_dir,
+        checkpoint_path=checkpoint,
+        metrics_csv_path=tmp_path / "metrics.csv",
+        train_config=TrainConfig(
+            epochs=2,
+            batch_size=1,
+            hidden_dim=16,
+            latent_dim=8,
+            memory_tokens=2,
+            decoder_layers=1,
+            tree_encoder_layers=1,
+            trace_event_layers=1,
+            trace_set_layers=1,
+            petri_message_passing_steps=1,
+            use_ema=False,
+            device="cpu",
+        ),
+        show_progress=False,
+    )
+
+    best = torch.load(
+        checkpoint.with_name("model.best.pt"),
+        map_location="cpu",
+        weights_only=False,
+    )["model_state_dict"]
+    latest = torch.load(checkpoint, map_location="cpu", weights_only=False)[
+        "model_state_dict"
+    ]
+    returned = model.state_dict()
+    assert len(history) == 2
+    assert all(torch.equal(returned[name], best[name]) for name in returned)
+    assert any(not torch.equal(returned[name], latest[name]) for name in returned)
 
 
 def test_multi_positive_contrastive_loss_does_not_make_family_views_negatives():
@@ -241,6 +414,32 @@ def test_effective_contrastive_batch_contains_32_distinct_behaviors():
 
     assert len(first_batch) == 128
     assert len({samples[index].equivalence_id for index in first_batch}) == 32
+
+
+def test_batch_sampler_groups_exact_partial_order_positives_without_orphans():
+    samples = [
+        SimpleNamespace(
+            equivalence_id="broad-family",
+            exact_behavior_id="exact",
+            partial_order_id=partial,
+        )
+        for partial, count in (("concurrent", 5), ("interleaved", 4))
+        for _ in range(count)
+    ]
+    sampler = BehaviorFamilyBatchSampler(
+        samples,
+        batch_size=5,
+        views_per_family=4,
+        shuffle=False,
+    )
+
+    batches = list(sampler)
+    for batch in batches:
+        partial_counts = {
+            partial: sum(samples[index].partial_order_id == partial for index in batch)
+            for partial in {samples[index].partial_order_id for index in batch}
+        }
+        assert all(count >= 2 for count in partial_counts.values())
 
 
 def test_source_ablation_deranges_adjacent_views_of_the_same_behavior():

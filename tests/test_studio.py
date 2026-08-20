@@ -345,6 +345,7 @@ def test_analytical_pages_render_with_a_populated_multimodal_workspace():
 def test_workspace_upload_automatically_builds_an_embedding():
     from streamlit.testing.v1 import AppTest
 
+    studio_checkpoint()
     app = AppTest.from_file(str(ROOT / "pages/01_workspace.py"), default_timeout=30).run()
     app.get("file_uploader")[0].upload(
         "uploaded-example.xes",
@@ -364,6 +365,7 @@ def test_workspace_upload_automatically_builds_an_embedding():
 def test_workspace_imports_and_groups_all_nine_bundled_artifacts():
     from streamlit.testing.v1 import AppTest
 
+    studio_checkpoint()
     app = AppTest.from_file(str(ROOT / "pages/01_workspace.py"), default_timeout=30).run()
     next(widget for widget in app.selectbox if widget.label == "Bundled artifacts").select(
         "All 9 artifacts"

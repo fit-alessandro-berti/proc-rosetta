@@ -77,11 +77,12 @@ equivalence_level and validation metadata
 The model contains:
 
 ```text
-process tree tokens -> 4-layer prefix Transformer --------.
-event-log traces    -> biGRU + set Transformer ------------+-> 8 x 256 source memory
+process tree tokens -> 3-layer prefix Transformer --------.
+event-log traces    -> 1-layer biGRU + 1-layer set encoder -+-> 6 x 192 source memory
 Petri graph         -> 5-layer edge-aware residual GNN ----'       |
                                                                 cross-attention
-normalized 128-D metric heads <---- each encoder               4-layer tree decoder
+normalized 96-D semantic latent <---- each encoder              3-layer tree decoder
+             `-> disposable 2-layer hard-contrastive head
 ```
 
 The training objective combines:
@@ -92,11 +93,12 @@ The training objective combines:
 - all-positive supervised contrast across all six modality directions;
 - within-modality view invariance;
 - soft behavior-neighborhood matching;
+- positive-only cross-modal cosine alignment on the semantic latent;
 - variance/covariance anti-collapse regularization.
 
 Semantic content is deterministic: supervised decoding does not sample a VAE,
-KL and raw latent MSE are zero, and decoder memory is separate from the metric
-head. Strong positives require a certified exact language and matching
+KL is explicitly unsupported, and decoder memory is separate from the
+contrastive head. Strong positives require a certified exact language and matching
 partial-order identity. Bounded families participate only in soft behavior
 geometry. The decoder cross-attends on every layer and uses an activity-copy
 distribution scored against contextual occurrence states aggregated per source
@@ -193,9 +195,9 @@ Start by recreating synthetic training, validation, and test splits:
 ```bash
 ./sample.py \
   --data-dir data \
-  --train-count 8192 \
-  --validation-count 1024 \
-  --test-count 1024 \
+  --train-families 4096 \
+  --validation-families 512 \
+  --test-families 512 \
   --max-activities 30 \
   --traces-per-sample 128
 ```
@@ -226,16 +228,19 @@ metadata cannot make incompatible tensor shapes valid.
 `sample.py` shows per-split `tqdm` progress on stderr while triplets are
 generated. Pass `--quiet` to suppress the progress bars.
 
-These defaults correspond to 4,096 independent training behavior families and
-512 families in each evaluation split with the standard two representations
-per family. Under balanced motif weights that gives 1,024 training families and
-128 validation/test families per motif. The larger evaluation splits are
+These are also the command defaults: 4,096 independent training behavior
+families and 512 families in each evaluation split. With two representations
+and two fixed log views per family, they produce 16,384/2,048/2,048 flattened
+rows. Under balanced motif weights that gives 1,024 training families and 128
+validation/test families per motif. The larger evaluation splits are
 intentional: they keep per-motif and per-representation estimates meaningful
 for the more heterogeneous family, sampling, and noise strata.
 
-Counts still refer to flattened samples, preserving the earlier command shape.
-Consecutive rows are alternate representations of one behavior and a behavior
-never crosses split boundaries. Useful generator controls include:
+The legacy `--train-count`, `--validation-count`, and `--test-count` flags still
+accept flattened row counts but print a prominent deprecation warning. Family
+counts are primary so behavior diversity cannot be mistaken for duplicated
+views. Consecutive rows are alternate representations of one behavior and a
+behavior never crosses split boundaries. Useful generator controls include:
 
 ```bash
 ./sample.py --preset smoke --train-count 32 --validation-count 8 --test-count 8
@@ -277,7 +282,8 @@ Generator JSON uses nested `motifs`, `class_coverage`, `representations`,
 structural statistics, and exact/bounded language certificates.
 Log modes include uniform, resampled, long-tail, sparse, incomplete, and noisy;
 noisy logs retain exact edit provenance.
-The default corpus creates four independent clean views and asserts that exact
+The default corpus creates two independent clean views (`uniform_variants` and
+`resampled`) and asserts that exact
 behavior signatures are disjoint across train, validation, and test. Training
 collation fails on over-length traces instead of silently truncating them.
 
@@ -295,13 +301,24 @@ Training writes:
 
 ```text
 checkpoints/proc_rosetta.pt       # latest completed epoch
-checkpoints/proc_rosetta.best.pt  # best validation-loss epoch
+checkpoints/proc_rosetta.best.pt  # best validation-loss epoch (testing default)
+checkpoints/proc_rosetta.best_loss.pt
+checkpoints/proc_rosetta.best_trace.pt
+checkpoints/proc_rosetta.best_edit.pt
+checkpoints/proc_rosetta.best_latent.pt
 checkpoints/training_metrics.csv  # per-epoch metrics
 ```
 
-Best-checkpoint selection, learning-rate scheduling, and early stopping all use
-validation loss. A best checkpoint requires an improvement of at least
-`--min-delta`; discovery-quality metrics are recorded as independent diagnostics.
+Every strict objective improvement is checkpointed. Learning-rate scheduling
+and early stopping default to the stable validation `trace_to_tree` loss (or
+can use `reconstruction_composite`/`loss`) with the same absolute
+`--min-delta`. `train_from_data_dir()` restores `.best.pt` before returning;
+`--no-restore-best-weights` disables that return-time step without changing the
+latest resume checkpoint.
+
+An EMA starts at epoch 3 with decay 0.995. Ordinary and EMA validation metrics
+are both recorded, and the better scheduler-monitor result supplies the epoch's
+candidate checkpoints. Use `--no-use-ema` for an ablation.
 
 Resume an interrupted run from the latest completed epoch:
 
@@ -324,10 +341,12 @@ Useful training controls:
 ```bash
 ./train.py --quiet
 ./train.py --device cuda
-./train.py --latent-dim 128 --hidden-dim 256 --memory-tokens 8
+./train.py --latent-dim 96 --hidden-dim 192 --memory-tokens 6
 ./train.py --semantic-latent-mode deterministic
-./train.py --dropout 0.1 --weight-decay 1e-4
-./train.py --views-per-family 4
+./train.py --trace-encoder-dropout 0.2 --decoder-dropout 0.2 --projection-dropout 0.2
+./train.py --tree-encoder-dropout 0.12 --petri-encoder-dropout 0.12
+./train.py --weight-decay 5e-4 --label-smoothing 0.04
+./train.py --activity-remap-probability 0.5 --views-per-family 2
 ./train.py --training-stage a  # disables metric objectives for the tiny overfit gate
 ./train.py --no-group-aware-batches
 ```
@@ -342,7 +361,7 @@ The staged run sequence is intentionally gated:
    95%, while shuffled and zero source memories remain at or below 10%.
 2. Use `stage_b_exact_alignment` with `--training-stage b`. The logged gate
    requires zero false negatives, effective rank above 32 for the default
-   128-D head, and exact-behavior Recall@1 of at least 90%.
+   96-D head, and exact-behavior Recall@1 of at least 90%.
 3. Enable `stage_c_behavior_geometry` / `--training-stage c` and inspect the
    logged behavior-distance Spearman correlation.
 4. Add sparse, incomplete, long-tail, and noisy observations only with
@@ -351,8 +370,15 @@ The staged run sequence is intentionally gated:
 
 Expensive per-encoder gradient diagnostics are disabled by default. Enable them
 for a diagnostic run with `--gradient-diagnostics-interval 10` (or another
-positive interval), then tune loss weights using the reported
-metric/reconstruction gradient ratios.
+positive interval), then inspect both metric/reconstruction norm ratios and the
+recorded reconstruction/exact, reconstruction/geometry, and exact/geometry
+gradient cosines for every encoder.
+
+By default, reconstruction trains alone for epochs 1–2, exact/within contrastive
+and anti-collapse terms ramp across epochs 3–6, and soft behavior geometry ramps
+across epochs 5–10. Hard contrastive loss uses its own projection head at
+temperature 0.3; the downstream semantic latent is aligned with a smaller
+positive-only cosine term.
 
 The tokenizer size is fixed by the data metadata stored when `sample.py` runs.
 For logs with many activities, generate data with a sufficiently large
@@ -364,9 +390,13 @@ Evaluate the held-out synthetic test split:
 
 ```bash
 ./test.py \
-  --data-dir data \
-  --checkpoint checkpoints/proc_rosetta.best.pt
+  --data-dir data
 ```
+
+Testing resolves `checkpoints/proc_rosetta.pt` to `.best.pt` by default. To
+evaluate the most recently completed epoch instead, pass
+`--checkpoint-selection latest`; an explicitly named objective checkpoint is
+used as-is.
 
 The command prints its evaluation plan and `tqdm` progress bars to stderr,
 including the total/completed conformance checks, decode evaluations,

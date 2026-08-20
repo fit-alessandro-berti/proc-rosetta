@@ -706,7 +706,7 @@ def generate_family_samples(
     if count == 0:
         return []
     rows_per_family = max(1, int(getattr(config, "variants_per_behavior", 2))) * max(
-        1, int(getattr(config, "log_views_per_behavior", 4))
+        1, int(getattr(config, "log_views_per_behavior", 2))
     )
     mode = str(getattr(config, "class_coverage_mode", "strict"))
     if mode == "strict" and split in getattr(config, "min_families_per_motif", {}):
@@ -1485,7 +1485,7 @@ def _make_log_views(
     behavior_id: str,
     seed: int,
 ) -> tuple[LogView, ...]:
-    count = max(1, int(getattr(config, "log_views_per_behavior", 4)))
+    count = max(1, int(getattr(config, "log_views_per_behavior", 2)))
     traces_per_view = max(1, int(getattr(config, "traces_per_sample", 128)))
     modes = tuple(getattr(config, "log_view_modes", ("uniform_variants", "resampled")))
     maximum_length = max(1, int(getattr(config, "max_trace_length", 128)))

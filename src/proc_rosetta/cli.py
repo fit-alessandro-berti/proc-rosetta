@@ -16,7 +16,11 @@ from proc_rosetta.data import SplitCounts, recreate_data_splits
 from proc_rosetta.data import read_samples_jsonl, split_samples_path
 from proc_rosetta.devices import default_device
 from proc_rosetta.synthetic import DEFAULT_MAX_ACTIVITIES, SyntheticConfig
-from proc_rosetta.training import TrainConfig, train_from_data_dir
+from proc_rosetta.training import (
+    TrainConfig,
+    best_checkpoint_for,
+    train_from_data_dir,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,9 +30,24 @@ def build_parser() -> argparse.ArgumentParser:
     sample = subparsers.add_parser("sample", help="recreate synthetic data/training, validation, and test splits")
     sample.add_argument("--data-dir", default="data")
     sample.add_argument("--count", type=int, default=None, help="legacy alias for --train-count")
-    sample.add_argument("--train-count", type=int, default=None)
-    sample.add_argument("--validation-count", type=int, default=None)
-    sample.add_argument("--test-count", type=int, default=None)
+    sample.add_argument(
+        "--train-count",
+        type=int,
+        default=None,
+        help="Deprecated flattened-row count; prefer --train-families.",
+    )
+    sample.add_argument(
+        "--validation-count",
+        type=int,
+        default=None,
+        help="Deprecated flattened-row count; prefer --validation-families.",
+    )
+    sample.add_argument(
+        "--test-count",
+        type=int,
+        default=None,
+        help="Deprecated flattened-row count; prefer --test-families.",
+    )
     sample.add_argument("--train-families", type=int, default=None)
     sample.add_argument("--validation-families", type=int, default=None)
     sample.add_argument("--test-families", type=int, default=None)
@@ -76,10 +95,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
     )
     sample.add_argument("--variants-per-behavior", type=int, default=2)
-    sample.add_argument("--log-views-per-behavior", type=int, default=4)
+    sample.add_argument("--log-views-per-behavior", type=int, default=2)
     sample.add_argument(
         "--log-view-modes",
-        default="uniform_variants,resampled,sparse,long_tail",
+        default="uniform_variants,resampled",
         help=(
             "Comma-separated modes: uniform_variants,resampled,long_tail,sparse,"
             "incomplete,noisy."
@@ -110,20 +129,30 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--epochs", type=int, default=100)
     train.add_argument("--batch-size", type=int, default=128)
     train.add_argument("--learning-rate", type=float, default=3e-4)
-    train.add_argument("--latent-dim", type=int, default=128)
-    train.add_argument("--hidden-dim", type=int, default=256)
+    train.add_argument("--latent-dim", type=int, default=96)
+    train.add_argument("--hidden-dim", type=int, default=192)
     train.add_argument(
         "--semantic-latent-mode",
         choices=["deterministic"],
         default="deterministic",
         help="Semantic content mode; supervised translation supports deterministic only.",
     )
-    train.add_argument("--dropout", type=float, default=0.10)
-    train.add_argument("--weight-decay", type=float, default=1e-4)
-    train.add_argument("--label-smoothing", type=float, default=0.0)
-    train.add_argument("--early-stopping-patience", type=int, default=12)
-    train.add_argument("--min-delta", type=float, default=0.001)
-    train.add_argument("--lr-patience", type=int, default=2)
+    train.add_argument(
+        "--dropout",
+        type=float,
+        default=None,
+        help="Deprecated compatibility override that sets every modality dropout.",
+    )
+    train.add_argument("--tree-encoder-dropout", type=float, default=0.12)
+    train.add_argument("--trace-encoder-dropout", type=float, default=0.20)
+    train.add_argument("--petri-encoder-dropout", type=float, default=0.12)
+    train.add_argument("--decoder-dropout", type=float, default=0.20)
+    train.add_argument("--projection-dropout", type=float, default=0.20)
+    train.add_argument("--weight-decay", type=float, default=5e-4)
+    train.add_argument("--label-smoothing", type=float, default=0.04)
+    train.add_argument("--early-stopping-patience", type=int, default=6)
+    train.add_argument("--min-delta", type=float, default=0.005)
+    train.add_argument("--lr-patience", type=int, default=1)
     train.add_argument("--lr-factor", type=float, default=0.5)
     train.add_argument("--min-lr", type=float, default=1e-5)
     train.add_argument("--metrics-csv", default="checkpoints/training_metrics.csv")
@@ -161,36 +190,63 @@ def build_parser() -> argparse.ArgumentParser:
         help="Torch device; defaults to cuda or mps when available, otherwise cpu.",
     )
     train.add_argument("--quiet", action="store_true", help="disable stderr debug messages and progress bars")
-    train.add_argument("--views-per-family", type=int, default=4)
+    train.add_argument("--views-per-family", type=int, default=2)
     train.add_argument(
         "--activity-remap-probability",
         type=float,
-        default=0.0,
+        default=0.5,
         help=(
             "Probability of consistently renaming activities within each training "
             "family; preserves behavior while discouraging label memorization."
         ),
     )
-    train.add_argument("--memory-tokens", type=int, default=8)
-    train.add_argument("--decoder-layers", type=int, default=4)
-    train.add_argument("--decoder-input-dropout", type=float, default=0.10)
-    train.add_argument("--scheduled-sampling-max", type=float, default=0.20)
+    train.add_argument("--memory-tokens", type=int, default=6)
+    train.add_argument("--decoder-layers", type=int, default=3)
+    train.add_argument("--tree-encoder-layers", type=int, default=3)
+    train.add_argument("--trace-event-layers", type=int, default=1)
+    train.add_argument("--trace-set-layers", type=int, default=1)
+    train.add_argument("--petri-message-passing-steps", type=int, default=5)
+    train.add_argument("--decoder-input-dropout", type=float, default=0.15)
+    train.add_argument("--scheduled-sampling-max", type=float, default=0.075)
     train.add_argument("--scheduled-sampling-start-epoch", type=int, default=20)
     train.add_argument("--scheduled-sampling-ramp-epochs", type=int, default=20)
     train.add_argument("--gradient-clip-norm", type=float, default=5.0)
     train.add_argument("--tree-reconstruction-weight", type=float, default=0.5)
     train.add_argument("--trace-to-tree-weight", type=float, default=2.0)
     train.add_argument("--petri-to-tree-weight", type=float, default=0.5)
-    train.add_argument("--exact-contrastive-weight", type=float, default=0.5)
+    train.add_argument("--exact-contrastive-weight", type=float, default=0.30)
     train.add_argument("--within-modality-contrastive-weight", type=float, default=0.25)
     train.add_argument("--soft-behavior-geometry-weight", type=float, default=0.25)
     train.add_argument("--variance-weight", type=float, default=0.1)
     train.add_argument("--covariance-weight", type=float, default=0.01)
-    train.add_argument("--kl-weight", type=float, default=0.0)
-    train.add_argument("--latent-alignment-weight", type=float, default=0.0)
-    train.add_argument("--contrastive-temperature", type=float, default=0.2)
+    train.add_argument("--latent-alignment-weight", type=float, default=0.075)
+    train.add_argument("--contrastive-temperature", type=float, default=0.3)
     train.add_argument("--behavior-temperature", type=float, default=0.2)
     train.add_argument("--latent-temperature", type=float, default=0.2)
+    train.add_argument("--exact-contrastive-start-epoch", type=int, default=3)
+    train.add_argument("--exact-contrastive-ramp-epochs", type=int, default=4)
+    train.add_argument("--soft-geometry-start-epoch", type=int, default=5)
+    train.add_argument("--soft-geometry-ramp-epochs", type=int, default=6)
+    train.add_argument(
+        "--scheduler-monitor",
+        choices=["trace_to_tree", "reconstruction_composite", "loss"],
+        default="trace_to_tree",
+        help="Stable validation metric used by both LR scheduling and early stopping.",
+    )
+    train.add_argument(
+        "--restore-best-weights",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Restore the best validation-loss checkpoint before returning (default: enabled).",
+    )
+    train.add_argument(
+        "--use-ema",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Evaluate an exponential moving average of training weights (default: enabled).",
+    )
+    train.add_argument("--ema-start-epoch", type=int, default=3)
+    train.add_argument("--ema-decay", type=float, default=0.995)
     train.add_argument(
         "--training-stage",
         choices=["a", "b", "c", "d", "full"],
@@ -206,7 +262,14 @@ def build_parser() -> argparse.ArgumentParser:
     test = subparsers.add_parser("test", help="load a checkpoint and evaluate the persisted test split")
     test.add_argument("--data-dir", default="data")
     test.add_argument("--checkpoint", default="checkpoints/proc_rosetta.pt")
+    test.add_argument(
+        "--checkpoint-selection",
+        choices=["best", "latest"],
+        default="best",
+        help="Evaluate the best validation-loss checkpoint by default, or the latest epoch.",
+    )
     test.add_argument("--batch-size", type=int, default=16)
+    test.add_argument("--max-decode-length", type=int, default=512)
     test.add_argument(
         "--device",
         default=default_device(),
@@ -273,8 +336,8 @@ def synthetic_config_from_args(args: argparse.Namespace) -> SyntheticConfig:
         "curriculum_phase": 3,
         "generator": "behavior_families",
         "variants_per_behavior": 2,
-        "log_views_per_behavior": 4,
-        "log_view_modes": "uniform_variants,resampled,sparse,long_tail",
+        "log_views_per_behavior": 2,
+        "log_view_modes": "uniform_variants,resampled",
     }
     for field_name in (
         "max_depth",
@@ -307,6 +370,16 @@ def synthetic_config_from_args(args: argparse.Namespace) -> SyntheticConfig:
 
 def run_sample(args: argparse.Namespace) -> int:
     config = synthetic_config_from_args(args)
+    if any(
+        value is not None
+        for value in (args.count, args.train_count, args.validation_count, args.test_count)
+    ):
+        print(
+            "[sample] WARNING: flattened row-count flags are deprecated; use "
+            "--train-families/--validation-families/--test-families so behavior "
+            "diversity is explicit.",
+            file=sys.stderr,
+        )
     metadata = recreate_data_splits(
         data_dir=args.data_dir,
         counts=split_counts_from_args(args, config=config),
@@ -327,6 +400,11 @@ def run_train(args: argparse.Namespace) -> int:
         hidden_dim=args.hidden_dim,
         semantic_latent_mode=args.semantic_latent_mode,
         dropout=args.dropout,
+        tree_encoder_dropout=args.tree_encoder_dropout,
+        trace_encoder_dropout=args.trace_encoder_dropout,
+        petri_encoder_dropout=args.petri_encoder_dropout,
+        decoder_dropout=args.decoder_dropout,
+        projection_dropout=args.projection_dropout,
         weight_decay=args.weight_decay,
         label_smoothing=args.label_smoothing,
         early_stopping_patience=args.early_stopping_patience,
@@ -341,6 +419,10 @@ def run_train(args: argparse.Namespace) -> int:
         activity_remap_probability=args.activity_remap_probability,
         memory_tokens=args.memory_tokens,
         decoder_layers=args.decoder_layers,
+        tree_encoder_layers=args.tree_encoder_layers,
+        trace_event_layers=args.trace_event_layers,
+        trace_set_layers=args.trace_set_layers,
+        petri_message_passing_steps=args.petri_message_passing_steps,
         decoder_input_dropout=args.decoder_input_dropout,
         scheduled_sampling_max=args.scheduled_sampling_max,
         scheduled_sampling_start_epoch=args.scheduled_sampling_start_epoch,
@@ -354,11 +436,19 @@ def run_train(args: argparse.Namespace) -> int:
         soft_behavior_geometry_weight=args.soft_behavior_geometry_weight,
         variance_weight=args.variance_weight,
         covariance_weight=args.covariance_weight,
-        kl_weight=args.kl_weight,
         latent_alignment_weight=args.latent_alignment_weight,
         contrastive_temperature=args.contrastive_temperature,
         behavior_temperature=args.behavior_temperature,
         latent_temperature=args.latent_temperature,
+        exact_contrastive_start_epoch=args.exact_contrastive_start_epoch,
+        exact_contrastive_ramp_epochs=args.exact_contrastive_ramp_epochs,
+        soft_geometry_start_epoch=args.soft_geometry_start_epoch,
+        soft_geometry_ramp_epochs=args.soft_geometry_ramp_epochs,
+        scheduler_monitor=args.scheduler_monitor,
+        restore_best_weights=args.restore_best_weights,
+        use_ema=args.use_ema,
+        ema_start_epoch=args.ema_start_epoch,
+        ema_decay=args.ema_decay,
         training_stage=args.training_stage,
         stage_gate_interval=max(1, args.stage_gate_interval),
         gradient_diagnostics_interval=args.gradient_diagnostics_interval,
@@ -382,6 +472,10 @@ def run_train(args: argparse.Namespace) -> int:
 
 def run_test(args: argparse.Namespace) -> int:
     show_progress = not args.quiet
+    checkpoint_path = checkpoint_for_selection(
+        args.checkpoint,
+        args.checkpoint_selection,
+    )
     sample_path = split_samples_path(args.data_dir, "test")
     test_debug(f"Loading test samples from {sample_path}", enabled=show_progress)
     samples = read_samples_jsonl(sample_path, show_progress=show_progress)
@@ -399,7 +493,7 @@ def run_test(args: argparse.Namespace) -> int:
         enabled=show_progress,
     )
     report = rich_test_report(
-        checkpoint_path=args.checkpoint,
+        checkpoint_path=checkpoint_path,
         data_dir=args.data_dir,
         samples=samples,
         batch_size=args.batch_size,
@@ -415,6 +509,7 @@ def run_test(args: argparse.Namespace) -> int:
         ),
         show_progress=show_progress,
         conformance_method=args.conformance_method,
+        max_decode_length=max(2, args.max_decode_length),
     )
     if args.json:
         print(json.dumps(report, sort_keys=True))
@@ -448,23 +543,53 @@ def split_counts_from_args(
     train_count = args.train_count if args.train_count is not None else args.count
     config = config or SyntheticConfig()
     rows_per_family = config.variants_per_behavior * config.log_views_per_behavior
+    explicit_rows = {
+        "training": train_count,
+        "validation": args.validation_count,
+        "test": args.test_count,
+    }
+    explicit_families = {
+        "training": args.train_families,
+        "validation": args.validation_families,
+        "test": args.test_families,
+    }
+    for split in explicit_rows:
+        if explicit_rows[split] is not None and explicit_families[split] is not None:
+            raise ValueError(
+                f"choose either {split} row count or family count, not both"
+            )
+    family_defaults = {"training": 4096, "validation": 512, "test": 512}
+
+    def split_count(split: str) -> int:
+        row_count = explicit_rows[split]
+        if row_count is not None:
+            return _positive(row_count, 1, f"{split}-count")
+        family_count = _positive(
+            explicit_families[split],
+            family_defaults[split],
+            f"{split}-families",
+        )
+        return family_count * rows_per_family
+
     return SplitCounts(
-        training=(
-            _positive(args.train_families, 1, "train-families") * rows_per_family
-            if args.train_families is not None
-            else _positive(train_count, default=8192, name="train-count")
-        ),
-        validation=(
-            _positive(args.validation_families, 1, "validation-families") * rows_per_family
-            if args.validation_families is not None
-            else _positive(args.validation_count, default=1024, name="validation-count")
-        ),
-        test=(
-            _positive(args.test_families, 1, "test-families") * rows_per_family
-            if args.test_families is not None
-            else _positive(args.test_count, default=1024, name="test-count")
-        ),
+        training=split_count("training"),
+        validation=split_count("validation"),
+        test=split_count("test"),
     )
+
+
+def checkpoint_for_selection(
+    checkpoint_path: str | Path,
+    selection: str,
+) -> Path:
+    path = Path(checkpoint_path)
+    if selection == "latest":
+        return path
+    if selection != "best":
+        raise ValueError("checkpoint selection must be best or latest")
+    if path.stem.endswith(".best") or ".best_" in path.stem:
+        return path
+    return best_checkpoint_for(path)
 
 
 def _positive(value: int | None, default: int, name: str) -> int:

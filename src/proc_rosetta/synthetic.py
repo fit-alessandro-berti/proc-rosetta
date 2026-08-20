@@ -35,12 +35,10 @@ class SyntheticConfig:
     generator: str = "behavior_families"
     variants_per_behavior: int = 2
     exact_equivalence_only_for_training: bool = True
-    log_views_per_behavior: int = 4
+    log_views_per_behavior: int = 2
     log_view_modes: tuple[str, ...] = (
         "uniform_variants",
         "resampled",
-        "sparse",
-        "long_tail",
     )
     motif_weights: dict[str, float] = field(
         default_factory=lambda: {
@@ -155,12 +153,12 @@ class SyntheticConfig:
             exact_equivalence_only_for_training=bool(
                 representations.get("exact_equivalence_only_for_training", True)
             ),
-            log_views_per_behavior=int(logs.get("log_views_per_behavior", 4)),
+            log_views_per_behavior=int(logs.get("log_views_per_behavior", 2)),
             log_view_modes=tuple(
                 str(value)
                 for value in logs.get(
                     "sampling_modes",
-                    ("uniform_variants", "resampled", "sparse", "long_tail"),
+                    ("uniform_variants", "resampled"),
                 )
             ),
             motif_weights={

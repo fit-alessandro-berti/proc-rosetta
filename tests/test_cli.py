@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from proc_rosetta.cli import main
-from proc_rosetta.cli import build_parser, split_counts_from_args
+from proc_rosetta.cli import build_parser, checkpoint_for_selection, split_counts_from_args
 from proc_rosetta.data import SplitCounts, recreate_data_splits
 from proc_rosetta.devices import default_device
 from proc_rosetta.synthetic import SyntheticConfig
@@ -18,13 +18,13 @@ def test_default_sample_and_train_values_match_recommended_run():
     test_args = parser.parse_args(["test"])
     split_counts = split_counts_from_args(sample_args)
 
-    assert split_counts.training == 8192
-    assert split_counts.validation == 1024
-    assert split_counts.test == 1024
-    rows_per_family = 8
-    assert split_counts.training // rows_per_family == 1024
-    assert split_counts.validation // rows_per_family == 128
-    assert split_counts.test // rows_per_family == 128
+    assert split_counts.training == 16384
+    assert split_counts.validation == 2048
+    assert split_counts.test == 2048
+    rows_per_family = 4
+    assert split_counts.training // rows_per_family == 4096
+    assert split_counts.validation // rows_per_family == 512
+    assert split_counts.test // rows_per_family == 512
     assert sample_args.max_depth == 8
     assert sample_args.max_activities == 30
     assert sample_args.max_arity == 3
@@ -33,19 +33,40 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert not sample_args.quiet
     assert train_args.epochs == 100
     assert train_args.batch_size == 128
-    assert train_args.latent_dim == 128
+    assert train_args.latent_dim == 96
     assert train_args.device == default_device()
-    assert train_args.hidden_dim == 256
+    assert train_args.hidden_dim == 192
     assert train_args.semantic_latent_mode == "deterministic"
-    assert train_args.dropout == 0.10
-    assert train_args.weight_decay == 1e-4
-    assert train_args.label_smoothing == 0.0
-    assert train_args.early_stopping_patience == 12
-    assert train_args.activity_remap_probability == 0.0
+    assert train_args.dropout is None
+    assert train_args.trace_encoder_dropout == 0.20
+    assert train_args.decoder_dropout == 0.20
+    assert train_args.projection_dropout == 0.20
+    assert train_args.weight_decay == 5e-4
+    assert train_args.label_smoothing == 0.04
+    assert train_args.early_stopping_patience == 6
+    assert train_args.activity_remap_probability == 0.5
     assert not train_args.resume
     assert test_args.device == default_device()
     assert not test_args.quiet
     assert test_args.conformance_method == "token_based_replay"
+    assert test_args.checkpoint_selection == "best"
+
+
+def test_checkpoint_selection_resolves_best_and_latest_paths():
+    latest = "checkpoints/proc_rosetta.pt"
+
+    assert checkpoint_for_selection(latest, "best").name == "proc_rosetta.best.pt"
+    assert checkpoint_for_selection(latest, "latest").name == "proc_rosetta.pt"
+    assert checkpoint_for_selection(
+        "checkpoints/proc_rosetta.best_trace.pt", "best"
+    ).name == "proc_rosetta.best_trace.pt"
+
+
+def test_unsupported_kl_regularizer_is_not_exposed_by_cli():
+    parser = build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["train", "--kl-weight", "0.1"])
 
 
 def test_test_quiet_disables_progress_output(monkeypatch, capsys):
@@ -58,6 +79,7 @@ def test_test_quiet_disables_progress_output(monkeypatch, capsys):
     def report(**kwargs):
         calls["report_progress"] = kwargs["show_progress"]
         calls["conformance_method"] = kwargs["conformance_method"]
+        calls["checkpoint_path"] = kwargs["checkpoint_path"]
         return {"split": "test"}
 
     monkeypatch.setattr("proc_rosetta.cli.read_samples_jsonl", read_samples)
@@ -72,6 +94,9 @@ def test_test_quiet_disables_progress_output(monkeypatch, capsys):
         "read_progress": False,
         "report_progress": False,
         "conformance_method": "token_based_replay",
+        "checkpoint_path": checkpoint_for_selection(
+            "checkpoints/proc_rosetta.pt", "best"
+        ),
     }
 
 
@@ -139,6 +164,7 @@ def test_sample_cli_recreates_data_splits(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert exit_code == 0
+    assert "flattened row-count flags are deprecated" in captured.err
     metadata = json.loads(captured.out.strip().splitlines()[-1])
     assert not stale.exists()
     assert (data_dir / "training" / "samples.jsonl").exists()
@@ -146,7 +172,7 @@ def test_sample_cli_recreates_data_splits(tmp_path, capsys):
     assert (data_dir / "test" / "samples.jsonl").exists()
     assert metadata["splits"]["training"]["statistics"]["count"] == 2
     assert metadata["exact_behavior_signatures_disjoint"] is True
-    assert metadata["synthetic_config"]["logs"]["log_views_per_behavior"] == 4
+    assert metadata["synthetic_config"]["logs"]["log_views_per_behavior"] == 2
     coverage = metadata["splits"]["training"]["class_coverage"]
     assert coverage["mode"] == "best_effort"
     assert not coverage["meets_minimum"]
@@ -161,12 +187,12 @@ def test_strict_sample_coverage_hits_each_motif_and_representation(tmp_path, cap
             "sample",
             "--data-dir",
             str(data_dir),
-            "--train-count",
-            "32",
-            "--validation-count",
-            "32",
-            "--test-count",
-            "32",
+            "--train-families",
+            "4",
+            "--validation-families",
+            "4",
+            "--test-families",
+            "4",
             "--min-families-per-motif",
             "1",
             "--max-depth",
@@ -265,6 +291,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "[train] Starting epoch 1/1" in captured.err
+    assert "unique behavior families" in captured.err
+    assert "Restored best validation-loss weights" in captured.err
     row = json.loads(captured.out.strip().splitlines()[-1])
     assert row["epoch"] == 1
     assert row["training"]["loss"] > 0
@@ -276,6 +304,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert "epoch_seconds" in row
     assert checkpoint.exists()
     assert checkpoint.with_name("model.best.pt").exists()
+    for objective in ("loss", "trace", "edit", "latent"):
+        assert checkpoint.with_name(f"model.best_{objective}.pt").exists()
     assert metrics_csv.exists()
     with metrics_csv.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
@@ -285,8 +315,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert rows[0]["validation_loss"]
 
     saved = torch.load(checkpoint, map_location="cpu", weights_only=False)
-    assert saved["version"] == 5
-    assert saved["model_architecture"] == "proc-rosetta-latent-transformer-v5"
+    assert saved["version"] == 6
+    assert saved["model_architecture"] == "proc-rosetta-latent-transformer-v6"
     assert saved["tree_normalization_version"] == "pm4py-fold-v1"
     assert saved["semantic_latent_stochastic"] is False
     assert saved["loss_weights"]["kl"] == 0.0
@@ -365,6 +395,15 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     with metrics_csv.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     assert [row["epoch"] for row in rows] == ["1", "2", "3"]
+    resumed = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    assert resumed["ema_state_dict"]["updates"] > 0
+    assert resumed["history"][-1]["validation_ema"] is not None
+    assert set(resumed["history"][-1]["objective_candidate_weights"]) == {
+        "loss",
+        "trace",
+        "edit",
+        "latent",
+    }
 
     assert main(
         [
@@ -373,8 +412,12 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
             str(data_dir),
             "--checkpoint",
             str(checkpoint),
+            "--checkpoint-selection",
+            "latest",
             "--batch-size",
             "1",
+            "--max-decode-length",
+            "32",
             "--petri-embedding-dim",
             "8",
             "--petri-num-walks",
@@ -415,8 +458,12 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
             str(data_dir),
             "--checkpoint",
             str(checkpoint),
+            "--checkpoint-selection",
+            "latest",
             "--batch-size",
             "1",
+            "--max-decode-length",
+            "32",
             "--petri-embedding-dim",
             "8",
             "--petri-num-walks",

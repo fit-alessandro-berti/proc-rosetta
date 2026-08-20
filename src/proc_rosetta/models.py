@@ -53,11 +53,18 @@ class DecodeConstraints:
 
 
 class SemanticProjection(nn.Module):
-    def __init__(self, input_dim: int, semantic_dim: int) -> None:
+    def __init__(
+        self,
+        input_dim: int,
+        semantic_dim: int,
+        dropout: float = 0.2,
+    ) -> None:
         super().__init__()
         self.projection = nn.Sequential(
             nn.Linear(input_dim, input_dim),
+            nn.LayerNorm(input_dim),
             nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(input_dim, semantic_dim),
         )
 
@@ -139,6 +146,7 @@ class TreeEncoder(nn.Module):
         layers: int = 4,
         memory_tokens: int = 8,
         max_sequence_length: int = 1024,
+        projection_dropout: float = 0.2,
     ) -> None:
         super().__init__()
         self.tokenizer = tokenizer
@@ -161,7 +169,11 @@ class TreeEncoder(nn.Module):
             layer, num_layers=layers, enable_nested_tensor=False
         )
         self.memory_pool = SeedMemoryPool(hidden_dim, memory_tokens)
-        self.projection = SemanticProjection(hidden_dim, semantic_dim)
+        self.projection = SemanticProjection(
+            hidden_dim,
+            semantic_dim,
+            dropout=projection_dropout,
+        )
         self.dropout = nn.Dropout(dropout)
         self.max_sequence_length = max_sequence_length
         activity_ids = [
@@ -223,6 +235,7 @@ class TraceEncoder(nn.Module):
         event_layers: int = 2,
         set_layers: int = 2,
         memory_tokens: int = 8,
+        projection_dropout: float = 0.2,
     ) -> None:
         super().__init__()
         self.tokenizer = tokenizer
@@ -256,7 +269,11 @@ class TraceEncoder(nn.Module):
             layer, num_layers=set_layers, enable_nested_tensor=False
         )
         self.memory_pool = SeedMemoryPool(hidden_dim, memory_tokens)
-        self.projection = SemanticProjection(hidden_dim, semantic_dim)
+        self.projection = SemanticProjection(
+            hidden_dim,
+            semantic_dim,
+            dropout=projection_dropout,
+        )
         self.dropout = nn.Dropout(dropout)
         self.register_buffer(
             "activity_token_ids",
@@ -346,6 +363,7 @@ class PetriGraphEncoder(nn.Module):
         message_passing_steps: int = 5,
         dropout: float = 0.1,
         memory_tokens: int = 8,
+        projection_dropout: float = 0.2,
     ) -> None:
         super().__init__()
         self.tokenizer = tokenizer
@@ -370,7 +388,11 @@ class PetriGraphEncoder(nn.Module):
             hidden_dim * (message_passing_steps + 1), hidden_dim
         )
         self.memory_pool = SeedMemoryPool(hidden_dim, memory_tokens)
-        self.projection = SemanticProjection(hidden_dim, semantic_dim)
+        self.projection = SemanticProjection(
+            hidden_dim,
+            semantic_dim,
+            dropout=projection_dropout,
+        )
         self.dropout = nn.Dropout(dropout)
         self.register_buffer(
             "activity_token_ids",
@@ -1167,13 +1189,29 @@ class ProcRosettaModel(nn.Module):
         self,
         tree_tokenizer: TreeTokenizer | None = None,
         activity_tokenizer: ActivityTokenizer | None = None,
-        latent_dim: int = 128,
-        hidden_dim: int = 256,
-        dropout: float = 0.1,
-        memory_tokens: int = 8,
-        decoder_layers: int = 4,
+        latent_dim: int = 96,
+        hidden_dim: int = 192,
+        dropout: float | None = None,
+        memory_tokens: int = 6,
+        decoder_layers: int = 3,
+        tree_encoder_dropout: float = 0.12,
+        trace_encoder_dropout: float = 0.20,
+        petri_encoder_dropout: float = 0.12,
+        decoder_dropout: float = 0.20,
+        projection_dropout: float = 0.20,
+        tree_encoder_layers: int = 3,
+        trace_event_layers: int = 1,
+        trace_set_layers: int = 1,
+        petri_message_passing_steps: int = 5,
     ) -> None:
         super().__init__()
+        # ``dropout`` remains a source-compatible alias for callers created
+        # before modality-specific regularization was introduced.
+        if dropout is not None:
+            tree_encoder_dropout = dropout
+            trace_encoder_dropout = dropout
+            petri_encoder_dropout = dropout
+            decoder_dropout = dropout
         self.tree_tokenizer = tree_tokenizer or TreeTokenizer()
         self.activity_tokenizer = activity_tokenizer or ActivityTokenizer(
             max_activities=self.tree_tokenizer.max_activities
@@ -1182,34 +1220,46 @@ class ProcRosettaModel(nn.Module):
             self.tree_tokenizer,
             latent_dim,
             hidden_dim,
-            dropout,
-            layers=4,
+            tree_encoder_dropout,
+            projection_dropout=projection_dropout,
+            layers=tree_encoder_layers,
             memory_tokens=memory_tokens,
         )
         self.trace_encoder = TraceEncoder(
             self.activity_tokenizer,
             latent_dim,
             hidden_dim,
-            dropout,
-            event_layers=2,
-            set_layers=2,
+            trace_encoder_dropout,
+            projection_dropout=projection_dropout,
+            event_layers=trace_event_layers,
+            set_layers=trace_set_layers,
             memory_tokens=memory_tokens,
         )
         self.petri_encoder = PetriGraphEncoder(
             self.activity_tokenizer,
             latent_dim,
             hidden_dim,
-            message_passing_steps=5,
-            dropout=dropout,
+            message_passing_steps=petri_message_passing_steps,
+            dropout=petri_encoder_dropout,
+            projection_dropout=projection_dropout,
             memory_tokens=memory_tokens,
         )
         self.tree_decoder = GrammarTreeDecoder(
             self.tree_tokenizer,
             latent_dim,
             hidden_dim,
-            dropout,
+            decoder_dropout,
             layers=decoder_layers,
             memory_tokens=memory_tokens,
+        )
+        # The semantic latent remains the representation used by decoding,
+        # retrieval, and geometry.  Instance discrimination gets a disposable
+        # head so family identity does not have to dominate that representation.
+        self.contrastive_head = nn.Sequential(
+            nn.Linear(latent_dim, latent_dim),
+            nn.GELU(),
+            nn.Dropout(projection_dropout),
+            nn.Linear(latent_dim, latent_dim),
         )
 
     def encode_tree(
@@ -1291,36 +1341,80 @@ class ProcRosettaModel(nn.Module):
             input_token_dropout=input_token_dropout,
         )
         if self.training and scheduled_sampling_probability > 0:
-            sampled_input = stacked_input.clone()
-            predictions = teacher_logits.detach().argmax(dim=-1)
-            replacement = (
-                torch.rand(
-                    sampled_input[:, 1:].shape,
-                    device=sampled_input.device,
-                )
-                < scheduled_sampling_probability
-            )
-            replacement &= sampled_input[:, 1:].ne(self.tree_tokenizer.pad_id)
-            sampled_input[:, 1:] = torch.where(
-                replacement,
-                predictions[:, :-1],
-                sampled_input[:, 1:],
-            )
-            teacher_logits = self.tree_decoder(
+            teacher_logits = self._scheduled_sampling_logits(
                 stacked_distribution,
-                sampled_input,
-                apply_grammar_mask=False,
-                allowed_activity_mask=stacked_allowed,
+                stacked_input,
+                stacked_allowed,
+                probability=scheduled_sampling_probability,
                 input_token_dropout=input_token_dropout,
             )
         split_logits = teacher_logits.split(batch_size, dim=0)
         logits = dict(zip(names, split_logits))
+        contrastive_embeddings = {
+            name: F.normalize(self.contrastive_head(dists[name].mu), dim=-1)
+            for name in names
+        }
         return {
             "dists": dists,
             "z": {name: distribution.mu for name, distribution in dists.items()},
+            "contrastive_embeddings": contrastive_embeddings,
             "tree_logits": logits,
             "decoder_targets": decoder_targets,
         }
+
+    def _scheduled_sampling_logits(
+        self,
+        source: LatentDistribution,
+        teacher_input: torch.Tensor,
+        allowed_activity_mask: torch.Tensor | None,
+        *,
+        probability: float,
+        input_token_dropout: float,
+    ) -> torch.Tensor:
+        """Sample a legal prefix one token at a time.
+
+        Every predicted replacement is produced under the same grammar and
+        source-activity constraints as normal decoding.  A teacher token that
+        became illegal under a sampled prefix is replaced unconditionally, and
+        rows are padded after EOS/PAD instead of sampling beyond termination.
+        """
+
+        sampled_input = torch.full_like(teacher_input, self.tree_tokenizer.pad_id)
+        sampled_input[:, 0] = teacher_input[:, 0]
+        active = sampled_input[:, 0].ne(self.tree_tokenizer.eos_id)
+        step_logits: list[torch.Tensor] = []
+        for position in range(teacher_input.shape[1]):
+            prefix = sampled_input[:, : position + 1]
+            logits = self.tree_decoder(
+                source,
+                prefix,
+                allowed_activity_mask=allowed_activity_mask,
+                input_token_dropout=input_token_dropout,
+            )
+            current = logits[:, -1]
+            step_logits.append(current)
+            if position + 1 >= teacher_input.shape[1]:
+                continue
+
+            teacher_next = teacher_input[:, position + 1]
+            prediction = current.detach().argmax(dim=-1)
+            teacher_is_legal = torch.isfinite(
+                current.detach().gather(1, teacher_next.unsqueeze(1)).squeeze(1)
+            )
+            replace = (
+                torch.rand(teacher_next.shape, device=teacher_next.device) < probability
+            )
+            replace = active & (replace | ~teacher_is_legal)
+            next_token = torch.where(replace, prediction, teacher_next)
+            next_token = torch.where(
+                active,
+                next_token,
+                torch.full_like(next_token, self.tree_tokenizer.pad_id),
+            )
+            sampled_input[:, position + 1] = next_token
+            active = active & next_token.ne(self.tree_tokenizer.eos_id)
+            active = active & next_token.ne(self.tree_tokenizer.pad_id)
+        return torch.stack(step_logits, dim=1)
 
 
 def _stack_latent_distributions(
