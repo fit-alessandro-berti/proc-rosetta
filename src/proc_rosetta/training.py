@@ -1150,6 +1150,21 @@ def build_model(
     ).to(device)
 
 
+def build_lr_scheduler(
+    optimizer: torch.optim.Optimizer,
+    train_config: TrainConfig,
+) -> torch.optim.lr_scheduler.ReduceLROnPlateau:
+    """Reduce the learning rate on the same validation objective used for stopping."""
+
+    return torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=train_config.lr_factor,
+        patience=train_config.lr_patience,
+        min_lr=train_config.min_lr,
+    )
+
+
 def train_synthetic(
     train_config: TrainConfig | None = None,
     synthetic_config: SyntheticConfig | None = None,
@@ -1295,13 +1310,7 @@ def train_from_data_dir(
         lr=train_config.learning_rate,
         weight_decay=train_config.weight_decay,
     )
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        mode="max",
-        factor=train_config.lr_factor,
-        patience=train_config.lr_patience,
-        min_lr=train_config.min_lr,
-    )
+    scheduler = build_lr_scheduler(optimizer, train_config)
     weights = loss_weights_from_config(train_config)
     history: list[dict[str, object]] = []
     best_validation_loss = float("inf")
@@ -1434,7 +1443,8 @@ def train_from_data_dir(
             )
         current_lr = optimizer.param_groups[0]["lr"]
         validation_score = validation_metrics["checkpoint_selection_score"]
-        scheduler.step(validation_score)
+        validation_loss = validation_metrics["loss"]
+        scheduler.step(validation_loss)
         new_lr = optimizer.param_groups[0]["lr"]
         if new_lr < current_lr:
             debug(
@@ -1442,7 +1452,6 @@ def train_from_data_dir(
                 enabled=show_progress,
             )
 
-        validation_loss = validation_metrics["loss"]
         validation_key = checkpoint_selection_key(validation_metrics)
         improved = validation_loss < best_validation_loss - train_config.min_delta
         if improved:
@@ -1468,6 +1477,8 @@ def train_from_data_dir(
             "validation": validation_metrics,
             "generalization_gap": metric_gaps(training_metrics, validation_metrics),
             "learning_rate": new_lr,
+            "lr_scheduler_metric": validation_loss,
+            "lr_reduced": new_lr < current_lr,
             "epoch_seconds": elapsed,
             "best_validation_loss": best_validation_loss,
             "best_validation_score": best_validation_score,
@@ -1729,6 +1740,8 @@ def metrics_csv_columns() -> list[str]:
     columns = [
         "epoch",
         "learning_rate",
+        "lr_scheduler_metric",
+        "lr_reduced",
         "epoch_seconds",
         "best_validation_loss",
         "best_validation_score",
@@ -1778,6 +1791,8 @@ def flatten_epoch_row(row: dict[str, object]) -> dict[str, object]:
     flat: dict[str, object] = {
         "epoch": row["epoch"],
         "learning_rate": row["learning_rate"],
+        "lr_scheduler_metric": row.get("lr_scheduler_metric", ""),
+        "lr_reduced": row.get("lr_reduced", ""),
         "epoch_seconds": row["epoch_seconds"],
         "best_validation_loss": row["best_validation_loss"],
         "best_validation_score": row.get("best_validation_score", ""),
@@ -1955,11 +1970,8 @@ def replay_scheduler_history(
 ) -> None:
     for row in history:
         validation = row.get("validation")
-        if isinstance(validation, dict):
-            if "checkpoint_selection_score" in validation:
-                scheduler.step(float(validation["checkpoint_selection_score"]))
-            elif "loss" in validation:
-                scheduler.step(-float(validation["loss"]))
+        if isinstance(validation, dict) and "loss" in validation:
+            scheduler.step(float(validation["loss"]))
 
 
 def restore_training_state(
@@ -1995,24 +2007,34 @@ def restore_training_state(
         return
 
     optimizer.load_state_dict(optimizer_state)
-    scheduler.load_state_dict(scheduler_state)
+    if isinstance(scheduler_state, dict) and scheduler_state.get("mode") == scheduler.mode:
+        scheduler.load_state_dict(scheduler_state)
+        scheduler_restored = True
+    else:
+        # v5 checkpoints created before validation-loss scheduling stored a
+        # mode="max" discovery-score scheduler. Replaying loss history avoids
+        # silently restoring that conflicting objective while preserving the
+        # optimizer, RNG, and loader continuation state.
+        replay_scheduler_history(scheduler, history)
+        scheduler_restored = False
     rng_state = checkpoint.get("rng_state")
     loader_state = checkpoint.get("training_loader_state")
     rng_restored = isinstance(rng_state, dict) and restore_rng_state(rng_state, device)
     loader_restored = isinstance(loader_state, dict) and restore_training_loader_state(
         train_loader, loader_state, completed_epoch
     )
-    if rng_restored and loader_restored:
+    if rng_restored and loader_restored and scheduler_restored:
         debug(
             "Restored optimizer, scheduler, RNG, and data-loader state.",
             enabled=show_progress,
         )
     else:
-        debug(
-            "Restored optimizer and scheduler; exact RNG/data-loader continuation was not "
-            "available for this device.",
-            enabled=show_progress,
-        )
+        details: list[str] = []
+        if not scheduler_restored:
+            details.append("replayed validation-loss scheduler history")
+        if not (rng_restored and loader_restored):
+            details.append("exact RNG/data-loader continuation unavailable for this device")
+        debug(f"Restored optimizer; {'; '.join(details)}.", enabled=show_progress)
 
 
 def load_checkpoint(

@@ -299,9 +299,9 @@ checkpoints/proc_rosetta.best.pt  # best validation-loss epoch
 checkpoints/training_metrics.csv  # per-epoch metrics
 ```
 
-Best-checkpoint selection uses validation loss and requires an improvement of
-at least `--min-delta`. Discovery-quality metrics are still recorded for
-diagnostics and learning-rate scheduling.
+Best-checkpoint selection, learning-rate scheduling, and early stopping all use
+validation loss. A best checkpoint requires an improvement of at least
+`--min-delta`; discovery-quality metrics are recorded as independent diagnostics.
 
 Resume an interrupted run from the latest completed epoch:
 

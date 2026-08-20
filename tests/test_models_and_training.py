@@ -18,8 +18,10 @@ from proc_rosetta.training import (
     BehaviorFamilyBatchSampler,
     TrainConfig,
     _different_behavior_permutation,
+    build_lr_scheduler,
     checkpoint_selection_key,
     loss_weights_from_checkpoint,
+    replay_scheduler_history,
     stage_acceptance_report,
     train_synthetic,
 )
@@ -91,6 +93,32 @@ def test_checkpoint_selection_is_strictly_lexicographic():
         "behavior_distance_spearman": 0.40,
     }
     assert checkpoint_selection_key(legacy_metrics) == (0.75, 0.80, 0.60, 0.40)
+
+
+def test_lr_scheduler_tracks_validation_loss_instead_of_discovery_score():
+    parameter = torch.nn.Parameter(torch.tensor(0.0))
+    optimizer = torch.optim.AdamW([parameter], lr=1e-3)
+    config = TrainConfig(lr_patience=0, lr_factor=0.5)
+    scheduler = build_lr_scheduler(optimizer, config)
+
+    history = [
+        {
+            "validation": {
+                "loss": 1.0,
+                "checkpoint_selection_score": 0.1,
+            }
+        },
+        {
+            "validation": {
+                "loss": 1.1,
+                "checkpoint_selection_score": 0.9,
+            }
+        },
+    ]
+    replay_scheduler_history(scheduler, history)
+
+    assert scheduler.mode == "min"
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(5e-4)
 
 
 def test_train_synthetic_smoke():
