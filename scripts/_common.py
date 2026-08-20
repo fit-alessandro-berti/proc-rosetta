@@ -29,7 +29,7 @@ from proc_rosetta.pm4py_bridge import (  # noqa: E402
 )
 from proc_rosetta.artifact_io import ArtifactModality  # noqa: E402
 from proc_rosetta.inference import build_decode_result  # noqa: E402
-from proc_rosetta.models import DecodeConstraints  # noqa: E402
+from proc_rosetta.models import DecodeConstraints, LatentDistribution  # noqa: E402
 from proc_rosetta.devices import default_device, resolve_device  # noqa: E402
 from proc_rosetta.training import load_checkpoint  # noqa: E402
 from proc_rosetta.tree import ProcessTreeNode  # noqa: E402
@@ -154,8 +154,8 @@ def add_decode_constraint_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--avoid-duplicate-transitions",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="mask a visible activity label after its first decoded occurrence (default: enabled)",
+        default=False,
+        help="mask a visible activity label after its first decoded occurrence (default: disabled)",
     )
     parser.add_argument(
         "--constrain-source-activities",
@@ -278,14 +278,35 @@ def move_tensors_to_device(value: Any, device: torch.device) -> Any:
 
 
 @torch.no_grad()
+def encode_tree_distribution(
+    model: Any,
+    tree: ProcessTreeNode,
+    device: torch.device,
+) -> LatentDistribution:
+    tokens = move_tensors_to_device(tree_tokens_for_model(model, tree), device)
+    return model.encode_tree(tokens)
+
+
+@torch.no_grad()
 def encode_tree_mu_logvar(
     model: Any,
     tree: ProcessTreeNode,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    tokens = move_tensors_to_device(tree_tokens_for_model(model, tree), device)
-    dist = model.encode_tree(tokens)
+    dist = encode_tree_distribution(model, tree, device)
     return dist.mu, dist.logvar
+
+
+@torch.no_grad()
+def encode_traces_distribution(
+    model: Any,
+    traces: Sequence[Sequence[str]],
+    device: torch.device,
+    max_traces: int,
+    max_trace_length: int,
+) -> LatentDistribution:
+    encoded = traces_for_model(model, traces, max_traces, max_trace_length)
+    return model.encode_traces(move_tensors_to_device(encoded, device))
 
 
 @torch.no_grad()
@@ -296,9 +317,29 @@ def encode_traces_mu_logvar(
     max_traces: int,
     max_trace_length: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    encoded = traces_for_model(model, traces, max_traces, max_trace_length)
-    dist = model.encode_traces(move_tensors_to_device(encoded, device))
+    dist = encode_traces_distribution(
+        model,
+        traces,
+        device,
+        max_traces,
+        max_trace_length,
+    )
     return dist.mu, dist.logvar
+
+
+@torch.no_grad()
+def encode_petri_distribution(
+    model: Any,
+    graph: Any,
+    device: torch.device,
+    max_petri_nodes: int,
+) -> LatentDistribution:
+    encoded = petri_graph_for_model(
+        graph,
+        max_petri_nodes,
+        activity_tokenizer=model.activity_tokenizer,
+    )
+    return model.encode_petri(move_tensors_to_device(encoded, device))
 
 
 @torch.no_grad()
@@ -308,25 +349,22 @@ def encode_petri_mu_logvar(
     device: torch.device,
     max_petri_nodes: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    encoded = petri_graph_for_model(
-        graph,
-        max_petri_nodes,
-        activity_tokenizer=model.activity_tokenizer,
-    )
-    dist = model.encode_petri(move_tensors_to_device(encoded, device))
+    dist = encode_petri_distribution(model, graph, device, max_petri_nodes)
     return dist.mu, dist.logvar
 
 
 @torch.no_grad()
 def decode_tree_from_latent(
     model: Any,
-    latent: torch.Tensor,
+    latent: torch.Tensor | LatentDistribution,
     max_decode_length: int,
     require_petri_convertible: bool = True,
     canonical_mapping: dict[str, str] | None = None,
     constrain_source_activities: bool = True,
-    avoid_duplicate_transitions: bool = True,
+    avoid_duplicate_transitions: bool = False,
+    source_modality: ArtifactModality = ArtifactModality.PROCESS_TREE,
 ) -> tuple[ProcessTreeNode, list[int]]:
+    latent_tensor = latent.mu if isinstance(latent, LatentDistribution) else latent
     slots = (
         allowed_activity_slots(canonical_mapping, model.tree_tokenizer.max_activities)
         if canonical_mapping is not None
@@ -338,7 +376,7 @@ def decode_tree_from_latent(
         apply_grammar_mask=True,
         constraints=DecodeConstraints(
             allowed_activity_slots=(
-                None if slots is None else torch.tensor([slots], device=latent.device)
+                None if slots is None else torch.tensor([slots], device=latent_tensor.device)
             ),
             constrain_to_source_activities=constrain_source_activities,
             avoid_duplicate_activity_labels=avoid_duplicate_transitions,
@@ -350,9 +388,9 @@ def decode_tree_from_latent(
 
     result = build_decode_result(
         model,
-        latent,
+        latent_tensor,
         source_artifact_ids=["command-line-source"],
-        source_modalities=[ArtifactModality.PROCESS_TREE],
+        source_modalities=[source_modality],
         latent_source="command_line_latent",
         token_ids=token_ids,
         canonical_mapping=canonical_mapping,

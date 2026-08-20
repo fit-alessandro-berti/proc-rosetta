@@ -9,7 +9,7 @@ from _common import (
     activity_mapping_from_tree,
     default_device,
     decode_tree_from_latent,
-    encode_tree_mu_logvar,
+    encode_tree_distribution,
     load_trained_model,
     read_ptml_tree,
     relabel_decoded_tree,
@@ -48,10 +48,10 @@ def main(argv: list[str] | None = None) -> int:
     model, device = load_trained_model(args.checkpoint, args.device)
     tree = read_ptml_tree(args.input)
     mapping = activity_mapping_from_tree(tree, model.tree_tokenizer.max_activities)
-    mu, _ = encode_tree_mu_logvar(model, tree, device)
+    distribution = encode_tree_distribution(model, tree, device)
     decoded_tree, _ = decode_tree_from_latent(
         model,
-        mu,
+        distribution,
         max_decode_length=args.max_decode_length,
         require_petri_convertible=True,
         canonical_mapping=mapping,

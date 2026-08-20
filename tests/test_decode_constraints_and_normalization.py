@@ -22,7 +22,12 @@ from proc_rosetta.inference import (
     simulate_decoded_behavior,
 )
 from proc_rosetta.losses import LossWeights
-from proc_rosetta.models import DecodeConstraints, PetriGraphEncoder, ProcRosettaModel
+from proc_rosetta.models import (
+    DecodeConstraints,
+    LatentDistribution,
+    PetriGraphEncoder,
+    ProcRosettaModel,
+)
 from proc_rosetta.pm4py_bridge import (
     fold_process_tree,
     prepare_tree_for_model,
@@ -35,7 +40,11 @@ from proc_rosetta.training import TrainConfig, gradient_norm_diagnostics
 from proc_rosetta.tree import ProcessTreeNode, sanitize_activity_labels
 from proc_rosetta_ui.decoding_service import _decode_cache_key
 from proc_rosetta_ui.export_service import process_tree_ptml
-from scripts._common import add_decode_constraint_arguments
+from scripts._common import (
+    add_decode_constraint_arguments,
+    decode_tree_from_latent,
+    encode_traces_distribution,
+)
 
 
 def _model(max_activities: int = 4) -> ProcRosettaModel:
@@ -253,15 +262,67 @@ def test_fused_source_evidence_uses_union_of_allowed_activities():
     assert memory == [[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]
 
 
-def test_command_line_duplicate_opt_out_restores_legacy_policy():
+def test_command_line_duplicate_constraint_is_opt_in():
     parser = argparse.ArgumentParser()
     add_decode_constraint_arguments(parser)
 
-    assert parser.parse_args([]).avoid_duplicate_transitions is True
+    assert parser.parse_args([]).avoid_duplicate_transitions is False
     assert (
-        parser.parse_args(["--no-avoid-duplicate-transitions"]).avoid_duplicate_transitions
-        is False
+        parser.parse_args(["--avoid-duplicate-transitions"]).avoid_duplicate_transitions
+        is True
     )
+
+
+def test_trace_script_encoding_preserves_decoder_copy_evidence():
+    model = _model(3)
+
+    distribution = encode_traces_distribution(
+        model,
+        (("A0", "A1", "A0"),),
+        torch.device("cpu"),
+        max_traces=4,
+        max_trace_length=8,
+    )
+
+    assert isinstance(distribution, LatentDistribution)
+    assert distribution.activity_mask.tolist() == [[True, True, False]]
+    assert distribution.activity_memory is not None
+    assert distribution.activity_memory.shape == (1, 3, model.tree_decoder.hidden_dim)
+
+
+def test_command_line_decode_forwards_full_distribution_and_allows_duplicates():
+    tokenizer = TreeTokenizer(max_activities=2, max_arity=3)
+    captured: dict[str, object] = {}
+
+    class Decoder:
+        def decode_greedy(self, source, **kwargs):
+            captured["source"] = source
+            captured["constraints"] = kwargs["constraints"]
+            return torch.tensor(
+                [[tokenizer.bos_id, tokenizer.token_to_id["A0"], tokenizer.eos_id]]
+            )
+
+    model = SimpleNamespace(tree_tokenizer=tokenizer, tree_decoder=Decoder())
+    distribution = LatentDistribution(
+        mu=torch.zeros(1, 8),
+        logvar=torch.zeros(1, 8),
+        activity_mask=torch.tensor([[True, False]]),
+        activity_memory=torch.zeros(1, 2, 16),
+    )
+
+    tree, _ = decode_tree_from_latent(
+        model,
+        distribution,
+        max_decode_length=8,
+        require_petri_convertible=False,
+        canonical_mapping={"activity": "A0"},
+    )
+
+    assert tree == ProcessTreeNode.activity("A0")
+    assert captured["source"] is distribution
+    constraints = captured["constraints"]
+    assert isinstance(constraints, DecodeConstraints)
+    assert constraints.avoid_duplicate_activity_labels is False
 
 
 def test_pnml_preparation_is_label_aware_and_exposes_allowed_slots():

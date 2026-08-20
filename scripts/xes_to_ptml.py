@@ -10,13 +10,14 @@ from _common import (
     canonicalize_traces,
     default_device,
     decode_tree_from_latent,
-    encode_traces_mu_logvar,
+    encode_traces_distribution,
     load_trained_model,
     read_xes_traces,
     relabel_decoded_tree,
     run_cli,
     save_ptml_tree,
 )
+from proc_rosetta.artifact_io import ArtifactModality
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -58,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     mapping = activity_mapping_from_traces(traces, model.activity_tokenizer.max_activities)
     canonical_traces = canonicalize_traces(traces, mapping)
-    mu, _ = encode_traces_mu_logvar(
+    distribution = encode_traces_distribution(
         model,
         canonical_traces,
         device,
@@ -67,12 +68,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     tree, _ = decode_tree_from_latent(
         model,
-        mu,
+        distribution,
         max_decode_length=args.max_decode_length,
         require_petri_convertible=True,
         canonical_mapping=mapping,
         constrain_source_activities=args.constrain_source_activities,
         avoid_duplicate_transitions=args.avoid_duplicate_transitions,
+        source_modality=ArtifactModality.EVENT_LOG,
     )
     if not args.keep_canonical_labels:
         tree = relabel_decoded_tree(tree, mapping)
