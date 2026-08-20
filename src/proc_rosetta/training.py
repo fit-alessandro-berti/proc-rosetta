@@ -850,9 +850,8 @@ def _summarize_discovery_metrics(
         if ordinary
         else metrics["trace_canonical_exact"]
     )
-    # Retain a scalar proxy for schedulers and tabular logs. Checkpoint choice
-    # itself uses checkpoint_selection_key(), so the ordering is exact rather
-    # than dependent on validation-set size or floating-point scale.
+    # Retain a scalar discovery-quality proxy for schedulers and tabular logs.
+    # Best-checkpoint selection itself is based on validation loss.
     behavior_spearman = metrics.get("behavior_distance_spearman", -1.0)
     metrics["checkpoint_selection_primary_exact"] = primary_exact
     metrics["checkpoint_selection_edit_score"] = 1.0 - metrics[
@@ -872,7 +871,7 @@ def _summarize_discovery_metrics(
 
 
 def checkpoint_selection_key(metrics: dict[str, float]) -> tuple[float, ...]:
-    """Return the strict discovery-first ordering used to choose checkpoints."""
+    """Return the discovery-quality ordering recorded with checkpoints."""
 
     primary_exact = metrics.get(
         "checkpoint_selection_primary_exact",
@@ -1444,10 +1443,10 @@ def train_from_data_dir(
             )
 
         validation_loss = validation_metrics["loss"]
-        best_validation_loss = min(best_validation_loss, validation_loss)
         validation_key = checkpoint_selection_key(validation_metrics)
-        improved = validation_key > best_validation_key
+        improved = validation_loss < best_validation_loss - train_config.min_delta
         if improved:
+            best_validation_loss = validation_loss
             best_validation_key = validation_key
             best_validation_score = validation_score
             epochs_without_improvement = 0
@@ -1457,8 +1456,8 @@ def train_from_data_dir(
         gap = validation_metrics["loss"] - training_metrics["loss"]
         debug(
             f"Epoch {epoch} validation complete: {format_metrics(validation_metrics)} "
-            f"| gap={gap:+.4f} | selection={validation_score:.4f} "
-            f"| best_selection={best_validation_score:.4f} "
+            f"| gap={gap:+.4f} | discovery_selection={validation_score:.4f} "
+            f"| best_loss={best_validation_loss:.4f} "
             f"| patience={epochs_without_improvement}/{train_config.early_stopping_patience}",
             enabled=show_progress,
         )
@@ -1530,8 +1529,8 @@ def train_from_data_dir(
             and epochs_without_improvement >= train_config.early_stopping_patience
         ):
             debug(
-                f"Early stopping after {epoch} epochs; the discovery-first checkpoint key did not "
-                f"improve for {train_config.early_stopping_patience} epochs.",
+                f"Early stopping after {epoch} epochs; validation loss did not improve by at least "
+                f"{train_config.min_delta:g} for {train_config.early_stopping_patience} epochs.",
                 enabled=show_progress,
             )
             break

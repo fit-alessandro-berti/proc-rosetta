@@ -295,14 +295,13 @@ Training writes:
 
 ```text
 checkpoints/proc_rosetta.pt       # latest completed epoch
-checkpoints/proc_rosetta.best.pt  # best ordinary trace-discovery epoch
+checkpoints/proc_rosetta.best.pt  # best validation-loss epoch
 checkpoints/training_metrics.csv  # per-epoch metrics
 ```
 
-Best-checkpoint selection is strictly lexicographic: ordinary trace canonical
-exact match, normalized tree-edit score, exact-behavior Recall@1, then
-behavior-distance Spearman correlation. The full key is persisted so resumed
-runs preserve the same ordering.
+Best-checkpoint selection uses validation loss and requires an improvement of
+at least `--min-delta`. Discovery-quality metrics are still recorded for
+diagnostics and learning-rate scheduling.
 
 Resume an interrupted run from the latest completed epoch:
 
