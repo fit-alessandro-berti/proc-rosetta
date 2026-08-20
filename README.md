@@ -338,9 +338,10 @@ The staged run sequence is intentionally gated:
    `stage_d_observation_curriculum` / `--training-stage d` (six views including
    the two clean baselines).
 
-Each epoch also records per-encoder reconstruction and metric gradient norms.
-Tune the exposed loss weights until the metric/reconstruction gradient ratio is
-roughly 0.3–1.0 rather than relying on nominal scalar weights alone.
+Expensive per-encoder gradient diagnostics are disabled by default. Enable them
+for a diagnostic run with `--gradient-diagnostics-interval 10` (or another
+positive interval), then tune loss weights using the reported
+metric/reconstruction gradient ratios.
 
 The tokenizer size is fixed by the data metadata stored when `sample.py` runs.
 For logs with many activities, generate data with a sufficiently large
@@ -455,10 +456,17 @@ scripts/decode_ptml.py \
 ```
 
 External logs are canonicalized internally to `A0`, `A1`, ... in first-seen
-order. The XES and PTML decoding scripts restore original activity labels by
+order. The XES, PTML, and PNML decoding scripts restore original activity labels by
 default; pass `--keep-canonical-labels` to keep the canonical labels. The
 external PNML tensor construction includes visible transition-label IDs, so the
 activity-copy head can preserve the canonicalized PNML activity inventory.
+
+All three conversion scripts restrict visible output labels to the complete
+source alphabet and avoid repeated visible labels by default. Use
+`--no-constrain-source-activities` or `--no-avoid-duplicate-transitions` only
+for legacy comparisons or latent-space experiments. Raw decoder tokens remain
+available for diagnostics; PTML export uses the source-sanitized, semantically
+folded tree.
 
 If a decoded model is invalid or the decoder does not emit `<eos>` within the
 decode limit, the conversion script exits with a clear error instead of writing

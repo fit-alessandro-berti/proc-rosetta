@@ -32,6 +32,26 @@ class LatentDistribution:
         return self.mu
 
 
+@dataclass(frozen=True)
+class DecodeConstraints:
+    """Hard legality policy shared by every autoregressive decode path.
+
+    ``allowed_activity_slots`` is indexed by canonical activity slot (A0,
+    A1, ...), not by full tree-vocabulary ID.  ``activity_mask`` on
+    :class:`LatentDistribution` remains copy evidence and is intentionally a
+    separate concept.
+    """
+
+    allowed_activity_slots: torch.Tensor | None = None
+    constrain_to_source_activities: bool = True
+    avoid_duplicate_activity_labels: bool = True
+    duplicate_policy: str = "disallow"
+
+    def __post_init__(self) -> None:
+        if self.duplicate_policy not in {"disallow", "penalize", "allow"}:
+            raise ValueError("duplicate_policy must be 'disallow', 'penalize', or 'allow'")
+
+
 class SemanticProjection(nn.Module):
     def __init__(self, input_dim: int, semantic_dim: int) -> None:
         super().__init__()
@@ -152,48 +172,24 @@ class TreeEncoder(nn.Module):
         )
 
     def _structure_features(self, tokens: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        depths = torch.zeros_like(tokens)
-        parents = torch.zeros_like(tokens)
-        operator_ids = {
-            self.tokenizer.token_to_id[name] for name in self.tokenizer.operator_tokens
-        }
-        arity_by_id = {
-            self.tokenizer.token_to_id[name]: int(name.split("_", 1)[1])
-            for name in self.tokenizer.arity_tokens
-        }
-        rows = tokens.detach().cpu().tolist()
-        for row_index, row in enumerate(rows):
-            frames: list[list[int]] = [[1, 0, 0]]
-            pending_operator: tuple[int, int] | None = None
-            for position, token_id in enumerate(row):
-                if token_id == self.tokenizer.pad_id:
-                    break
-                while frames and frames[-1][0] == 0:
-                    frames.pop()
-                depth = max(0, len(frames) - 1)
-                parent = frames[-1][1] if frames else 0
-                if pending_operator is not None and token_id in arity_by_id:
-                    operator_position, operator_depth = pending_operator
-                    depths[row_index, position] = operator_depth
-                    parents[row_index, position] = operator_position
-                    frames.append([arity_by_id[token_id], operator_position, operator_depth + 1])
-                    pending_operator = None
-                    continue
-                depths[row_index, position] = min(depth, 63)
-                parents[row_index, position] = min(parent, self.max_sequence_length - 1)
-                if position == 0:
-                    continue
-                if frames:
-                    frames[-1][0] -= 1
-                if token_id in operator_ids:
-                    pending_operator = (position, depth)
-        return depths.to(tokens.device), parents.to(tokens.device)
+        return self.tokenizer.structure_features(
+            tokens.detach().cpu(),
+            max_sequence_length=self.max_sequence_length,
+        )
 
-    def forward(self, tokens: torch.Tensor) -> LatentDistribution:
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        depths: torch.Tensor | None = None,
+        parents: torch.Tensor | None = None,
+    ) -> LatentDistribution:
         if tokens.shape[1] > self.max_sequence_length:
             raise ValueError("tree token sequence exceeds encoder position capacity")
         positions = torch.arange(tokens.shape[1], device=tokens.device).unsqueeze(0)
-        depths, parents = self._structure_features(tokens)
+        if depths is None or parents is None:
+            depths, parents = self._structure_features(tokens)
+            depths = depths.to(tokens.device)
+            parents = parents.to(tokens.device)
         x = self.dropout(
             self.embedding(tokens)
             + self.position_embedding(positions)
@@ -262,6 +258,17 @@ class TraceEncoder(nn.Module):
         self.memory_pool = SeedMemoryPool(hidden_dim, memory_tokens)
         self.projection = SemanticProjection(hidden_dim, semantic_dim)
         self.dropout = nn.Dropout(dropout)
+        self.register_buffer(
+            "activity_token_ids",
+            torch.tensor(
+                [
+                    tokenizer.token_to_id[f"A{index}"]
+                    for index in range(tokenizer.max_activities)
+                ],
+                dtype=torch.long,
+            ),
+            persistent=False,
+        )
 
     def forward(
         self,
@@ -314,18 +321,10 @@ class TraceEncoder(nn.Module):
             return_attention=True,
         )
         pooled = memory.mean(dim=1)
-        activity_token_ids = torch.tensor(
-            [
-                self.tokenizer.token_to_id[f"A{index}"]
-                for index in range(self.tokenizer.max_activities)
-            ],
-            dtype=torch.long,
-            device=tokens.device,
-        )
         activity_memory, activity_mask = _pool_activity_occurrences(
             outputs.reshape(batch_size, trace_count * trace_length, -1),
             tokens.reshape(batch_size, trace_count * trace_length),
-            activity_token_ids,
+            self.activity_token_ids,
         )
         distribution = self.projection(
             pooled,
@@ -373,14 +372,27 @@ class PetriGraphEncoder(nn.Module):
         self.memory_pool = SeedMemoryPool(hidden_dim, memory_tokens)
         self.projection = SemanticProjection(hidden_dim, semantic_dim)
         self.dropout = nn.Dropout(dropout)
+        self.register_buffer(
+            "activity_token_ids",
+            torch.tensor(
+                [
+                    tokenizer.token_to_id[f"A{index}"]
+                    for index in range(tokenizer.max_activities)
+                ],
+                dtype=torch.long,
+            ),
+            persistent=False,
+        )
 
     def forward(
         self,
         node_types: torch.Tensor,
         markings: torch.Tensor,
-        adjacency: torch.Tensor,
+        adjacency: torch.Tensor | None,
         node_mask: torch.Tensor,
         transition_label_ids: torch.Tensor | None = None,
+        edge_index: torch.Tensor | None = None,
+        edge_types: torch.Tensor | None = None,
     ) -> LatentDistribution:
         if transition_label_ids is None:
             transition_label_ids = torch.zeros_like(node_types)
@@ -396,29 +408,43 @@ class PetriGraphEncoder(nn.Module):
             self.self_layers, self.edge_layers, self.norms
         ):
             messages = self_layer(h)
-            for edge_type in range(adjacency.shape[1]):
-                channel = adjacency[:, edge_type]
-                messages = messages + torch.bmm(channel, edge_layers[2 * edge_type](h))
-                messages = messages + torch.bmm(
-                    channel.transpose(1, 2), edge_layers[2 * edge_type + 1](h)
-                )
+            if edge_index is not None and edge_types is not None:
+                flat_h = h.reshape(-1, h.shape[-1])
+                flat_aggregation = torch.zeros_like(flat_h)
+                for edge_type in range(len(edge_layers) // 2):
+                    selected = edge_types.eq(edge_type)
+                    sources = edge_index[0, selected]
+                    targets = edge_index[1, selected]
+                    if sources.numel():
+                        flat_aggregation.index_add_(
+                            0,
+                            sources,
+                            edge_layers[2 * edge_type](flat_h[targets]),
+                        )
+                        flat_aggregation.index_add_(
+                            0,
+                            targets,
+                            edge_layers[2 * edge_type + 1](flat_h[sources]),
+                        )
+                messages = messages + flat_aggregation.view_as(messages)
+            else:
+                if adjacency is None:
+                    raise ValueError("dense Petri path requires adjacency")
+                for edge_type in range(adjacency.shape[1]):
+                    channel = adjacency[:, edge_type]
+                    messages = messages + torch.bmm(channel, edge_layers[2 * edge_type](h))
+                    messages = messages + torch.bmm(
+                        channel.transpose(1, 2), edge_layers[2 * edge_type + 1](h)
+                    )
             h = norm(h + self.dropout(F.gelu(messages))) * valid
             states.append(h)
         h = self.jumping_projection(torch.cat(states, dim=-1)) * valid
         memory, _ = self.memory_pool(h, ~node_mask)
         pooled = memory.mean(dim=1)
-        activity_token_ids = torch.tensor(
-            [
-                self.tokenizer.token_to_id[f"A{index}"]
-                for index in range(self.tokenizer.max_activities)
-            ],
-            dtype=torch.long,
-            device=node_types.device,
-        )
         activity_memory, activity_mask = _pool_activity_occurrences(
             h,
             transition_label_ids,
-            activity_token_ids,
+            self.activity_token_ids,
         )
         return self.projection(
             pooled,
@@ -493,13 +519,19 @@ class GrammarTreeDecoder(nn.Module):
                 dtype=torch.long,
             ),
         )
+        self.register_buffer(
+            "causal_mask",
+            torch.triu(
+                torch.ones(max_sequence_length, max_sequence_length, dtype=torch.bool),
+                diagonal=1,
+            ),
+            persistent=False,
+        )
 
     def source_memory(
         self, source: torch.Tensor | LatentDistribution
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         if isinstance(source, LatentDistribution):
-            if source.memory is not None:
-                return source.memory, source.activity_mask
             source_tensor = source.mu
             activity_mask = source.activity_mask
         else:
@@ -521,6 +553,10 @@ class GrammarTreeDecoder(nn.Module):
         apply_grammar_mask: bool = True,
         activity_mask: torch.Tensor | None = None,
         activity_memory: torch.Tensor | None = None,
+        allowed_activity_mask: torch.Tensor | None = None,
+        avoid_duplicate_activity_labels: bool = False,
+        duplicate_policy: str = "disallow",
+        used_activity_mask: torch.Tensor | None = None,
         input_token_dropout: float = 0.0,
     ) -> torch.Tensor:
         if input_tokens.shape[1] > self.max_sequence_length:
@@ -537,15 +573,7 @@ class GrammarTreeDecoder(nn.Module):
             drop &= input_tokens.ne(self.tokenizer.bos_id)
             drop &= input_tokens.ne(self.tokenizer.pad_id)
             embedded = embedded.masked_fill(drop.unsqueeze(-1), 0.0)
-        causal = torch.triu(
-            torch.ones(
-                input_tokens.shape[1],
-                input_tokens.shape[1],
-                dtype=torch.bool,
-                device=input_tokens.device,
-            ),
-            diagonal=1,
-        )
+        causal = self.causal_mask[: input_tokens.shape[1], : input_tokens.shape[1]]
         hidden = self.decoder(
             self.dropout(embedded),
             memory,
@@ -562,19 +590,94 @@ class GrammarTreeDecoder(nn.Module):
         logits[..., self.structural_token_ids] = self.structural_output(projected)
         logits[..., self.arity_token_ids] = self.arity_output(projected)
         logits[..., self.activity_token_ids] = self.activity_output(projected)
-        if apply_grammar_mask:
-            grammar = self.tokenizer.valid_next_token_masks(input_tokens)
-            logits = logits.masked_fill(~grammar, -1e9)
+        source_constraint = self.decode_constraint_mask(
+            input_tokens,
+            allowed_activity_mask=allowed_activity_mask,
+        )
+        logits = logits.masked_fill(~source_constraint, -torch.inf)
         if activity_mask is not None:
             logits = self._mix_activity_copy(
                 logits,
                 hidden,
                 activity_mask,
                 activity_memory,
+                allowed_activity_mask,
             )
-            if apply_grammar_mask:
-                logits = logits.masked_fill(~grammar, -1e9)
+        grammar = (
+            self.tokenizer.valid_next_token_masks(input_tokens)
+            if apply_grammar_mask
+            else None
+        )
+        hard_constraint = self.decode_constraint_mask(
+            input_tokens,
+            grammar_mask=grammar,
+            allowed_activity_mask=allowed_activity_mask,
+            avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+            duplicate_policy=duplicate_policy,
+            used_activity_mask=used_activity_mask,
+        )
+        logits = logits.masked_fill(~hard_constraint, -torch.inf)
         return logits
+
+    def decode_constraint_mask(
+        self,
+        input_tokens: torch.Tensor,
+        *,
+        grammar_mask: torch.Tensor | None = None,
+        allowed_activity_mask: torch.Tensor | None = None,
+        avoid_duplicate_activity_labels: bool = False,
+        duplicate_policy: str = "disallow",
+        used_activity_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Build the shared hard mask for training and every decode strategy."""
+
+        if duplicate_policy not in {"disallow", "penalize", "allow"}:
+            raise ValueError("invalid duplicate policy")
+        if grammar_mask is None:
+            mask = torch.ones(
+                (*input_tokens.shape, self.tokenizer.vocab_size),
+                dtype=torch.bool,
+                device=input_tokens.device,
+            )
+        else:
+            mask = grammar_mask.clone()
+        activity_legal = torch.ones(
+            (input_tokens.shape[0], input_tokens.shape[1], self.tokenizer.max_activities),
+            dtype=torch.bool,
+            device=input_tokens.device,
+        )
+        if allowed_activity_mask is not None:
+            allowed = allowed_activity_mask.to(device=input_tokens.device, dtype=torch.bool)
+            if allowed.ndim == 1:
+                allowed = allowed.unsqueeze(0)
+            if allowed.shape[-1] != self.tokenizer.max_activities:
+                raise ValueError("allowed activity mask has incompatible slot count")
+            if allowed.shape[0] == 1 and input_tokens.shape[0] != 1:
+                allowed = allowed.expand(input_tokens.shape[0], -1)
+            if allowed.shape[0] != input_tokens.shape[0]:
+                raise ValueError("allowed activity mask has incompatible batch size")
+            activity_legal &= allowed.unsqueeze(1)
+        if (
+            avoid_duplicate_activity_labels
+            and duplicate_policy == "disallow"
+        ):
+            if used_activity_mask is None:
+                occurrences = input_tokens.unsqueeze(-1).eq(
+                    self.activity_token_ids.view(1, 1, -1)
+                )
+                used = occurrences.cumsum(dim=1).gt(0)
+            else:
+                used = used_activity_mask.to(device=input_tokens.device, dtype=torch.bool)
+                if used.ndim == 1:
+                    used = used.unsqueeze(0)
+                if used.shape != (input_tokens.shape[0], self.tokenizer.max_activities):
+                    raise ValueError("used activity mask has incompatible shape")
+                used = used.unsqueeze(1).expand(-1, input_tokens.shape[1], -1)
+            activity_legal &= ~used
+        mask[..., self.activity_token_ids] = (
+            mask[..., self.activity_token_ids] & activity_legal
+        )
+        return mask
 
     def _mix_activity_copy(
         self,
@@ -582,6 +685,7 @@ class GrammarTreeDecoder(nn.Module):
         hidden: torch.Tensor,
         activity_mask: torch.Tensor,
         activity_memory: torch.Tensor | None,
+        allowed_activity_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         copy_keys = (
             self.embedding(self.activity_token_ids).unsqueeze(0).expand(
@@ -592,8 +696,16 @@ class GrammarTreeDecoder(nn.Module):
         )
         copy_logits = torch.einsum("bth,bah->bta", hidden, copy_keys)
         copy_logits = copy_logits / math.sqrt(self.hidden_dim)
-        has_activity = activity_mask.any(dim=1, keepdim=True)
-        safe_mask = activity_mask | ~has_activity
+        copy_mask = activity_mask.to(dtype=torch.bool)
+        if allowed_activity_mask is not None:
+            allowed = allowed_activity_mask.to(device=hidden.device, dtype=torch.bool)
+            if allowed.ndim == 1:
+                allowed = allowed.unsqueeze(0)
+            if allowed.shape[0] == 1 and copy_mask.shape[0] != 1:
+                allowed = allowed.expand(copy_mask.shape[0], -1)
+            copy_mask = copy_mask & allowed
+        has_activity = copy_mask.any(dim=1, keepdim=True)
+        safe_mask = copy_mask | ~has_activity
         copy_logits = copy_logits.masked_fill(~safe_mask.unsqueeze(1), -1e9)
         copy_probabilities = torch.softmax(copy_logits, dim=-1)
         copy_full = torch.zeros_like(logits)
@@ -608,6 +720,122 @@ class GrammarTreeDecoder(nn.Module):
         )
         return probabilities.clamp_min(1e-12).log()
 
+    def _project_hidden(self, hidden: torch.Tensor) -> torch.Tensor:
+        projected = self.dropout(hidden)
+        logits = torch.full(
+            (*hidden.shape[:2], self.tokenizer.vocab_size),
+            -1e9,
+            dtype=hidden.dtype,
+            device=hidden.device,
+        )
+        logits[..., self.structural_token_ids] = self.structural_output(projected)
+        logits[..., self.arity_token_ids] = self.arity_output(projected)
+        logits[..., self.activity_token_ids] = self.activity_output(projected)
+        return logits
+
+    def _incremental_hidden(
+        self,
+        input_token: torch.Tensor,
+        position: int,
+        memory: torch.Tensor,
+        layer_caches: list[torch.Tensor | None],
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        """Evaluate one decoder position while caching causal self-attention keys."""
+
+        x = self.embedding(input_token).unsqueeze(1)
+        x = x + self.position_embedding(
+            torch.full_like(input_token, position)
+        ).unsqueeze(1)
+        next_caches: list[torch.Tensor] = []
+        for layer, cached in zip(self.decoder.layers, layer_caches):
+            if not layer.norm_first:
+                raise RuntimeError("incremental decoder requires norm_first layers")
+            normalized = layer.norm1(x)
+            keys = normalized if cached is None else torch.cat([cached, normalized], dim=1)
+            attention = layer.self_attn(
+                normalized,
+                keys,
+                keys,
+                need_weights=False,
+            )[0]
+            x = x + layer.dropout1(attention)
+            cross_input = layer.norm2(x)
+            cross_attention = layer.multihead_attn(
+                cross_input,
+                memory,
+                memory,
+                need_weights=False,
+            )[0]
+            x = x + layer.dropout2(cross_attention)
+            feedforward_input = layer.norm3(x)
+            feedforward = layer.linear2(
+                layer.dropout(layer.activation(layer.linear1(feedforward_input)))
+            )
+            x = x + layer.dropout3(feedforward)
+            next_caches.append(keys)
+        if self.decoder.norm is not None:
+            x = self.decoder.norm(x)
+        return x, next_caches
+
+    def _incremental_grammar_mask(
+        self,
+        open_nodes: torch.Tensor,
+        pending_operator: torch.Tensor,
+    ) -> torch.Tensor:
+        mask = torch.zeros(
+            (open_nodes.shape[0], self.tokenizer.vocab_size),
+            dtype=torch.bool,
+            device=open_nodes.device,
+        )
+        awaiting = pending_operator.ne(0)
+        ordinary = awaiting & pending_operator.eq(1)
+        loop = awaiting & pending_operator.eq(2)
+        for arity in range(2, self.tokenizer.max_arity + 1):
+            token_id = self.tokenizer.token_to_id[f"ARITY_{arity}"]
+            mask[ordinary, token_id] = True
+            if arity in {2, 3}:
+                mask[loop, token_id] = True
+        complete = ~awaiting & open_nodes.eq(0)
+        mask[complete, self.tokenizer.eos_id] = True
+        need_node = ~awaiting & open_nodes.gt(0)
+        mask[need_node, self.tokenizer.token_to_id["TAU"]] = True
+        rows = torch.where(need_node)[0]
+        if rows.numel():
+            mask[rows.unsqueeze(1), self.activity_token_ids.unsqueeze(0)] = True
+            operator_ids = self.structural_token_ids[4:]
+            mask[rows.unsqueeze(1), operator_ids.unsqueeze(0)] = True
+        return mask
+
+    def _advance_incremental_grammar(
+        self,
+        chosen: torch.Tensor,
+        open_nodes: torch.Tensor,
+        pending_operator: torch.Tensor,
+        active: torch.Tensor,
+    ) -> None:
+        awaiting = active & pending_operator.ne(0)
+        for arity in range(2, self.tokenizer.max_arity + 1):
+            selected = awaiting & chosen.eq(
+                self.tokenizer.token_to_id[f"ARITY_{arity}"]
+            )
+            open_nodes[selected] += arity
+        pending_operator[awaiting] = 0
+        need_node = active & ~awaiting & open_nodes.gt(0)
+        leaf = chosen.eq(self.tokenizer.token_to_id["TAU"])
+        leaf |= chosen.unsqueeze(-1).eq(self.activity_token_ids.view(1, -1)).any(dim=-1)
+        operator_ids = {
+            self.tokenizer.token_to_id[name] for name in self.tokenizer.operator_tokens
+        }
+        operator = torch.zeros_like(active)
+        for token_id in operator_ids:
+            operator |= chosen.eq(token_id)
+        consumed = need_node & (leaf | operator)
+        open_nodes[consumed] -= 1
+        pending_operator[need_node & operator] = 1
+        pending_operator[
+            need_node & chosen.eq(self.tokenizer.token_to_id["LOOP"])
+        ] = 2
+
     @torch.no_grad()
     def decode_greedy(
         self,
@@ -615,7 +843,19 @@ class GrammarTreeDecoder(nn.Module):
         max_length: int = 128,
         apply_grammar_mask: bool = True,
         activity_mask: torch.Tensor | None = None,
+        allowed_activity_mask: torch.Tensor | None = None,
+        constrain_to_source_activities: bool = True,
+        avoid_duplicate_activity_labels: bool = True,
+        duplicate_policy: str = "disallow",
+        constraints: DecodeConstraints | None = None,
     ) -> torch.Tensor:
+        if constraints is not None:
+            allowed_activity_mask = constraints.allowed_activity_slots
+            constrain_to_source_activities = constraints.constrain_to_source_activities
+            avoid_duplicate_activity_labels = constraints.avoid_duplicate_activity_labels
+            duplicate_policy = constraints.duplicate_policy
+        if not constrain_to_source_activities:
+            allowed_activity_mask = None
         activity_memory = (
             source.activity_memory
             if isinstance(source, LatentDistribution)
@@ -624,6 +864,10 @@ class GrammarTreeDecoder(nn.Module):
         memory, inferred_mask = self.source_memory(source)
         activity_mask = inferred_mask if activity_mask is None else activity_mask
         batch_size = memory.shape[0]
+        if activity_mask is not None and activity_mask.shape[0] == 1 and batch_size > 1:
+            activity_mask = activity_mask.expand(batch_size, -1)
+        if activity_memory is not None and activity_memory.shape[0] == 1 and batch_size > 1:
+            activity_memory = activity_memory.expand(batch_size, -1, -1)
         generated = torch.full(
             (batch_size, 1),
             self.tokenizer.bos_id,
@@ -631,24 +875,145 @@ class GrammarTreeDecoder(nn.Module):
             device=memory.device,
         )
         finished = torch.zeros(batch_size, dtype=torch.bool, device=memory.device)
-        for _ in range(max_length - 1):
-            logits = self.forward(
+        used_activity_mask = torch.zeros(
+            (batch_size, self.tokenizer.max_activities),
+            dtype=torch.bool,
+            device=memory.device,
+        )
+        if not self.training and apply_grammar_mask:
+            return self._decode_greedy_incremental(
                 memory,
                 generated,
-                apply_grammar_mask=apply_grammar_mask,
+                max_length=max_length,
                 activity_mask=activity_mask,
                 activity_memory=activity_memory,
-            )[:, -1]
-            next_token = logits.argmax(dim=-1)
-            next_token = torch.where(
-                finished,
-                torch.full_like(next_token, self.tokenizer.pad_id),
-                next_token,
+                allowed_activity_mask=allowed_activity_mask,
+                avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+                duplicate_policy=duplicate_policy,
             )
+        for _ in range(max_length - 1):
+            active_rows = torch.where(~finished)[0]
+            if active_rows.numel() == 0:
+                break
+            active_activity_mask = (
+                None if activity_mask is None else activity_mask[active_rows]
+            )
+            active_activity_memory = (
+                None if activity_memory is None else activity_memory[active_rows]
+            )
+            if allowed_activity_mask is None or allowed_activity_mask.ndim == 1:
+                active_allowed = allowed_activity_mask
+            elif allowed_activity_mask.shape[0] == 1:
+                active_allowed = allowed_activity_mask
+            else:
+                active_allowed = allowed_activity_mask[active_rows]
+            active_logits = self.forward(
+                memory[active_rows],
+                generated[active_rows],
+                apply_grammar_mask=apply_grammar_mask,
+                activity_mask=active_activity_mask,
+                activity_memory=active_activity_memory,
+                allowed_activity_mask=active_allowed,
+                avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+                duplicate_policy=duplicate_policy,
+                used_activity_mask=used_activity_mask[active_rows],
+            )[:, -1]
+            next_token = torch.full(
+                (batch_size,),
+                self.tokenizer.pad_id,
+                dtype=torch.long,
+                device=memory.device,
+            )
+            next_token[active_rows] = active_logits.argmax(dim=-1)
             generated = torch.cat([generated, next_token.unsqueeze(1)], dim=1)
+            chosen_activity = next_token.unsqueeze(-1).eq(
+                self.activity_token_ids.view(1, -1)
+            )
+            used_activity_mask |= chosen_activity
             finished |= next_token.eq(self.tokenizer.eos_id)
             if finished.all():
                 break
+        return generated
+
+    def _decode_greedy_incremental(
+        self,
+        memory: torch.Tensor,
+        generated: torch.Tensor,
+        *,
+        max_length: int,
+        activity_mask: torch.Tensor | None,
+        activity_memory: torch.Tensor | None,
+        allowed_activity_mask: torch.Tensor | None,
+        avoid_duplicate_activity_labels: bool,
+        duplicate_policy: str,
+    ) -> torch.Tensor:
+        batch_size = memory.shape[0]
+        finished = torch.zeros(batch_size, dtype=torch.bool, device=memory.device)
+        used = torch.zeros(
+            (batch_size, self.tokenizer.max_activities),
+            dtype=torch.bool,
+            device=memory.device,
+        )
+        open_nodes = torch.ones(batch_size, dtype=torch.long, device=memory.device)
+        pending_operator = torch.zeros_like(open_nodes)
+        caches: list[torch.Tensor | None] = [None] * len(self.decoder.layers)
+        current = generated[:, 0]
+        for position in range(max_length - 1):
+            hidden, caches = self._incremental_hidden(
+                current,
+                position,
+                memory,
+                caches,
+            )
+            logits = self._project_hidden(hidden)
+            one_token = current.unsqueeze(1)
+            source_constraint = self.decode_constraint_mask(
+                one_token,
+                allowed_activity_mask=allowed_activity_mask,
+            )
+            logits = logits.masked_fill(~source_constraint, -torch.inf)
+            if activity_mask is not None:
+                logits = self._mix_activity_copy(
+                    logits,
+                    hidden,
+                    activity_mask,
+                    activity_memory,
+                    allowed_activity_mask,
+                )
+            grammar = self._incremental_grammar_mask(
+                open_nodes,
+                pending_operator,
+            ).unsqueeze(1)
+            hard_constraint = self.decode_constraint_mask(
+                one_token,
+                grammar_mask=grammar,
+                allowed_activity_mask=allowed_activity_mask,
+                avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+                duplicate_policy=duplicate_policy,
+                used_activity_mask=used,
+            )
+            logits = logits.masked_fill(~hard_constraint, -torch.inf)
+            active = ~finished
+            next_token = logits[:, 0].argmax(dim=-1)
+            next_token = torch.where(
+                active,
+                next_token,
+                torch.full_like(next_token, self.tokenizer.pad_id),
+            )
+            generated = torch.cat([generated, next_token.unsqueeze(1)], dim=1)
+            self._advance_incremental_grammar(
+                next_token,
+                open_nodes,
+                pending_operator,
+                active,
+            )
+            used |= next_token.unsqueeze(-1).eq(
+                self.activity_token_ids.view(1, -1)
+            )
+            finished |= next_token.eq(self.tokenizer.eos_id)
+            if finished.all():
+                break
+            current = next_token
         return generated
 
     @torch.no_grad()
@@ -658,14 +1023,32 @@ class GrammarTreeDecoder(nn.Module):
         max_length: int = 128,
         beam_size: int = 5,
         length_penalty: float = 0.7,
+        allowed_activity_mask: torch.Tensor | None = None,
+        constrain_to_source_activities: bool = True,
+        avoid_duplicate_activity_labels: bool = True,
+        duplicate_policy: str = "disallow",
+        constraints: DecodeConstraints | None = None,
     ) -> torch.Tensor:
         if beam_size <= 1:
-            return self.decode_greedy(source, max_length=max_length)
+            return self.decode_greedy(
+                source,
+                max_length=max_length,
+                allowed_activity_mask=allowed_activity_mask,
+                constrain_to_source_activities=constrain_to_source_activities,
+                avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+                duplicate_policy=duplicate_policy,
+                constraints=constraints,
+            )
         candidates = self.decode_beam_candidates(
             source,
             max_length=max_length,
             beam_size=beam_size,
             length_penalty=length_penalty,
+            allowed_activity_mask=allowed_activity_mask,
+            constrain_to_source_activities=constrain_to_source_activities,
+            avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+            duplicate_policy=duplicate_policy,
+            constraints=constraints,
         )
         memory, _ = self.source_memory(source)
         rows = [
@@ -686,7 +1069,19 @@ class GrammarTreeDecoder(nn.Module):
         max_length: int = 128,
         beam_size: int = 5,
         length_penalty: float = 0.7,
+        allowed_activity_mask: torch.Tensor | None = None,
+        constrain_to_source_activities: bool = True,
+        avoid_duplicate_activity_labels: bool = True,
+        duplicate_policy: str = "disallow",
+        constraints: DecodeConstraints | None = None,
     ) -> list[list[tuple[list[int], float]]]:
+        if constraints is not None:
+            allowed_activity_mask = constraints.allowed_activity_slots
+            constrain_to_source_activities = constraints.constrain_to_source_activities
+            avoid_duplicate_activity_labels = constraints.avoid_duplicate_activity_labels
+            duplicate_policy = constraints.duplicate_policy
+        if not constrain_to_source_activities:
+            allowed_activity_mask = None
         memory, activity_mask = self.source_memory(source)
         activity_memory = (
             source.activity_memory
@@ -697,17 +1092,33 @@ class GrammarTreeDecoder(nn.Module):
         for row in range(memory.shape[0]):
             row_memory = memory[row : row + 1]
             row_mask = None if activity_mask is None else activity_mask[row : row + 1]
+            if allowed_activity_mask is None or allowed_activity_mask.ndim == 1:
+                row_allowed = allowed_activity_mask
+            elif allowed_activity_mask.shape[0] > 1:
+                row_allowed = allowed_activity_mask[row : row + 1]
+            else:
+                row_allowed = allowed_activity_mask
             row_activity_memory = (
                 None
                 if activity_memory is None
                 else activity_memory[row : row + 1]
             )
-            beams: list[tuple[list[int], float]] = [([self.tokenizer.bos_id], 0.0)]
+            beams: list[tuple[list[int], float, torch.Tensor]] = [
+                (
+                    [self.tokenizer.bos_id],
+                    0.0,
+                    torch.zeros(
+                        self.tokenizer.max_activities,
+                        dtype=torch.bool,
+                        device=memory.device,
+                    ),
+                )
+            ]
             for _ in range(max_length - 1):
-                candidates: list[tuple[list[int], float]] = []
-                for prefix, score in beams:
+                candidates: list[tuple[list[int], float, torch.Tensor]] = []
+                for prefix, score, used_activity_mask in beams:
                     if prefix[-1] == self.tokenizer.eos_id:
-                        candidates.append((prefix, score))
+                        candidates.append((prefix, score, used_activity_mask))
                         continue
                     tokens = torch.tensor([prefix], device=memory.device)
                     log_prob = F.log_softmax(
@@ -716,22 +1127,38 @@ class GrammarTreeDecoder(nn.Module):
                             tokens,
                             activity_mask=row_mask,
                             activity_memory=row_activity_memory,
+                            allowed_activity_mask=row_allowed,
+                            avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+                            duplicate_policy=duplicate_policy,
+                            used_activity_mask=used_activity_mask.unsqueeze(0),
                         )[0, -1],
                         dim=-1,
                     )
-                    values, indices = torch.topk(log_prob, beam_size)
-                    candidates.extend(
-                        (prefix + [int(token)], score + float(value))
-                        for value, token in zip(values.tolist(), indices.tolist())
-                    )
+                    legal_ids = torch.where(torch.isfinite(log_prob))[0]
+                    legal_count = int(legal_ids.numel())
+                    if legal_count == 0:
+                        continue
+                    k = min(beam_size, legal_count)
+                    values, legal_indices = torch.topk(log_prob[legal_ids], k)
+                    indices = legal_ids[legal_indices]
+                    for value, token in zip(values.tolist(), indices.tolist()):
+                        next_used = used_activity_mask.clone()
+                        activity_slot = torch.where(self.activity_token_ids.eq(int(token)))[0]
+                        if activity_slot.numel():
+                            next_used[int(activity_slot[0])] = True
+                        candidates.append(
+                            (prefix + [int(token)], score + float(value), next_used)
+                        )
+                if not candidates:
+                    break
                 beams = sorted(
                     candidates,
                     key=lambda item: item[1] / (len(item[0]) ** length_penalty),
                     reverse=True,
                 )[:beam_size]
-                if all(prefix[-1] == self.tokenizer.eos_id for prefix, _ in beams):
+                if all(prefix[-1] == self.tokenizer.eos_id for prefix, _, _ in beams):
                     break
-            candidate_rows.append(beams)
+            candidate_rows.append([(prefix, score) for prefix, score, _ in beams])
         return candidate_rows
 
 
@@ -785,8 +1212,16 @@ class ProcRosettaModel(nn.Module):
             memory_tokens=memory_tokens,
         )
 
-    def encode_tree(self, tree_tokens: torch.Tensor) -> LatentDistribution:
-        return self.tree_encoder(tree_tokens)
+    def encode_tree(
+        self,
+        tree_tokens: torch.Tensor,
+        structure: dict[str, torch.Tensor] | None = None,
+    ) -> LatentDistribution:
+        return self.tree_encoder(
+            tree_tokens,
+            None if structure is None else structure.get("depths"),
+            None if structure is None else structure.get("parents"),
+        )
 
     def encode_traces(self, traces: dict[str, torch.Tensor]) -> LatentDistribution:
         return self.trace_encoder(traces["tokens"], traces["lengths"], traces["mask"])
@@ -795,9 +1230,11 @@ class ProcRosettaModel(nn.Module):
         return self.petri_encoder(
             petri["node_types"],
             petri["markings"],
-            petri["adjacency"],
+            petri.get("adjacency"),
             petri["node_mask"],
             petri.get("transition_label_ids"),
+            petri.get("edge_index"),
+            petri.get("edge_types"),
         )
 
     def forward(
@@ -807,50 +1244,97 @@ class ProcRosettaModel(nn.Module):
         input_token_dropout: float = 0.0,
         scheduled_sampling_probability: float = 0.0,
     ) -> dict[str, object]:
-        tree_tokens = batch["tree_tokens"]
+        tree_tokens = batch.get("tree_encoder_tokens", batch["tree_tokens"])
+        decoder_targets = batch.get("decoder_targets")
+        source_activity_masks = batch.get("source_activity_masks")
+        tree_structure = batch.get("tree_structure")
         traces = batch["traces"]
         petri = batch["petri"]
         assert isinstance(tree_tokens, torch.Tensor)
         assert isinstance(traces, dict)
         assert isinstance(petri, dict)
+        if decoder_targets is None:
+            decoder_targets = {
+                name: tree_tokens for name in ("tree", "trace", "petri")
+            }
+        if source_activity_masks is None:
+            source_activity_masks = {
+                name: None for name in ("tree", "trace", "petri")
+            }
+        assert isinstance(decoder_targets, dict)
+        assert isinstance(source_activity_masks, dict)
         dists = {
-            "tree": self.encode_tree(tree_tokens),
+            "tree": self.encode_tree(
+                tree_tokens,
+                tree_structure if isinstance(tree_structure, dict) else None,
+            ),
             "trace": self.encode_traces(traces),
             "petri": self.encode_petri(petri),
         }
-        decoder_input = tree_tokens[:, :-1]
-        logits: dict[str, torch.Tensor] = {}
-        for name, distribution in dists.items():
+        names = ("tree", "trace", "petri")
+        batch_size = tree_tokens.shape[0]
+        stacked_distribution = _stack_latent_distributions([dists[name] for name in names])
+        stacked_input = torch.cat(
+            [decoder_targets[name][:, :-1] for name in names],
+            dim=0,
+        )
+        allowed_rows = [source_activity_masks[name] for name in names]
+        stacked_allowed = (
+            None
+            if any(value is None for value in allowed_rows)
+            else torch.cat(allowed_rows, dim=0)
+        )
+        teacher_logits = self.tree_decoder(
+            stacked_distribution,
+            stacked_input,
+            allowed_activity_mask=stacked_allowed,
+            input_token_dropout=input_token_dropout,
+        )
+        if self.training and scheduled_sampling_probability > 0:
+            sampled_input = stacked_input.clone()
+            predictions = teacher_logits.detach().argmax(dim=-1)
+            replacement = (
+                torch.rand(
+                    sampled_input[:, 1:].shape,
+                    device=sampled_input.device,
+                )
+                < scheduled_sampling_probability
+            )
+            replacement &= sampled_input[:, 1:].ne(self.tree_tokenizer.pad_id)
+            sampled_input[:, 1:] = torch.where(
+                replacement,
+                predictions[:, :-1],
+                sampled_input[:, 1:],
+            )
             teacher_logits = self.tree_decoder(
-                distribution,
-                decoder_input,
+                stacked_distribution,
+                sampled_input,
+                apply_grammar_mask=False,
+                allowed_activity_mask=stacked_allowed,
                 input_token_dropout=input_token_dropout,
             )
-            if self.training and scheduled_sampling_probability > 0:
-                sampled_input = decoder_input.clone()
-                predictions = teacher_logits.detach().argmax(dim=-1)
-                replacement = (
-                    torch.rand(
-                        sampled_input[:, 1:].shape,
-                        device=sampled_input.device,
-                    )
-                    < scheduled_sampling_probability
-                )
-                replacement &= sampled_input[:, 1:].ne(self.tree_tokenizer.pad_id)
-                sampled_input[:, 1:] = torch.where(
-                    replacement,
-                    predictions[:, :-1],
-                    sampled_input[:, 1:],
-                )
-                teacher_logits = self.tree_decoder(
-                    distribution,
-                    sampled_input,
-                    apply_grammar_mask=False,
-                    input_token_dropout=input_token_dropout,
-                )
-            logits[name] = teacher_logits
+        split_logits = teacher_logits.split(batch_size, dim=0)
+        logits = dict(zip(names, split_logits))
         return {
             "dists": dists,
             "z": {name: distribution.mu for name, distribution in dists.items()},
             "tree_logits": logits,
+            "decoder_targets": decoder_targets,
         }
+
+
+def _stack_latent_distributions(
+    distributions: list[LatentDistribution],
+) -> LatentDistribution:
+    def concatenate(attribute: str) -> torch.Tensor | None:
+        values = [getattr(distribution, attribute) for distribution in distributions]
+        return None if any(value is None for value in values) else torch.cat(values, dim=0)
+
+    return LatentDistribution(
+        mu=torch.cat([distribution.mu for distribution in distributions], dim=0),
+        logvar=torch.cat([distribution.logvar for distribution in distributions], dim=0),
+        memory=concatenate("memory"),
+        pre_normalized=concatenate("pre_normalized"),
+        activity_mask=concatenate("activity_mask"),
+        activity_memory=concatenate("activity_memory"),
+    )

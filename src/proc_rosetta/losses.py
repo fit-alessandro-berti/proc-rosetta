@@ -235,7 +235,7 @@ def effective_rank(embedding: torch.Tensor) -> torch.Tensor:
 
 def multimodal_tree_loss(
     outputs: dict[str, object],
-    tree_tokens: torch.Tensor,
+    tree_tokens: torch.Tensor | dict[str, torch.Tensor],
     pad_id: int = 0,
     weights: LossWeights | None = None,
     positive_mask: torch.Tensor | None = None,
@@ -244,7 +244,15 @@ def multimodal_tree_loss(
     tokenizer: TreeTokenizer | None = None,
 ) -> dict[str, torch.Tensor]:
     weights = weights or LossWeights()
-    targets = tree_tokens[:, 1:]
+    decoder_targets = (
+        tree_tokens
+        if isinstance(tree_tokens, dict)
+        else outputs.get("decoder_targets")
+    )
+    if not isinstance(decoder_targets, dict):
+        decoder_targets = {
+            name: tree_tokens for name in ("tree", "trace", "petri")
+        }
     logits = outputs["tree_logits"]
     dists = outputs["dists"]
     assert isinstance(logits, dict)
@@ -254,7 +262,7 @@ def multimodal_tree_loss(
     def reconstruction(name: str) -> torch.Tensor:
         return sequence_cross_entropy(
             logits[name],
-            targets,
+            decoder_targets[name][:, 1:],
             pad_id,
             label_smoothing=weights.label_smoothing,
             token_weights=token_weight_tensor,

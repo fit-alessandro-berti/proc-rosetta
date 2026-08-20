@@ -4,7 +4,7 @@ from contextlib import nullcontext
 import json
 import random
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -12,7 +12,12 @@ import torch
 from torch.utils.data import Dataset
 
 from proc_rosetta.pm4py_bridge import PetriGraph
-from proc_rosetta.synthetic import ProcessSample, SyntheticConfig, generate_samples
+from proc_rosetta.synthetic import (
+    ProcessSample,
+    SyntheticConfig,
+    decoder_target_trees_for_sample,
+    generate_samples,
+)
 from proc_rosetta.tokenizers import ActivityTokenizer, TreeTokenizer
 
 SPLIT_NAMES = ("training", "validation", "test")
@@ -68,6 +73,20 @@ class JsonlProcessDataset(Dataset[ProcessSample]):
             path = path / SAMPLES_FILENAME
         self.path = path
         self.samples = read_samples_jsonl(path, show_progress=show_progress)
+        # Legacy rows are migrated once at load time, never in the hot collator.
+        self.samples = [
+            sample
+            if set(sample.decoder_target_trees) == {"tree", "trace", "petri"}
+            else replace(
+                sample,
+                decoder_target_trees=decoder_target_trees_for_sample(
+                    sample.tree,
+                    sample.traces,
+                    sample.petri_graph,
+                ),
+            )
+            for sample in self.samples
+        ]
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -98,37 +117,31 @@ class ProcessBatchCollator:
         exact_behavior_ids = [sample.exact_behavior_id for sample in samples]
         partial_order_ids = [sample.partial_order_id for sample in samples]
         signatures = self._behavior_signatures(samples)
-        positive_mask = torch.tensor(
-            [
-                [
-                    left is not None
-                    and left == right
-                    and partial_order_ids[left_index] is not None
-                    and partial_order_ids[left_index] == partial_order_ids[right_index]
-                    for right_index, right in enumerate(exact_behavior_ids)
-                ]
-                for left_index, left in enumerate(exact_behavior_ids)
-            ],
-            dtype=torch.bool,
+        exact_ids = self._categorical_ids(exact_behavior_ids)
+        partial_ids = self._categorical_ids(partial_order_ids)
+        exact_valid = exact_ids.ge(0)
+        partial_valid = partial_ids.ge(0)
+        same_exact = exact_ids[:, None].eq(exact_ids[None, :])
+        same_partial = partial_ids[:, None].eq(partial_ids[None, :])
+        valid_exact_pair = exact_valid[:, None] & exact_valid[None, :]
+        positive_mask = (
+            valid_exact_pair
+            & same_exact
+            & partial_valid[:, None]
+            & same_partial
         )
-        contrastive_candidate_mask = torch.tensor(
-            [
-                [
-                    left is not None
-                    and right is not None
-                    and (
-                        left != right
-                        or partial_order_ids[left_index]
-                        == partial_order_ids[right_index]
-                    )
-                    for right_index, right in enumerate(exact_behavior_ids)
-                ]
-                for left_index, left in enumerate(exact_behavior_ids)
-            ],
-            dtype=torch.bool,
-        )
+        contrastive_candidate_mask = valid_exact_pair & (~same_exact | same_partial)
+        tree_tokens = self._tree_tokens(samples)
+        tree_depths, tree_parents = self.tree_tokenizer.structure_features(tree_tokens)
         batch = {
-            "tree_tokens": self._tree_tokens(samples),
+            "tree_tokens": tree_tokens,
+            "tree_encoder_tokens": tree_tokens,
+            "tree_structure": {
+                "depths": tree_depths,
+                "parents": tree_parents,
+            },
+            "decoder_targets": self._decoder_targets(samples),
+            "source_activity_masks": self._source_activity_masks(samples),
             "traces": self._trace_tokens(samples),
             "petri": self._petri_graphs([sample.petri_graph for sample in samples]),
             "equivalence_ids": equivalence_ids,
@@ -141,19 +154,7 @@ class ProcessBatchCollator:
             "behavior_signatures": signatures,
             "positive_mask": positive_mask,
             "contrastive_candidate_mask": contrastive_candidate_mask,
-            "analogy_mask": torch.tensor(
-                [
-                    [
-                        left is not None
-                        and left == right
-                        and partial_order_ids[left_index]
-                        != partial_order_ids[right_index]
-                        for right_index, right in enumerate(exact_behavior_ids)
-                    ]
-                    for left_index, left in enumerate(exact_behavior_ids)
-                ],
-                dtype=torch.bool,
-            ),
+            "analogy_mask": valid_exact_pair & same_exact & ~same_partial,
             "samples": list(samples),
         }
         self._remap_activity_ids(batch, equivalence_ids)
@@ -170,6 +171,18 @@ class ProcessBatchCollator:
             [sample.behavior_signature for sample in samples], dtype=torch.float32
         )
 
+    @staticmethod
+    def _categorical_ids(values: Sequence[str | None]) -> torch.Tensor:
+        mapping: dict[str, int] = {}
+        encoded: list[int] = []
+        for value in values:
+            if value is None:
+                encoded.append(-1)
+            else:
+                mapping.setdefault(value, len(mapping))
+                encoded.append(mapping[value])
+        return torch.tensor(encoded, dtype=torch.long)
+
     def _remap_activity_ids(
         self,
         batch: dict[str, Any],
@@ -178,9 +191,13 @@ class ProcessBatchCollator:
         if self.activity_remap_probability <= 0:
             return
         tree_tokens = batch["tree_tokens"]
+        decoder_targets = batch["decoder_targets"]
+        source_activity_masks = batch["source_activity_masks"]
         traces = batch["traces"]
         petri = batch["petri"]
         assert isinstance(tree_tokens, torch.Tensor)
+        assert isinstance(decoder_targets, dict)
+        assert isinstance(source_activity_masks, dict)
         assert isinstance(traces, dict)
         assert isinstance(petri, dict)
         trace_tokens = traces["tokens"]
@@ -205,6 +222,12 @@ class ProcessBatchCollator:
                 continue
 
             original_tree = tree_tokens[row].clone()
+            original_targets = {
+                name: value[row].clone() for name, value in decoder_targets.items()
+            }
+            original_source_masks = {
+                name: value[row].clone() for name, value in source_activity_masks.items()
+            }
             original_traces = trace_tokens[row].clone()
             original_petri = transition_label_ids[row].clone()
             for source_index, target_index in enumerate(permutation):
@@ -215,6 +238,12 @@ class ProcessBatchCollator:
                 source_activity_id = self.activity_tokenizer.token_to_id[source_name]
                 target_activity_id = self.activity_tokenizer.token_to_id[target_name]
                 tree_tokens[row][original_tree == source_tree_id] = target_tree_id
+                for name, target_tokens in decoder_targets.items():
+                    target_tokens[row][
+                        original_targets[name] == source_tree_id
+                    ] = target_tree_id
+                for name, source_mask in source_activity_masks.items():
+                    source_mask[row, target_index] = original_source_masks[name][source_index]
                 trace_tokens[row][original_traces == source_activity_id] = target_activity_id
                 transition_label_ids[row][
                     original_petri == source_activity_id
@@ -242,6 +271,72 @@ class ProcessBatchCollator:
                 row[-1] = self.tree_tokenizer.eos_id
             out[idx, : len(row)] = torch.tensor(row, dtype=torch.long)
         return out
+
+    def _decoder_targets(
+        self,
+        samples: Sequence[ProcessSample],
+    ) -> dict[str, torch.Tensor]:
+        target_rows: dict[str, list[list[int]]] = {name: [] for name in ("tree", "trace", "petri")}
+        for sample in samples:
+            targets = sample.decoder_target_trees
+            if set(targets) != set(target_rows):
+                targets = decoder_target_trees_for_sample(
+                    sample.tree,
+                    sample.traces,
+                    sample.petri_graph,
+                )
+            for name in target_rows:
+                target_rows[name].append(
+                    self.tree_tokenizer.encode_tree(targets[name], canonicalize=False)
+                )
+        longest = max(len(row) for rows in target_rows.values() for row in rows)
+        if self.config.strict_tree_tokens and longest > self.config.max_tree_tokens:
+            raise ValueError(
+                "decoder target exceeds the configured token maximum in strict mode: "
+                f"observed={longest}, maximum={self.config.max_tree_tokens}"
+            )
+        width = min(longest, self.config.max_tree_tokens)
+        result: dict[str, torch.Tensor] = {}
+        for name, rows in target_rows.items():
+            tensor = torch.full(
+                (len(samples), width),
+                self.tree_tokenizer.pad_id,
+                dtype=torch.long,
+            )
+            for index, encoded in enumerate(rows):
+                encoded = encoded[:width]
+                if encoded[-1] != self.tree_tokenizer.eos_id:
+                    encoded[-1] = self.tree_tokenizer.eos_id
+                tensor[index, : len(encoded)] = torch.tensor(encoded, dtype=torch.long)
+            result[name] = tensor
+        return result
+
+    def _source_activity_masks(
+        self,
+        samples: Sequence[ProcessSample],
+    ) -> dict[str, torch.Tensor]:
+        masks = {
+            name: torch.zeros(
+                (len(samples), self.tree_tokenizer.max_activities),
+                dtype=torch.bool,
+            )
+            for name in ("tree", "trace", "petri")
+        }
+        for row, sample in enumerate(samples):
+            labels = {
+                "tree": set(sample.tree.activity_labels()),
+                "trace": {label for trace in sample.traces for label in trace},
+                "petri": {
+                    label for label in sample.petri_graph.transition_labels if label is not None
+                },
+            }
+            for name, alphabet in labels.items():
+                for label in alphabet:
+                    if label.startswith("A") and label[1:].isdigit():
+                        index = int(label[1:])
+                        if 0 <= index < self.tree_tokenizer.max_activities:
+                            masks[name][row, index] = True
+        return masks
 
     def _trace_tokens(self, samples: Sequence[ProcessSample]) -> dict[str, torch.Tensor]:
         original_trace_counts = torch.tensor(
@@ -307,7 +402,9 @@ class ProcessBatchCollator:
         node_mask = torch.zeros((batch_size, max_nodes), dtype=torch.bool)
         transition_label_ids = torch.zeros((batch_size, max_nodes), dtype=torch.long)
         markings = torch.zeros((batch_size, max_nodes, 2), dtype=torch.float32)
-        adjacency = torch.zeros((batch_size, 2, max_nodes, max_nodes), dtype=torch.float32)
+        edge_sources: list[int] = []
+        edge_targets: list[int] = []
+        edge_types: list[int] = []
 
         for batch_idx, graph in enumerate(graphs):
             node_count = min(graph.num_nodes, max_nodes)
@@ -328,14 +425,20 @@ class ProcessBatchCollator:
             )
             for src, dst, edge_type in graph.edges:
                 if src < max_nodes and dst < max_nodes:
-                    adjacency[batch_idx, edge_type, src, dst] = 1.0
+                    edge_sources.append(batch_idx * max_nodes + src)
+                    edge_targets.append(batch_idx * max_nodes + dst)
+                    edge_types.append(edge_type)
 
         return {
             "node_types": node_types,
             "node_mask": node_mask,
             "transition_label_ids": transition_label_ids,
             "markings": markings,
-            "adjacency": adjacency,
+            "edge_index": torch.tensor(
+                [edge_sources, edge_targets],
+                dtype=torch.long,
+            ),
+            "edge_types": torch.tensor(edge_types, dtype=torch.long),
         }
 
 
@@ -566,6 +669,7 @@ def recreate_data_splits(
                         log_view_id=sample.log_view_id,
                         representation_kind=sample.representation_kind,
                         equivalence_level=sample.equivalence_level,
+                        decoder_target_trees=sample.decoder_target_trees,
                         metadata=sample.metadata,
                     )
                     for idx, sample in enumerate(samples)
@@ -609,9 +713,10 @@ def recreate_data_splits(
         }
 
     metadata = {
-        "version": 4,
-        "schema": "proc-rosetta.behavior-family-splits.v4",
-        "sample_format": "jsonl/process-sample.v3",
+        "version": 5,
+        "schema": "proc-rosetta.behavior-family-splits.v5",
+        "sample_format": "jsonl/process-sample.v4",
+        "tree_normalization_version": "pm4py-fold-v1",
         "seed": seed,
         "synthetic_config": config.to_dict(),
         "exact_behavior_signatures_disjoint": True,

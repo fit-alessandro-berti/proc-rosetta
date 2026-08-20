@@ -6,6 +6,19 @@ from typing import Any
 from proc_rosetta.tree import NodeKind, ProcessTreeNode
 
 
+TREE_NORMALIZATION_VERSION = "pm4py-fold-v1"
+
+
+@dataclass(frozen=True)
+class TreeNormalizationResult:
+    """Semantic and tokenizer-bounded views of one process tree."""
+
+    semantic_tree: ProcessTreeNode
+    model_tree: ProcessTreeNode
+    fold_changed: bool
+    normalization_version: str = TREE_NORMALIZATION_VERSION
+
+
 @dataclass(frozen=True)
 class PetriGraph:
     """Typed Petri-net graph extracted from pm4py objects.
@@ -127,6 +140,50 @@ def from_pm4py_tree(tree: Any) -> ProcessTreeNode:
         operator_map[tree.operator],
         children=tuple(from_pm4py_tree(child) for child in tree.children),
     )
+
+
+def fold_pm4py_tree(tree: Any) -> Any:
+    """Return PM4Py's deep-copied semantic fold of ``tree``."""
+
+    from pm4py.objects.process_tree.utils.generic import fold
+
+    return fold(tree)
+
+
+def fold_process_tree(node: ProcessTreeNode) -> ProcessTreeNode:
+    """Fold a validated local tree through the centrally supported PM4Py API."""
+
+    return from_pm4py_tree(fold_pm4py_tree(to_pm4py_tree(node)))
+
+
+def prepare_tree_for_model(
+    node: ProcessTreeNode,
+    maximum_arity: int,
+) -> TreeNormalizationResult:
+    """Produce the semantic folded tree and its bounded model representation."""
+
+    semantic_tree = fold_process_tree(node)
+    model_tree = semantic_tree.normalize(
+        maximum_arity,
+        canonicalize_activity_labels=False,
+    )
+    return TreeNormalizationResult(
+        semantic_tree=semantic_tree,
+        model_tree=model_tree,
+        fold_changed=semantic_tree.canonical_key() != node.canonical_key(),
+    )
+
+
+def pm4py_tree_size(tree: Any) -> int:
+    return 1 + sum(pm4py_tree_size(child) for child in tree.children)
+
+
+def pm4py_tree_prefix_length(tree: Any) -> int:
+    """Return tokenizer-style prefix length, including BOS and EOS."""
+
+    if tree.operator is None:
+        return 3
+    return 4 + sum(pm4py_tree_prefix_length(child) - 2 for child in tree.children)
 
 
 def tree_to_petri_net(node: ProcessTreeNode) -> PetriNetBundle:

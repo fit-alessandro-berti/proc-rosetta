@@ -63,6 +63,19 @@ with controls:
         ),
     )
     max_length = st.slider("Maximum decode length", 16, 1024, 256, 16)
+    avoid_duplicate_activity_labels = st.checkbox(
+        "Avoid repeated visible transitions",
+        True,
+        help=(
+            "Once a visible activity label has been used, that label is masked for the "
+            "remainder of the decode. Silent tau leaves may still be generated."
+        ),
+    )
+    constrain_to_source_activities = st.checkbox(
+        "Restrict activities to the selected source objects",
+        True,
+        help="For fused sources, the legal activity alphabet is the union of their alphabets.",
+    )
     latent_mode = st.radio(
         "Latent mode",
         ["Deterministic mean", "Stochastic latent samples · experimental"],
@@ -110,7 +123,7 @@ with explanation:
 
 selected = [encoded_items[artifact_id] for artifact_id in selected_ids]
 contains_pnml = any(item.parsed.modality is ArtifactModality.PETRI_NET for item in selected)
-if contains_pnml:
+if contains_pnml and not checkpoint.metadata.petri_label_embeddings_trained:
     st.warning(PETRI_LABEL_WARNING, icon="⚠️")
 
 if st.button("Decode process tree", type="primary", disabled=not selected):
@@ -132,6 +145,8 @@ if st.button("Decode process tree", type="primary", disabled=not selected):
                     selected,
                     checkpoint,
                     max_length=max_length,
+                    constrain_to_source_activities=constrain_to_source_activities,
+                    avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
                     weights=weights,
                     progress_callback=update,
                     decode_cache=stage_cache(st.session_state, "decode"),
@@ -153,6 +168,8 @@ if st.button("Decode process tree", type="primary", disabled=not selected):
                     latent=latent,
                     latent_source=f"stochastic_latent_sample_seed_{sample_seed + index}",
                     max_length=max_length,
+                    constrain_to_source_activities=constrain_to_source_activities,
+                    avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
                     progress_callback=update if index == 0 else None,
                     decode_cache=stage_cache(st.session_state, "decode"),
                 )
@@ -164,6 +181,11 @@ if st.button("Decode process tree", type="primary", disabled=not selected):
         st.session_state["latest_decode_result"] = result
         st.session_state["latest_decode_alternatives"] = results
         st.session_state["latest_decode_source_ids"] = selected_ids
+        st.session_state["latest_decode_options"] = {
+            "constrain_to_source_activities": constrain_to_source_activities,
+            "avoid_duplicate_activity_labels": avoid_duplicate_activity_labels,
+            "maximum_token_length": max_length,
+        }
         progress.progress(1.0, text="Decode complete")
     except Exception as exc:
         st.error(f"Decode failed: {type(exc).__name__}: {exc}")
@@ -171,7 +193,17 @@ if st.button("Decode process tree", type="primary", disabled=not selected):
 result = st.session_state.get("latest_decode_result")
 alternatives = st.session_state.get("latest_decode_alternatives", [])
 source_ids = st.session_state.get("latest_decode_source_ids", [])
-if result is None or not set(source_ids).issubset(encoded_items):
+decode_options = st.session_state.get("latest_decode_options", {})
+current_decode_options = {
+    "constrain_to_source_activities": constrain_to_source_activities,
+    "avoid_duplicate_activity_labels": avoid_duplicate_activity_labels,
+    "maximum_token_length": max_length,
+}
+if (
+    result is None
+    or not set(source_ids).issubset(encoded_items)
+    or decode_options != current_decode_options
+):
     st.stop()
 
 if len(alternatives) > 1:
@@ -202,6 +234,8 @@ st.markdown(
             status_pill("Arity valid", validation["arity_valid"]),
             status_pill("Vocabulary valid", validation["vocabulary_valid"]),
             status_pill("Petri convertible", validation["petri_convertible"]),
+            status_pill("Source alphabet", validation["source_alphabet_respected"]),
+            status_pill("No repeated labels", validation["duplicate_free"]),
             status_pill("Length limit", not validation["length_limit_reached"]),
         ]
     ),
@@ -218,17 +252,29 @@ tokens_tab, tree_tab, petri_tab, comparison_tab = st.tabs(
 with tokens_tab:
     render_decoder_steps(result)
 with tree_tab:
-    st.info("The process tree is the direct decoded model representation.")
+    st.info(
+        "The final process tree is the source-validated, duplicate-policy-normalized, "
+        "and semantically folded form of the raw decoder prefix."
+    )
+    normalization_metrics = st.columns(3)
+    normalization_metrics[0].metric(
+        "Out-of-source labels replaced",
+        result.out_of_source_activities_replaced,
+    )
+    normalization_metrics[1].metric(
+        "Repeated labels replaced",
+        result.duplicate_activities_replaced,
+    )
+    normalization_metrics[2].metric(
+        "Fold changed output",
+        "Yes" if result.output_fold_changed else "No",
+    )
     if result.tree is not None:
         canonical, restored = st.tabs(["Canonical labels", "Original labels"])
         with canonical:
             render_process_tree(result.tree, title="Decoded process tree · canonical")
         with restored:
-            if contains_pnml:
-                st.warning("Original-label restoration is unavailable for PNML-derived output.")
-                render_process_tree(result.tree, title="Decoded process tree · canonical")
-            else:
-                render_process_tree(result.restored_tree or result.tree, title="Decoded process tree · restored")
+            render_process_tree(result.restored_tree or result.tree, title="Decoded process tree · restored")
     else:
         st.error("No complete process tree could be parsed from the generated prefix.")
 with petri_tab:
@@ -338,16 +384,11 @@ with comparison_tab:
                     result.petri_net,
                     title=f"Decoded-derived · {source_item.parsed.display_name}",
                 )
-    if contains_pnml:
-        st.caption(
-            "Structural or behavioral similarity may be evaluated, but visible activity-name "
-            "preservation cannot be attributed to the current external Petri encoder path."
-        )
 
 st.markdown("### Export decoded model")
 exports = st.columns(4)
 if result.grammar_valid:
-    restore = False if contains_pnml else st.checkbox("Restore original labels in PTML", True)
+    restore = st.checkbox("Restore original labels in PTML", True)
     exports[0].download_button(
         "Download PTML",
         process_tree_ptml(result, restore_labels=restore),

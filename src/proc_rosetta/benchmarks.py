@@ -340,11 +340,13 @@ def discovery_quality_report(
             batch_samples = samples[start : start + batch_size]
             batch = _move_batch_to_device(collator(batch_samples), torch_device)
             trace_dist = model.encode_traces(batch["traces"])
+            source_masks = batch.get("source_activity_masks", {})
             decoded_rows = decode_trace_with_conformance_reranking(
                 model,
                 trace_dist,
                 batch_samples,
                 max_length=max_decode_length,
+                allowed_activity_mask=source_masks.get("trace"),
             )
             for sample, token_ids in zip(batch_samples, decoded_rows):
                 proc_rosetta_row = evaluate_proc_rosetta_discovery(
@@ -827,10 +829,24 @@ def decode_quality_report(
                     (tree_dist.mu, trace_dist.mu, petri_dist.mu), dim=0
                 ).mean(dim=0),
             }
+            source_masks = batch["source_activity_masks"]
+            allowed_masks = {
+                "proc_rosetta_tree_mu": source_masks["tree"],
+                "proc_rosetta_trace_mu": source_masks["trace"],
+                "proc_rosetta_petri_mu": source_masks["petri"],
+                "proc_rosetta_fused_mu": (
+                    source_masks["tree"]
+                    | source_masks["trace"]
+                    | source_masks["petri"]
+                ),
+            }
 
             for name, latent in latents.items():
                 decoded = decode_with_beam(
-                    model.tree_decoder, latent, max_length=max_decode_length
+                    model.tree_decoder,
+                    latent,
+                    max_length=max_decode_length,
+                    allowed_activity_mask=allowed_masks[name],
                 )
                 for sample, token_ids in zip(batch_samples, decoded.detach().cpu().tolist()):
                     row = evaluate_single_decode(
@@ -860,18 +876,27 @@ def decode_quality_report(
     }
 
 
-def decode_with_beam(decoder, source, *, max_length: int, beam_size: int = 5):
+def decode_with_beam(
+    decoder,
+    source,
+    *,
+    max_length: int,
+    beam_size: int = 5,
+    allowed_activity_mask: torch.Tensor | None = None,
+):
     if hasattr(decoder, "decode_beam"):
         return decoder.decode_beam(
             source,
             max_length=max_length,
             beam_size=beam_size,
             length_penalty=0.7,
+            allowed_activity_mask=allowed_activity_mask,
         )
     return decoder.decode_greedy(
         source.mu if hasattr(source, "mu") else source,
         max_length=max_length,
         apply_grammar_mask=True,
+        allowed_activity_mask=allowed_activity_mask,
     )
 
 
@@ -884,11 +909,16 @@ def decode_trace_with_conformance_reranking(
     beam_size: int = 5,
     fitness_weight: float = 0.25,
     footprint_precision_weight: float = 0.25,
+    allowed_activity_mask: torch.Tensor | None = None,
 ) -> list[list[int]]:
     decoder = model.tree_decoder
     if not hasattr(decoder, "decode_beam_candidates"):
         decoded = decode_with_beam(
-            decoder, source, max_length=max_length, beam_size=beam_size
+            decoder,
+            source,
+            max_length=max_length,
+            beam_size=beam_size,
+            allowed_activity_mask=allowed_activity_mask,
         )
         return decoded.detach().cpu().tolist()
     candidate_rows = decoder.decode_beam_candidates(
@@ -896,6 +926,7 @@ def decode_trace_with_conformance_reranking(
         max_length=max_length,
         beam_size=beam_size,
         length_penalty=0.7,
+        allowed_activity_mask=allowed_activity_mask,
     )
     selected: list[list[int]] = []
     for sample, candidates in zip(samples, candidate_rows):

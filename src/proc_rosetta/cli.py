@@ -136,8 +136,25 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     train.add_argument("--stage-gate-interval", type=int, default=5)
-    train.add_argument("--gradient-diagnostics-interval", type=int, default=1)
+    train.add_argument(
+        "--gradient-diagnostics-interval",
+        type=int,
+        default=0,
+        help="epochs between expensive gradient diagnostics; <=0 disables them",
+    )
     train.add_argument("--seed", type=int, default=13)
+    train.add_argument("--loader-num-workers", type=int, default=0)
+    train.add_argument(
+        "--loader-pin-memory",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    train.add_argument(
+        "--loader-persistent-workers",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    train.add_argument("--loader-prefetch-factor", type=int, default=2)
     train.add_argument(
         "--device",
         default=default_device(),
@@ -344,7 +361,11 @@ def run_train(args: argparse.Namespace) -> int:
         latent_temperature=args.latent_temperature,
         training_stage=args.training_stage,
         stage_gate_interval=max(1, args.stage_gate_interval),
-        gradient_diagnostics_interval=max(1, args.gradient_diagnostics_interval),
+        gradient_diagnostics_interval=args.gradient_diagnostics_interval,
+        loader_num_workers=max(0, args.loader_num_workers),
+        loader_pin_memory=args.loader_pin_memory,
+        loader_persistent_workers=args.loader_persistent_workers,
+        loader_prefetch_factor=max(1, args.loader_prefetch_factor),
     )
     _, history = train_from_data_dir(
         data_dir=args.data_dir,

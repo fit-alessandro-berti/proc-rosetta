@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Sequence
 
-from proc_rosetta.pm4py_bridge import PetriGraph, simulate_traces, tree_to_petri_net
+from proc_rosetta.pm4py_bridge import (
+    PetriGraph,
+    prepare_tree_for_model,
+    simulate_traces,
+    tree_to_petri_net,
+)
 from proc_rosetta.tree import NodeKind, ProcessTreeNode
 
 
@@ -358,6 +363,7 @@ class ProcessSample:
     log_view_id: str | None = None
     representation_kind: str = "canonical_block_pm4py"
     equivalence_level: str = "sampled"
+    decoder_target_trees: dict[str, ProcessTreeNode] = field(default_factory=dict)
     metadata: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
@@ -375,6 +381,9 @@ class ProcessSample:
             "log_view_id": self.log_view_id,
             "representation_kind": self.representation_kind,
             "equivalence_level": self.equivalence_level,
+            "decoder_target_trees": {
+                name: tree.to_dict() for name, tree in self.decoder_target_trees.items()
+            },
             "metadata": self.metadata,
         }
 
@@ -414,8 +423,37 @@ class ProcessSample:
             log_view_id=None if data.get("log_view_id") is None else str(data["log_view_id"]),
             representation_kind=str(data.get("representation_kind", "canonical_block_pm4py")),
             equivalence_level=str(data.get("equivalence_level", "sampled")),
+            decoder_target_trees={
+                str(name): ProcessTreeNode.from_dict(tree)
+                for name, tree in dict(data.get("decoder_target_trees", {})).items()
+            },
             metadata=dict(data.get("metadata", {})),
         )
+
+
+def decoder_target_trees_for_sample(
+    tree: ProcessTreeNode,
+    traces: Sequence[Sequence[str]],
+    petri_graph: PetriGraph,
+) -> dict[str, ProcessTreeNode]:
+    """Build semantic folded targets legal for each source modality."""
+
+    from proc_rosetta.pm4py_bridge import fold_process_tree
+    from proc_rosetta.tree import sanitize_activity_labels
+
+    alphabets = {
+        "tree": set(tree.activity_labels()),
+        "trace": {label for trace in traces for label in trace},
+        "petri": {
+            label for label in petri_graph.transition_labels if label is not None
+        },
+    }
+    return {
+        name: fold_process_tree(
+            sanitize_activity_labels(tree, allowed_labels=alphabet).tree
+        )
+        for name, alphabet in alphabets.items()
+    }
 
 
 def generate_process_tree(config: SyntheticConfig, rng: random.Random | None = None) -> ProcessTreeNode:
@@ -539,27 +577,43 @@ def generate_sample(
 
     config = config or SyntheticConfig()
     rng = rng or random.Random()
-    tree = generate_process_tree(config, rng)
-    traces = tuple(tuple(trace) for trace in simulate_traces(tree, num_traces=config.traces_per_sample))
+    raw_tree = generate_process_tree(config, rng)
+    normalized = prepare_tree_for_model(raw_tree, config.max_arity)
+    semantic_tree = normalized.semantic_tree
+    traces = tuple(
+        tuple(trace)
+        for trace in simulate_traces(
+            semantic_tree,
+            num_traces=config.traces_per_sample,
+        )
+    )
     # Store every modality under the labeling external logs receive at
     # inference: A0, A1, ... in first-seen trace order.
     mapping = first_seen_activity_mapping(
         traces,
-        tuple(dict.fromkeys(tree.activity_labels())),
+        tuple(dict.fromkeys(semantic_tree.activity_labels())),
         config.max_activities,
     )
-    tree = tree.relabel(mapping).normalize(
-        config.max_arity,
-        canonicalize_activity_labels=False,
-    )
+    semantic_tree = semantic_tree.relabel(mapping)
     traces = tuple(tuple(mapping.get(label, label) for label in trace) for trace in traces)
-    petri = tree_to_petri_net(tree)
+    petri = tree_to_petri_net(semantic_tree)
+    decoder_targets = decoder_target_trees_for_sample(semantic_tree, traces, petri.graph)
     return ProcessSample(
-        tree=tree,
+        tree=semantic_tree,
         traces=traces,
         petri_graph=petri.graph,
         equivalence_id=equivalence_id or f"synthetic-{rng.getrandbits(64):016x}",
-        metadata={"label_scheme": "first_seen_per_log_view"},
+        decoder_target_trees=decoder_targets,
+        metadata={
+            "label_scheme": "first_seen_per_log_view",
+            "normalization_version": normalized.normalization_version,
+            "fold_changed": normalized.fold_changed,
+            "semantic_tree": semantic_tree.to_dict(),
+            "model_tree": semantic_tree.normalize(
+                config.max_arity,
+                canonicalize_activity_labels=False,
+            ).to_dict(),
+        },
     )
 
 

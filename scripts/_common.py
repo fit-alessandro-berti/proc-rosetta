@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -19,11 +20,16 @@ sys._pm4py_welcome_shown = True
 
 from proc_rosetta.pm4py_bridge import (  # noqa: E402
     event_log_to_traces,
+    fold_process_tree,
+    fold_pm4py_tree,
     from_pm4py_tree,
     petri_net_to_graph,
     to_pm4py_tree,
     tree_to_petri_net,
 )
+from proc_rosetta.artifact_io import ArtifactModality  # noqa: E402
+from proc_rosetta.inference import build_decode_result  # noqa: E402
+from proc_rosetta.models import DecodeConstraints  # noqa: E402
 from proc_rosetta.devices import default_device, resolve_device  # noqa: E402
 from proc_rosetta.training import load_checkpoint  # noqa: E402
 from proc_rosetta.tree import ProcessTreeNode  # noqa: E402
@@ -68,7 +74,7 @@ def import_pm4py() -> Any:
 def read_ptml_tree(path: str | Path) -> ProcessTreeNode:
     path = require_suffix(path, ".ptml")
     pm4py = import_pm4py()
-    return from_pm4py_tree(pm4py.read_ptml(str(path)))
+    return from_pm4py_tree(fold_pm4py_tree(pm4py.read_ptml(str(path))))
 
 
 def read_pnml_graph(
@@ -105,7 +111,7 @@ def save_ptml_tree(tree: ProcessTreeNode, output_path: str | Path) -> None:
     output_path = require_suffix(output_path, ".ptml")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pm4py = import_pm4py()
-    pm4py.write_ptml(to_pm4py_tree(tree), str(output_path))
+    pm4py.write_ptml(to_pm4py_tree(fold_process_tree(tree)), str(output_path))
 
 
 def activity_mapping_from_tree(tree: ProcessTreeNode, max_activities: int) -> dict[str, str]:
@@ -134,6 +140,29 @@ def activity_mapping_from_labels(labels: Iterable[Any], max_activities: int) -> 
                 )
             mapping[label] = f"A{len(mapping)}"
     return mapping
+
+
+def allowed_activity_slots(
+    mapping: dict[str, str],
+    max_activities: int,
+) -> list[bool]:
+    canonical = set(mapping.values())
+    return [f"A{index}" in canonical for index in range(max_activities)]
+
+
+def add_decode_constraint_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--avoid-duplicate-transitions",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="mask a visible activity label after its first decoded occurrence (default: enabled)",
+    )
+    parser.add_argument(
+        "--constrain-source-activities",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="restrict decoded visible activities to the source alphabet (default: enabled)",
+    )
 
 
 def canonicalize_traces(
@@ -197,6 +226,7 @@ def traces_for_model(
 def petri_graph_for_model(
     graph: Any,
     max_petri_nodes: int,
+    activity_tokenizer: Any | None = None,
 ) -> dict[str, torch.Tensor]:
     if max_petri_nodes <= 0:
         raise ValueError("--max-petri-nodes must be positive")
@@ -209,19 +239,33 @@ def petri_graph_for_model(
     node_types = torch.zeros((1, node_count), dtype=torch.long)
     node_mask = torch.ones((1, node_count), dtype=torch.bool)
     markings = torch.zeros((1, node_count, 2), dtype=torch.float32)
-    adjacency = torch.zeros((1, 2, node_count, node_count), dtype=torch.float32)
+    transition_label_ids = torch.zeros((1, node_count), dtype=torch.long)
+    edge_sources: list[int] = []
+    edge_targets: list[int] = []
+    edge_types: list[int] = []
 
     node_types[0, :node_count] = torch.tensor(graph.node_types, dtype=torch.long)
     markings[0, :node_count, 0] = torch.tensor(graph.initial_marking, dtype=torch.float32)
     markings[0, :node_count, 1] = torch.tensor(graph.final_marking, dtype=torch.float32)
     for src, dst, edge_type in graph.edges:
-        adjacency[0, edge_type, src, dst] = 1.0
+        edge_sources.append(src)
+        edge_targets.append(dst)
+        edge_types.append(edge_type)
+    if activity_tokenizer is not None:
+        for index, label in enumerate(graph.transition_labels):
+            if label is not None:
+                transition_label_ids[0, index] = activity_tokenizer.token_to_id.get(
+                    label,
+                    activity_tokenizer.unk_id,
+                )
 
     return {
         "node_types": node_types,
         "node_mask": node_mask,
         "markings": markings,
-        "adjacency": adjacency,
+        "transition_label_ids": transition_label_ids,
+        "edge_index": torch.tensor([edge_sources, edge_targets], dtype=torch.long),
+        "edge_types": torch.tensor(edge_types, dtype=torch.long),
     }
 
 
@@ -264,7 +308,11 @@ def encode_petri_mu_logvar(
     device: torch.device,
     max_petri_nodes: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    encoded = petri_graph_for_model(graph, max_petri_nodes)
+    encoded = petri_graph_for_model(
+        graph,
+        max_petri_nodes,
+        activity_tokenizer=model.activity_tokenizer,
+    )
     dist = model.encode_petri(move_tensors_to_device(encoded, device))
     return dist.mu, dist.logvar
 
@@ -275,17 +323,47 @@ def decode_tree_from_latent(
     latent: torch.Tensor,
     max_decode_length: int,
     require_petri_convertible: bool = True,
+    canonical_mapping: dict[str, str] | None = None,
+    constrain_source_activities: bool = True,
+    avoid_duplicate_transitions: bool = True,
 ) -> tuple[ProcessTreeNode, list[int]]:
+    slots = (
+        allowed_activity_slots(canonical_mapping, model.tree_tokenizer.max_activities)
+        if canonical_mapping is not None
+        else None
+    )
     decoded = model.tree_decoder.decode_greedy(
         latent,
         max_length=max_decode_length,
         apply_grammar_mask=True,
+        constraints=DecodeConstraints(
+            allowed_activity_slots=(
+                None if slots is None else torch.tensor([slots], device=latent.device)
+            ),
+            constrain_to_source_activities=constrain_source_activities,
+            avoid_duplicate_activity_labels=avoid_duplicate_transitions,
+        ),
     )
     token_ids = [int(token_id) for token_id in decoded[0].detach().cpu().tolist()]
     if model.tree_tokenizer.eos_id not in token_ids:
         raise ValueError(f"decoder did not emit <eos> within {max_decode_length} tokens")
 
-    tree = model.tree_tokenizer.decode_tree(token_ids)
+    result = build_decode_result(
+        model,
+        latent,
+        source_artifact_ids=["command-line-source"],
+        source_modalities=[ArtifactModality.PROCESS_TREE],
+        latent_source="command_line_latent",
+        token_ids=token_ids,
+        canonical_mapping=canonical_mapping,
+        allowed_activity_slots=slots,
+        constrain_to_source_activities=constrain_source_activities,
+        avoid_duplicate_activity_labels=avoid_duplicate_transitions,
+        max_length=max_decode_length,
+    )
+    if result.tree is None:
+        raise ValueError("; ".join(result.errors) or "decoder did not produce a process tree")
+    tree = result.tree
     if require_petri_convertible:
         tree_to_petri_net(tree)
     return tree, token_ids

@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 
 from _common import (
+    add_decode_constraint_arguments,
     activity_mapping_from_traces,
     canonicalize_traces,
     default_device,
@@ -38,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-traces", type=int, default=128)
     parser.add_argument("--max-trace-length", type=int, default=128)
     parser.add_argument("--max-decode-length", type=int, default=512)
+    add_decode_constraint_arguments(parser)
     parser.add_argument(
         "--keep-canonical-labels",
         action="store_true",
@@ -68,6 +70,9 @@ def main(argv: list[str] | None = None) -> int:
         mu,
         max_decode_length=args.max_decode_length,
         require_petri_convertible=True,
+        canonical_mapping=mapping,
+        constrain_source_activities=args.constrain_source_activities,
+        avoid_duplicate_transitions=args.avoid_duplicate_transitions,
     )
     if not args.keep_canonical_labels:
         tree = relabel_decoded_tree(tree, mapping)

@@ -84,14 +84,7 @@ def process_tree_ptml(result: DecodeResult, *, restore_labels: bool = True) -> b
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "decoded.ptml"
         pm4py.write_ptml(to_pm4py_tree(tree), str(path))
-        content = path.read_bytes()
-        if any(modality.value == "petri_net" for modality in result.source_modalities):
-            content = _annotate_xml(
-                content,
-                "PNML-derived ProcRosetta decode. Source transition labels were not used by the "
-                "external encoder; canonical decoded labels do not preserve source semantics.",
-            )
-        return content
+        return path.read_bytes()
 
 
 def process_tree_report(result: DecodeResult) -> bytes:
@@ -99,8 +92,11 @@ def process_tree_report(result: DecodeResult) -> bytes:
         "source_artifact_ids": result.source_artifact_ids,
         "source_modalities": [item.value for item in result.source_modalities],
         "latent_source": result.latent_source,
-        "token_ids": result.token_ids,
-        "token_names": result.token_names,
+        "raw_token_ids": result.raw_token_ids,
+        "raw_token_names": result.raw_token_names,
+        "raw_tree": None if result.raw_tree is None else result.raw_tree.to_dict(),
+        "model_normalized_token_ids": result.model_normalized_token_ids,
+        "model_normalized_token_names": result.model_normalized_token_names,
         "canonical_tree": None if result.tree is None else result.tree.to_dict(),
         "restored_tree": None if result.restored_tree is None else result.restored_tree.to_dict(),
         "human_readable_tree": None
@@ -112,6 +108,14 @@ def process_tree_report(result: DecodeResult) -> bytes:
         "warnings": result.warnings,
         "errors": result.errors,
         "decode_seconds": result.decode_seconds,
+        "normalization_diagnostics": {
+            "out_of_source_activities_replaced": result.out_of_source_activities_replaced,
+            "duplicate_activities_replaced": result.duplicate_activities_replaced,
+            "source_alphabet_respected": result.source_alphabet_respected,
+            "duplicate_free": result.duplicate_free,
+            "output_fold_changed": result.output_fold_changed,
+            "output_fold_idempotent": result.output_fold_idempotent,
+        },
         "decoder_configuration": result.decoder_configuration,
     }
     return json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")

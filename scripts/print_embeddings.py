@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 
 from _common import (
+    activity_mapping_from_labels,
     activity_mapping_from_traces,
     activity_mapping_from_tree,
     canonicalize_traces,
@@ -87,6 +88,11 @@ def main(argv: list[str] | None = None) -> int:
         metadata["used_trace_count"] = min(len(traces), args.max_traces)
     else:
         graph = read_pnml_graph(input_path, auto_guess_final_marking=args.auto_guess_final_marking)
+        mapping = activity_mapping_from_labels(
+            (label for label in graph.transition_labels if label is not None),
+            model.activity_tokenizer.max_activities,
+        )
+        graph = graph.relabel(mapping)
         mu, logvar = encode_petri_mu_logvar(
             model,
             graph,
@@ -97,11 +103,11 @@ def main(argv: list[str] | None = None) -> int:
         source = "proc_rosetta_petri_mu"
         metadata["petri_nodes"] = graph.num_nodes
         metadata["petri_edges"] = graph.num_edges
-        metadata["visible_transition_labels_used_by_encoder"] = False
-        metadata["warning"] = (
-            "The external PNML encoder path omits visible transition-label IDs; "
-            "the embedding is structure- and marking-based."
-        )
+        metadata["visible_transition_labels_used_by_encoder"] = True
+        metadata["activity_mapping"] = mapping
+
+    metadata["normalization_version"] = "pm4py-fold-v1"
+    metadata["source_activity_alphabet"] = list(mapping)
 
     output: dict[str, object] = {
         "modality": modality,

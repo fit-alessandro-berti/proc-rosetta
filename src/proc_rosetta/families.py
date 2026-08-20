@@ -9,6 +9,7 @@ from typing import Any, Callable, Sequence
 
 from proc_rosetta.pm4py_bridge import (
     PetriGraph,
+    fold_process_tree,
     petri_net_to_graph,
     simulate_traces,
     tree_to_petri_net,
@@ -291,15 +292,9 @@ def generate_behavior_family(
             min_nodes=int(getattr(config, "motif_context_min_nodes", 4)),
             max_nodes=int(getattr(config, "motif_context_max_nodes", 12)),
         )
-    tree = tree.normalize(
-        int(getattr(config, "max_arity", 3)),
-        canonicalize_activity_labels=False,
-    )
+    tree = fold_process_tree(tree)
     family_label_mapping = tree.activity_label_mapping()
-    tree = tree.relabel(family_label_mapping).normalize(
-        int(getattr(config, "max_arity", 3)),
-        canonicalize_activity_labels=False,
-    )
+    tree = tree.relabel(family_label_mapping)
     runtime_variants = tuple(
         _relabel_runtime_variant(variant, family_label_mapping)
         for variant in runtime_variants
@@ -601,7 +596,11 @@ def flatten_behavior_family(
     max_activities: int | None = None,
 ) -> list[Any]:
     # Import lazily to avoid the synthetic -> families -> synthetic cycle.
-    from proc_rosetta.synthetic import DEFAULT_MAX_ACTIVITIES, ProcessSample
+    from proc_rosetta.synthetic import (
+        DEFAULT_MAX_ACTIVITIES,
+        ProcessSample,
+        decoder_target_trees_for_sample,
+    )
 
     if max_activities is None:
         max_activities = DEFAULT_MAX_ACTIVITIES
@@ -625,6 +624,12 @@ def flatten_behavior_family(
         )
         view_edits = _relabel_trace_edits(log_view.trace_edits, mapping)
         for representation_slot, variant in enumerate(family.model_variants):
+            view_graph = variant.petri_graph.relabel(mapping)
+            decoder_targets = decoder_target_trees_for_sample(
+                view_tree,
+                view_traces,
+                view_graph,
+            )
             if family.exact_behavior_id is None:
                 partial_order_id = None
                 partial_order_kind = None
@@ -645,7 +650,7 @@ def flatten_behavior_family(
                 ProcessSample(
                     tree=view_tree,
                     traces=view_traces,
-                    petri_graph=variant.petri_graph.relabel(mapping),
+                    petri_graph=view_graph,
                     equivalence_id=family.behavior_id,
                     exact_behavior_id=family.exact_behavior_id,
                     behavior_signature=row_signature,
@@ -656,6 +661,7 @@ def flatten_behavior_family(
                     log_view_id=log_view.log_view_id,
                     representation_kind=variant.representation_kind,
                     equivalence_level=variant.equivalence_level,
+                    decoder_target_trees=decoder_targets,
                     metadata={
                         **family.metadata,
                         "representation_slot": representation_slot,

@@ -73,7 +73,11 @@ class TrainConfig:
     latent_temperature: float = 0.2
     training_stage: str = "full"
     stage_gate_interval: int = 5
-    gradient_diagnostics_interval: int = 1
+    gradient_diagnostics_interval: int = 0
+    loader_num_workers: int = 0
+    loader_pin_memory: bool = True
+    loader_persistent_workers: bool = True
+    loader_prefetch_factor: int = 2
 
 
 def loss_weights_from_config(config: TrainConfig) -> LossWeights:
@@ -133,10 +137,15 @@ def move_batch_to_device(batch: dict[str, object], device: torch.device) -> dict
     moved: dict[str, object] = {}
     for key, value in batch.items():
         if isinstance(value, torch.Tensor):
-            moved[key] = value.to(device)
+            moved[key] = value.to(device, non_blocking=True)
         elif isinstance(value, dict):
             moved[key] = {
-                child_key: child_value.to(device) if isinstance(child_value, torch.Tensor) else child_value
+                child_key: (
+                    child_value
+                    if key == "traces" and child_key == "lengths"
+                    else child_value.to(device, non_blocking=True)
+                )
+                if isinstance(child_value, torch.Tensor) else child_value
                 for child_key, child_value in value.items()
             }
         else:
@@ -155,7 +164,7 @@ def train_epoch(
     train_config: TrainConfig | None = None,
 ) -> dict[str, float]:
     model.train()
-    totals: dict[str, float] = {}
+    totals: dict[str, float | torch.Tensor] = {}
     batches = 0
     iterator = progress_dataloader(
         dataloader,
@@ -183,7 +192,7 @@ def train_epoch(
         assert positive_mask is None or isinstance(positive_mask, torch.Tensor)
         losses = multimodal_tree_loss(
             outputs,
-            tree_tokens,
+            batch.get("decoder_targets", tree_tokens),
             model.tree_tokenizer.pad_id,
             weights=weights,
             positive_mask=positive_mask,
@@ -194,7 +203,10 @@ def train_epoch(
         run_gradient_diagnostics = (
             train_config is None
             or epoch is None
-            or (epoch - 1) % max(train_config.gradient_diagnostics_interval, 1) == 0
+            or (
+                train_config.gradient_diagnostics_interval > 0
+                and (epoch - 1) % train_config.gradient_diagnostics_interval == 0
+            )
         )
         if batches == 0 and run_gradient_diagnostics:
             gradient_metrics = gradient_norm_diagnostics(
@@ -211,13 +223,19 @@ def train_epoch(
         optimizer.step()
 
         for name, value in losses.items():
-            totals[name] = totals.get(name, 0.0) + float(value.detach().cpu())
+            totals[name] = totals.get(name, 0.0) + value.detach()
         batches += 1
         if show_progress and hasattr(iterator, "set_postfix"):
             iterator.set_postfix(loss=f"{float(losses['loss'].detach().cpu()):.4f}")
     return {
         name: (
-            value
+            float(value.detach().cpu())
+            if isinstance(value, torch.Tensor) and (
+                "gradient_norm" in name or "gradient_ratio" in name
+            )
+            else float(value.detach().cpu()) / max(batches, 1)
+            if isinstance(value, torch.Tensor)
+            else value
             if "gradient_norm" in name or "gradient_ratio" in name
             else value / max(batches, 1)
         )
@@ -298,7 +316,7 @@ def evaluate_epoch(
     source_ablation: bool = False,
 ) -> dict[str, float]:
     model.eval()
-    totals: dict[str, float] = {}
+    totals: dict[str, torch.Tensor] = {}
     batches = 0
     discovery_rows: list[dict[str, object]] = []
     embedding_rows: dict[str, list[torch.Tensor]] = defaultdict(list)
@@ -326,7 +344,7 @@ def evaluate_epoch(
         assert positive_mask is None or isinstance(positive_mask, torch.Tensor)
         losses = multimodal_tree_loss(
             outputs,
-            tree_tokens,
+            batch.get("decoder_targets", tree_tokens),
             model.tree_tokenizer.pad_id,
             weights=weights,
             positive_mask=positive_mask,
@@ -335,16 +353,24 @@ def evaluate_epoch(
             tokenizer=model.tree_tokenizer,
         )
         for name, value in losses.items():
-            totals[name] = totals.get(name, 0.0) + float(value.detach().cpu())
+            totals[name] = totals.get(name, torch.zeros_like(value.detach())) + value.detach()
         batches += 1
         if compute_discovery_metrics:
             dists = outputs["dists"]
             assert isinstance(dists, dict)
             trace_distribution = dists["trace"]
             maximum_length = min(512, max(2, tree_tokens.shape[1] * 2))
+            source_activity_masks = batch.get("source_activity_masks")
+            trace_allowed = (
+                source_activity_masks.get("trace")
+                if isinstance(source_activity_masks, dict)
+                else None
+            )
             decoded = model.tree_decoder.decode_greedy(
                 trace_distribution,
                 max_length=maximum_length,
+                allowed_activity_mask=trace_allowed,
+                avoid_duplicate_activity_labels=False,
             )
             shuffled_decoded: torch.Tensor | None = None
             zero_decoded: torch.Tensor | None = None
@@ -393,21 +419,70 @@ def evaluate_epoch(
                     ),
                 )
                 shuffled_decoded = model.tree_decoder.decode_greedy(
-                    shuffled_distribution, max_length=maximum_length
+                    shuffled_distribution,
+                    max_length=maximum_length,
+                    allowed_activity_mask=trace_allowed,
+                    avoid_duplicate_activity_labels=False,
                 )
                 zero_decoded = model.tree_decoder.decode_greedy(
-                    zero_distribution, max_length=maximum_length
+                    zero_distribution,
+                    max_length=maximum_length,
+                    allowed_activity_mask=trace_allowed,
+                    avoid_duplicate_activity_labels=False,
                 )
             samples = batch.get("samples")
             assert isinstance(samples, list)
             for row_index, (sample, target, prediction) in enumerate(
                 zip(samples, tree_tokens, decoded)
             ):
-                target_ids = _trim_token_ids(target.tolist(), model.tree_tokenizer)
+                trace_targets = batch.get("decoder_targets")
+                target_row = (
+                    trace_targets["trace"][row_index]
+                    if isinstance(trace_targets, dict)
+                    else target
+                )
+                target_ids = _trim_token_ids(target_row.tolist(), model.tree_tokenizer)
                 prediction_ids = _trim_token_ids(
                     prediction.detach().cpu().tolist(), model.tree_tokenizer
                 )
-                edit = _token_edit_distance(target_ids, prediction_ids)
+                raw_edit = _token_edit_distance(target_ids, prediction_ids)
+                row_allowed = (
+                    None
+                    if trace_allowed is None
+                    else trace_allowed[row_index].detach().cpu().tolist()
+                )
+                normalized_target_ids = _source_normalized_token_ids(
+                    target_ids,
+                    model.tree_tokenizer,
+                    row_allowed,
+                    avoid_duplicates=False,
+                ) or target_ids
+                normalized_prediction_ids = _source_normalized_token_ids(
+                    prediction_ids,
+                    model.tree_tokenizer,
+                    row_allowed,
+                    avoid_duplicates=False,
+                ) or prediction_ids
+                normalized_edit = _token_edit_distance(
+                    normalized_target_ids,
+                    normalized_prediction_ids,
+                )
+                deployment_target_ids = _source_normalized_token_ids(
+                    target_ids,
+                    model.tree_tokenizer,
+                    row_allowed,
+                    avoid_duplicates=True,
+                ) or target_ids
+                deployment_prediction_ids = _source_normalized_token_ids(
+                    prediction_ids,
+                    model.tree_tokenizer,
+                    row_allowed,
+                    avoid_duplicates=True,
+                ) or prediction_ids
+                deployment_edit = _token_edit_distance(
+                    deployment_target_ids,
+                    deployment_prediction_ids,
+                )
                 motif = str(sample.metadata.get("motif", "unknown"))
                 target_names = [model.tree_tokenizer.tokens[value] for value in target_ids]
                 prediction_names = [
@@ -433,9 +508,25 @@ def evaluate_epoch(
                         "motif": motif,
                         "ordinary": motif == "ordinary_tree",
                         "loop": _tree_has_loop(sample.tree),
-                        "exact": prediction_ids == target_ids,
-                        "normalized_edit": edit
+                        "raw_exact": prediction_ids == target_ids,
+                        "raw_normalized_edit": raw_edit
                         / max(len(target_ids), len(prediction_ids), 1),
+                        "exact": normalized_prediction_ids == normalized_target_ids,
+                        "normalized_edit": normalized_edit
+                        / max(
+                            len(normalized_target_ids),
+                            len(normalized_prediction_ids),
+                            1,
+                        ),
+                        "deployment_exact": (
+                            deployment_prediction_ids == deployment_target_ids
+                        ),
+                        "deployment_normalized_edit": deployment_edit
+                        / max(
+                            len(deployment_target_ids),
+                            len(deployment_prediction_ids),
+                            1,
+                        ),
                         "target": target_ids,
                         "prediction": prediction_ids,
                         "token_accuracy": token_accuracy,
@@ -496,7 +587,10 @@ def evaluate_epoch(
                 signature_rows.append(signatures.detach().cpu())
         if show_progress and hasattr(iterator, "set_postfix"):
             iterator.set_postfix(loss=f"{float(losses['loss'].detach().cpu()):.4f}")
-    metrics = {name: value / max(batches, 1) for name, value in totals.items()}
+    metrics = {
+        name: float(value.detach().cpu()) / max(batches, 1)
+        for name, value in totals.items()
+    }
     if compute_discovery_metrics:
         discovery_metrics = _summarize_discovery_metrics(
             discovery_rows,
@@ -569,6 +663,37 @@ def _token_edit_distance(left: list[int], right: list[int]) -> int:
     return previous[-1]
 
 
+def _source_normalized_token_ids(
+    token_ids: list[int],
+    tokenizer: TreeTokenizer,
+    allowed_slots: list[bool] | None,
+    *,
+    avoid_duplicates: bool,
+) -> list[int] | None:
+    from proc_rosetta.pm4py_bridge import fold_process_tree
+    from proc_rosetta.tree import sanitize_activity_labels
+
+    try:
+        tree = tokenizer.decode_tree(token_ids)
+        allowed = (
+            None
+            if allowed_slots is None
+            else {
+                f"A{index}"
+                for index, value in enumerate(allowed_slots)
+                if value
+            }
+        )
+        tree = sanitize_activity_labels(
+            tree,
+            allowed_labels=allowed,
+            avoid_duplicates=avoid_duplicates,
+        ).tree
+        return tokenizer.encode_tree(fold_process_tree(tree), canonicalize=False)
+    except (TypeError, ValueError):
+        return None
+
+
 def _tree_has_loop(tree) -> bool:
     from proc_rosetta.tree import NodeKind
 
@@ -610,6 +735,26 @@ def _summarize_discovery_metrics(
         if rows
         else 1.0
     )
+    metrics["raw_token_exact"] = (
+        sum(bool(row["raw_exact"]) for row in rows) / len(rows) if rows else 0.0
+    )
+    metrics["raw_token_edit"] = (
+        float(np.mean([float(row["raw_normalized_edit"]) for row in rows]))
+        if rows
+        else 1.0
+    )
+    metrics["source_normalized_tree_exact"] = metrics["trace_canonical_exact"]
+    metrics["source_normalized_tree_edit"] = metrics["trace_normalized_tree_edit"]
+    metrics["deployment_duplicate_free_tree_exact"] = (
+        sum(bool(row["deployment_exact"]) for row in rows) / len(rows)
+        if rows
+        else 0.0
+    )
+    metrics["deployment_duplicate_free_tree_edit"] = (
+        float(np.mean([float(row["deployment_normalized_edit"]) for row in rows]))
+        if rows
+        else 1.0
+    )
     for category in ("operator", "arity", "activity_copy"):
         correct = sum(
             int(row["token_accuracy"][category][0]) for row in rows
@@ -647,8 +792,8 @@ def _summarize_discovery_metrics(
                 if behavior_id is None:
                     continue
                 valid += 1
-                order = similarity[index].argsort(descending=True)
-                candidate_ids = [exact_ids[int(position)] for position in order[:5]]
+                top = similarity[index].topk(min(5, similarity.shape[1])).indices
+                candidate_ids = [exact_ids[int(position)] for position in top]
                 hit1 += int(candidate_ids[0] == behavior_id)
                 hit5 += int(behavior_id in candidate_ids)
             if valid:
@@ -776,6 +921,10 @@ def build_synthetic_dataloader(
     seed: int,
     batch_config: BatchConfig | None = None,
     activity_remap_probability: float = 0.0,
+    num_workers: int = 0,
+    pin_memory: bool = False,
+    persistent_workers: bool = False,
+    prefetch_factor: int = 2,
 ) -> DataLoader:
     dataset = SyntheticProcessDataset(samples, config=synthetic_config, seed=seed)
     collator = ProcessBatchCollator(
@@ -785,7 +934,19 @@ def build_synthetic_dataloader(
         activity_remap_probability=activity_remap_probability,
         seed=seed,
     )
-    return DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collator)
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=collator,
+        **_loader_worker_options(
+            collator,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            persistent_workers=persistent_workers,
+            prefetch_factor=prefetch_factor,
+        ),
+    )
 
 
 def build_jsonl_dataloader(
@@ -800,6 +961,10 @@ def build_jsonl_dataloader(
     views_per_family: int = 2,
     seed: int = 13,
     activity_remap_probability: float = 0.0,
+    num_workers: int = 0,
+    pin_memory: bool = False,
+    persistent_workers: bool = False,
+    prefetch_factor: int = 2,
 ) -> DataLoader:
     dataset = JsonlProcessDataset(sample_path, show_progress=show_progress)
     collator = ProcessBatchCollator(
@@ -817,8 +982,59 @@ def build_jsonl_dataloader(
             shuffle=shuffle,
             seed=seed,
         )
-        return DataLoader(dataset, batch_sampler=batch_sampler, collate_fn=collator)
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collator)
+        return DataLoader(
+            dataset,
+            batch_sampler=batch_sampler,
+            collate_fn=collator,
+            **_loader_worker_options(
+                collator,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                persistent_workers=persistent_workers,
+                prefetch_factor=prefetch_factor,
+            ),
+        )
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        collate_fn=collator,
+        **_loader_worker_options(
+            collator,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            persistent_workers=persistent_workers,
+            prefetch_factor=prefetch_factor,
+        ),
+    )
+
+
+def _seed_collator_worker(worker_id: int, collator: ProcessBatchCollator) -> None:
+    collator.rng.seed(torch.initial_seed() + worker_id)
+
+
+def _loader_worker_options(
+    collator: ProcessBatchCollator,
+    *,
+    num_workers: int,
+    pin_memory: bool,
+    persistent_workers: bool,
+    prefetch_factor: int,
+) -> dict[str, object]:
+    from functools import partial
+
+    workers = max(0, int(num_workers))
+    options: dict[str, object] = {
+        "num_workers": workers,
+        "pin_memory": bool(pin_memory and torch.cuda.is_available()),
+    }
+    if workers:
+        options.update(
+            persistent_workers=bool(persistent_workers),
+            prefetch_factor=max(1, int(prefetch_factor)),
+            worker_init_fn=partial(_seed_collator_worker, collator=collator),
+        )
+    return options
 
 
 class BehaviorFamilyBatchSampler(Sampler[list[int]]):
@@ -842,6 +1058,19 @@ class BehaviorFamilyBatchSampler(Sampler[list[int]]):
         for index, sample in enumerate(samples):
             grouped[str(sample.equivalence_id)].append(index)
         self.groups = list(grouped.values())
+        self.sample_costs = [
+            (
+                len(sample.tree.to_prefix_tokens())
+                + 0.5 * max((len(trace) for trace in sample.traces), default=0)
+                + 0.5 * sample.petri_graph.num_nodes
+                if all(
+                    hasattr(sample, name)
+                    for name in ("tree", "traces", "petri_graph")
+                )
+                else 1.0
+            )
+            for sample in samples
+        ]
         self.sample_count = len(samples)
 
     def __iter__(self):
@@ -866,11 +1095,16 @@ class BehaviorFamilyBatchSampler(Sampler[list[int]]):
         # 32 distinct behaviors before any family contributes a second chunk.
         chunks: list[list[int]] = []
         for round_index in range(max((len(value) for value in per_group_chunks), default=0)):
-            chunks.extend(
+            round_chunks = [
                 value[round_index]
                 for value in per_group_chunks
                 if round_index < len(value)
+            ]
+            round_chunks.sort(
+                key=lambda chunk: max(self.sample_costs[index] for index in chunk),
+                reverse=True,
             )
+            chunks.extend(round_chunks)
         batch: list[int] = []
         for chunk in chunks:
             if batch and len(batch) + len(chunk) > self.batch_size:
@@ -932,6 +1166,10 @@ def train_synthetic(
         batch_size=train_config.batch_size,
         seed=train_config.seed,
         activity_remap_probability=train_config.activity_remap_probability,
+        num_workers=train_config.loader_num_workers,
+        pin_memory=train_config.loader_pin_memory,
+        persistent_workers=train_config.loader_persistent_workers,
+        prefetch_factor=train_config.loader_prefetch_factor,
     )
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -967,10 +1205,10 @@ def train_from_data_dir(
     device = resolve_device(train_config.device)
     debug(f"Loading metadata from {Path(data_dir) / 'metadata.json'}", enabled=show_progress)
     metadata = load_data_metadata(data_dir)
-    if int(metadata.get("version", 0)) < 4:
+    if int(metadata.get("version", 0)) < 5:
         raise ValueError(
-            "data uses the legacy split/index equivalence schema; recreate it with "
-            "sample.py before training the deterministic semantic model"
+            "data uses a legacy schema without semantic folding and per-modality "
+            "decoder targets; recreate it with sample.py before training"
         )
     if not bool(metadata.get("exact_behavior_signatures_disjoint", False)):
         raise ValueError("data metadata does not certify signature-disjoint splits")
@@ -1014,6 +1252,10 @@ def train_from_data_dir(
         views_per_family=train_config.views_per_family,
         seed=train_config.seed,
         activity_remap_probability=train_config.activity_remap_probability,
+        num_workers=train_config.loader_num_workers,
+        pin_memory=train_config.loader_pin_memory,
+        persistent_workers=train_config.loader_persistent_workers,
+        prefetch_factor=train_config.loader_prefetch_factor,
     )
     debug("Loading validation split", enabled=show_progress)
     validation_loader = build_jsonl_dataloader(
@@ -1023,6 +1265,10 @@ def train_from_data_dir(
         batch_size=train_config.batch_size,
         shuffle=False,
         show_progress=show_progress,
+        num_workers=train_config.loader_num_workers,
+        pin_memory=train_config.loader_pin_memory,
+        persistent_workers=train_config.loader_persistent_workers,
+        prefetch_factor=train_config.loader_prefetch_factor,
     )
     stage_training_loader = (
         build_jsonl_dataloader(
@@ -1032,6 +1278,10 @@ def train_from_data_dir(
             batch_size=train_config.batch_size,
             shuffle=False,
             show_progress=False,
+            num_workers=train_config.loader_num_workers,
+            pin_memory=train_config.loader_pin_memory,
+            persistent_workers=train_config.loader_persistent_workers,
+            prefetch_factor=train_config.loader_prefetch_factor,
         )
         if train_config.training_stage == "a"
         else None
@@ -1558,7 +1808,7 @@ def save_checkpoint(
     checkpoint_path = Path(checkpoint_path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "version": 4,
+        "version": 5,
         "epoch": epoch,
         "model_state_dict": model.state_dict(),
         "train_config": asdict(train_config),

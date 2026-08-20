@@ -21,8 +21,11 @@ from proc_rosetta.pm4py_bridge import (
     PetriGraph,
     PetriNetBundle,
     event_log_to_traces,
+    fold_pm4py_tree,
     from_pm4py_tree,
     petri_net_to_graph,
+    pm4py_tree_prefix_length,
+    pm4py_tree_size,
 )
 from proc_rosetta.tree import NodeKind, ProcessTreeNode
 
@@ -201,10 +204,25 @@ def _parse_path(
         return ParsedArtifact(**base, source_metadata=metadata, traces=tuple(traces), warnings=warnings)
 
     if modality is ArtifactModality.PROCESS_TREE:
-        tree = from_pm4py_tree(pm4py.read_ptml(str(path)))
+        source_pm_tree = pm4py.read_ptml(str(path))
+        size_before = pm4py_tree_size(source_pm_tree)
+        prefix_before = pm4py_tree_prefix_length(source_pm_tree)
+        source_syntax = str(source_pm_tree)
+        folded_pm_tree = fold_pm4py_tree(source_pm_tree)
+        tree = from_pm4py_tree(folded_pm_tree)
+        metadata = process_tree_statistics(tree)
+        metadata.update(
+            source_tree_size_before_fold=size_before,
+            source_tree_size_after_fold=tree.size(),
+            source_prefix_length_before_fold=prefix_before,
+            source_prefix_length_after_fold=len(tree.to_prefix_tokens()) + 2,
+            fold_changed=source_syntax != str(folded_pm_tree),
+            fold_version="pm4py-fold-v1",
+            normalization_version="pm4py-fold-v1",
+        )
         return ParsedArtifact(
             **base,
-            source_metadata=process_tree_statistics(tree),
+            source_metadata=metadata,
             tree=tree,
         )
 
@@ -220,16 +238,10 @@ def _parse_path(
         initial_marking_loaded=bool(initial),
         final_marking_loaded=bool(final),
     )
-    warning = (
-        "The current external Petri-net encoding path does not pass visible transition labels "
-        "to the model. PNML embeddings are structure- and marking-based; decoded canonical "
-        "labels do not preserve source transition semantics."
-    )
     return ParsedArtifact(
         **base,
         source_metadata=metadata,
         petri=bundle,
-        warnings=[warning],
     )
 
 
@@ -436,7 +448,7 @@ def prepare_artifact_for_model(
         )
 
     assert parsed.graph is not None
-    graph = parsed.graph
+    graph = parsed.graph.relabel(mapping)
     if graph.num_nodes > settings.max_petri_nodes:
         errors.append(
             f"Petri net has {graph.num_nodes} nodes, exceeding the configured encoder limit "
@@ -444,7 +456,7 @@ def prepare_artifact_for_model(
         )
     return PreparedArtifact(
         parsed=parsed,
-        canonical_mapping={},
+        canonical_mapping=mapping,
         canonical_frequencies=dict(frequencies),
         model_input=graph if not errors else None,
         model_input_summary={
@@ -452,7 +464,7 @@ def prepare_artifact_for_model(
             "adjacency_edges": graph.num_edges,
             "initial_marking": list(graph.initial_marking),
             "final_marking": list(graph.final_marking),
-            "visible_labels_used_by_encoder": False,
+            "visible_labels_used_by_encoder": True,
         },
         preprocessing_metadata={
             "maximum_petri_nodes": settings.max_petri_nodes,

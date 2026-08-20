@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 
 from _common import (
+    add_decode_constraint_arguments,
     activity_mapping_from_tree,
     default_device,
     decode_tree_from_latent,
@@ -33,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Torch device; defaults to cuda or mps when available, otherwise cpu.",
     )
     parser.add_argument("--max-decode-length", type=int, default=512)
+    add_decode_constraint_arguments(parser)
     parser.add_argument(
         "--keep-canonical-labels",
         action="store_true",
@@ -52,6 +54,9 @@ def main(argv: list[str] | None = None) -> int:
         mu,
         max_decode_length=args.max_decode_length,
         require_petri_convertible=True,
+        canonical_mapping=mapping,
+        constrain_source_activities=args.constrain_source_activities,
+        avoid_duplicate_transitions=args.avoid_duplicate_transitions,
     )
     if not args.keep_canonical_labels:
         decoded_tree = relabel_decoded_tree(decoded_tree, mapping)

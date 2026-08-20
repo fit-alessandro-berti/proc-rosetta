@@ -11,7 +11,6 @@ from proc_rosetta.artifact_io import (
     select_traces,
 )
 from proc_rosetta.inference import (
-    PETRI_LABEL_WARNING,
     build_decode_result,
     decode_latent_iter,
     encode_artifact,
@@ -88,8 +87,8 @@ def test_all_external_modalities_parse_prepare_and_encode():
         assert len(encoded.logvar) == checkpoint.metadata.latent_dimension
         assert not encoded.errors
         if modality is ArtifactModality.PETRI_NET:
-            assert prepared.model_input_summary["visible_labels_used_by_encoder"] is False
-            assert any("does not use visible transition labels" in warning for warning in encoded.warnings)
+            assert prepared.model_input_summary["visible_labels_used_by_encoder"] is True
+            assert prepared.canonical_mapping
 
 
 def test_progressive_decode_and_exports_keep_validation_stages_separate():
@@ -115,6 +114,9 @@ def test_progressive_decode_and_exports_keep_validation_stages_separate():
         "petri_convertible": True,
         "label_restoration_complete": True,
         "length_limit_reached": False,
+        "source_alphabet_respected": True,
+        "duplicate_free": True,
+        "output_fold_idempotent": True,
     }
     ptml = process_tree_ptml(result)
     pnml = petri_net_pnml(result)
@@ -135,7 +137,7 @@ def test_progressive_decode_and_exports_keep_validation_stages_separate():
     assert all(step.valid_next_tokens for step in steps)
 
 
-def test_pnml_decode_never_restores_source_labels():
+def test_pnml_decode_restores_canonicalized_source_labels():
     checkpoint = studio_checkpoint()
     tokenizer = checkpoint.model.tree_tokenizer
     result = build_decode_result(
@@ -148,9 +150,9 @@ def test_pnml_decode_never_restores_source_labels():
         canonical_mapping={"Misleading source label": "A0"},
     )
 
-    assert result.restored_label_mapping == {}
-    assert result.restored_tree == result.tree
-    assert PETRI_LABEL_WARNING in result.warnings
+    assert result.restored_label_mapping == {"A0": "Misleading source label"}
+    assert result.restored_tree != result.tree
+    assert str(result.restored_tree) == "Misleading source label"
 
 
 def test_trusted_checkpoint_loader_rejects_paths_outside_root(tmp_path):

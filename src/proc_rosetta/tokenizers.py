@@ -185,6 +185,116 @@ class TreeTokenizer:
         return len(token) > 1 and token[0] == "A" and token[1:].isdigit()
 
     def valid_next_token_masks(self, prefixes: torch.Tensor) -> torch.Tensor:
+        """Compute every prefix mask with one vectorized recurrence over time."""
+
+        masks = torch.zeros(
+            (*prefixes.shape, self.vocab_size),
+            dtype=torch.bool,
+            device=prefixes.device,
+        )
+        flat_prefixes = prefixes.reshape(-1, prefixes.shape[-1])
+        flat_masks = masks.reshape(-1, prefixes.shape[-1], self.vocab_size)
+        batch = flat_prefixes.shape[0]
+        started = torch.zeros(batch, dtype=torch.bool, device=prefixes.device)
+        invalid = torch.zeros_like(started)
+        ended = torch.zeros_like(started)
+        open_nodes = torch.zeros(batch, dtype=torch.long, device=prefixes.device)
+        # 0 = none, 1 = ordinary associative operator, 2 = loop.
+        pending = torch.zeros(batch, dtype=torch.long, device=prefixes.device)
+        activity_ids = torch.tensor(
+            [self.token_to_id[token] for token in self.activity_tokens],
+            device=prefixes.device,
+        )
+        operator_ids = torch.tensor(
+            [self.token_to_id[token] for token in self.operator_tokens],
+            device=prefixes.device,
+        )
+        loop_id = self.token_to_id["LOOP"]
+
+        for position in range(prefixes.shape[-1]):
+            token = flat_prefixes[:, position]
+            non_padding = token.ne(self.pad_id)
+            active = non_padding & ~invalid
+
+            invalid |= active & ended
+            active &= ~ended & ~invalid
+
+            was_started = started.clone()
+            starting = active & ~was_started
+            invalid |= starting & token.ne(self.bos_id)
+            valid_start = starting & token.eq(self.bos_id)
+            started |= valid_start
+            open_nodes = torch.where(valid_start, torch.ones_like(open_nodes), open_nodes)
+
+            consuming = active & was_started & ~invalid
+            awaiting_arity = consuming & pending.ne(0)
+            arity = torch.zeros_like(open_nodes)
+            is_arity = torch.zeros_like(started)
+            for value in range(2, self.max_arity + 1):
+                matches = token.eq(self.token_to_id[f"ARITY_{value}"])
+                arity = torch.where(matches, torch.full_like(arity, value), arity)
+                is_arity |= matches
+            valid_arity = awaiting_arity & is_arity
+            valid_arity &= (pending.ne(2) | arity.eq(2) | arity.eq(3))
+            invalid |= awaiting_arity & ~valid_arity
+            open_nodes = torch.where(valid_arity, open_nodes + arity, open_nodes)
+            pending = torch.where(valid_arity, torch.zeros_like(pending), pending)
+
+            consuming_node = consuming & ~awaiting_arity & ~invalid
+            at_completed_root = consuming_node & open_nodes.eq(0)
+            valid_end = at_completed_root & token.eq(self.eos_id)
+            invalid |= at_completed_root & ~valid_end
+            ended |= valid_end
+
+            need_node = consuming_node & open_nodes.gt(0)
+            is_activity = token.unsqueeze(-1).eq(activity_ids.view(1, -1)).any(dim=-1)
+            is_leaf = is_activity | token.eq(self.token_to_id["TAU"])
+            is_operator = token.unsqueeze(-1).eq(operator_ids.view(1, -1)).any(dim=-1)
+            valid_node = need_node & (is_leaf | is_operator)
+            invalid |= need_node & ~valid_node
+            open_nodes = torch.where(valid_node, open_nodes - 1, open_nodes)
+            pending = torch.where(
+                need_node & is_operator,
+                torch.where(
+                    token.eq(loop_id),
+                    torch.full_like(pending, 2),
+                    torch.ones_like(pending),
+                ),
+                pending,
+            )
+
+            invalid_state = invalid | ~started
+            flat_masks[invalid_state, position, self.eos_id] = True
+            flat_masks[ended & ~invalid, position, self.pad_id] = True
+            need_arity = started & ~invalid & ~ended & pending.ne(0)
+            ordinary_arity = need_arity & pending.eq(1)
+            loop_arity = need_arity & pending.eq(2)
+            for value in range(2, self.max_arity + 1):
+                token_id = self.token_to_id[f"ARITY_{value}"]
+                flat_masks[ordinary_arity, position, token_id] = True
+                if value in {2, 3}:
+                    flat_masks[loop_arity, position, token_id] = True
+            completed = started & ~invalid & ~ended & pending.eq(0) & open_nodes.eq(0)
+            flat_masks[completed, position, self.eos_id] = True
+            node_rows = started & ~invalid & ~ended & pending.eq(0) & open_nodes.gt(0)
+            flat_masks[node_rows, position, self.token_to_id["TAU"]] = True
+            node_indices = torch.where(node_rows)[0]
+            if node_indices.numel():
+                flat_masks[
+                    node_indices.unsqueeze(1),
+                    position,
+                    activity_ids.unsqueeze(0),
+                ] = True
+                flat_masks[
+                    node_indices.unsqueeze(1),
+                    position,
+                    operator_ids.unsqueeze(0),
+                ] = True
+        return masks
+
+    def valid_next_token_masks_reference(self, prefixes: torch.Tensor) -> torch.Tensor:
+        """Quadratic reference implementation retained for equivalence tests."""
+
         masks = torch.zeros(
             (*prefixes.shape, self.vocab_size),
             dtype=torch.bool,
@@ -194,8 +304,55 @@ class TreeTokenizer:
         flat_masks = masks.reshape(-1, prefixes.shape[-1], self.vocab_size)
         for row_idx, row in enumerate(flat_prefixes):
             for pos in range(prefixes.shape[-1]):
-                flat_masks[row_idx, pos] = self.next_token_mask(row[: pos + 1].tolist(), device=prefixes.device)
+                flat_masks[row_idx, pos] = self.next_token_mask(
+                    row[: pos + 1].tolist(),
+                    device=prefixes.device,
+                )
         return masks
+
+    def structure_features(
+        self,
+        tokens: torch.Tensor,
+        *,
+        max_sequence_length: int = 1024,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Precompute depth and parent positions on CPU during collation."""
+
+        depths = torch.zeros_like(tokens)
+        parents = torch.zeros_like(tokens)
+        operator_ids = {self.token_to_id[name] for name in self.operator_tokens}
+        arity_by_id = {
+            self.token_to_id[name]: int(name.split("_", 1)[1])
+            for name in self.arity_tokens
+        }
+        for row_index, row in enumerate(tokens.tolist()):
+            frames: list[list[int]] = [[1, 0, 0]]
+            pending_operator: tuple[int, int] | None = None
+            for position, token_id in enumerate(row):
+                if token_id == self.pad_id:
+                    break
+                while frames and frames[-1][0] == 0:
+                    frames.pop()
+                depth = max(0, len(frames) - 1)
+                parent = frames[-1][1] if frames else 0
+                if pending_operator is not None and token_id in arity_by_id:
+                    operator_position, operator_depth = pending_operator
+                    depths[row_index, position] = operator_depth
+                    parents[row_index, position] = operator_position
+                    frames.append(
+                        [arity_by_id[token_id], operator_position, operator_depth + 1]
+                    )
+                    pending_operator = None
+                    continue
+                depths[row_index, position] = min(depth, 63)
+                parents[row_index, position] = min(parent, max_sequence_length - 1)
+                if position == 0:
+                    continue
+                if frames:
+                    frames[-1][0] -= 1
+                if token_id in operator_ids:
+                    pending_operator = (position, depth)
+        return depths, parents
 
 
 @dataclass(frozen=True)

@@ -285,7 +285,7 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert rows[0]["validation_loss"]
 
     saved = torch.load(checkpoint, map_location="cpu", weights_only=False)
-    assert saved["version"] == 4
+    assert saved["version"] == 5
     assert saved["semantic_latent_stochastic"] is False
     assert saved["loss_weights"]["kl"] == 0.0
     assert "optimizer_state_dict" in saved

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterable
+from typing import Any, Collection, Iterable
 
 
 class NodeKind(str, Enum):
@@ -247,3 +247,57 @@ class ProcessTreeNode:
 
 def activities(labels: Iterable[str]) -> tuple[ProcessTreeNode, ...]:
     return tuple(ProcessTreeNode.activity(label) for label in labels)
+
+
+@dataclass(frozen=True)
+class TreeSanitizationResult:
+    """Result of applying deployment activity policies to a process tree."""
+
+    tree: ProcessTreeNode
+    out_of_source_activities_replaced: int = 0
+    duplicate_activities_replaced: int = 0
+
+
+def sanitize_activity_labels(
+    tree: ProcessTreeNode,
+    *,
+    allowed_labels: Collection[str] | None = None,
+    avoid_duplicates: bool = False,
+) -> TreeSanitizationResult:
+    """Replace illegal visible leaves with tau, preserving the first duplicate.
+
+    ``allowed_labels=None`` disables source-alphabet filtering. An empty
+    collection is deliberately different: it replaces every visible leaf.
+    Duplicate tracking follows deterministic preorder and never treats tau as
+    a visible label.
+    """
+
+    allowed = None if allowed_labels is None else set(allowed_labels)
+    seen: set[str] = set()
+    out_of_source = 0
+    duplicates = 0
+
+    def visit(node: ProcessTreeNode) -> ProcessTreeNode:
+        nonlocal out_of_source, duplicates
+        if node.kind is NodeKind.ACTIVITY:
+            assert node.label is not None
+            if allowed is not None and node.label not in allowed:
+                out_of_source += 1
+                return ProcessTreeNode.tau()
+            if avoid_duplicates and node.label in seen:
+                duplicates += 1
+                return ProcessTreeNode.tau()
+            seen.add(node.label)
+            return node
+        if not node.children:
+            return node
+        return ProcessTreeNode(
+            node.kind,
+            children=tuple(visit(child) for child in node.children),
+        )
+
+    return TreeSanitizationResult(
+        tree=visit(tree),
+        out_of_source_activities_replaced=out_of_source,
+        duplicate_activities_replaced=duplicates,
+    )

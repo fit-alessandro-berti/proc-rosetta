@@ -140,10 +140,14 @@ def _encode_sample_modalities(
             {
                 "nodes": sample.petri_graph.num_nodes,
                 "arcs": sample.petri_graph.num_edges,
-                "visible_labels_used_by_encoder": False,
+                "visible_labels_used_by_encoder": True,
             },
             perf_counter() - start,
-            warnings=[PETRI_LABEL_WARNING],
+            warnings=(
+                []
+                if checkpoint.metadata.petri_label_embeddings_trained
+                else [PETRI_LABEL_WARNING]
+            ),
         )
     )
     return entries
@@ -167,6 +171,32 @@ def _entry(
         ArtifactModality.PETRI_NET: "petri",
     }[modality]
     artifact_id = f"reference-{sample_index:04d}-{suffix}"
+    if modality is ArtifactModality.PROCESS_TREE:
+        labels = set(sample.tree.activity_labels())
+    elif modality is ArtifactModality.EVENT_LOG:
+        labels = {label for trace in sample.traces for label in trace}
+    else:
+        labels = {
+            label for label in sample.petri_graph.transition_labels if label is not None
+        }
+    ordered_labels = [
+        f"A{index}"
+        for index in range(checkpoint.model.tree_tokenizer.max_activities)
+        if f"A{index}" in labels
+    ]
+    copy_slots = (
+        []
+        if distribution.activity_mask is None
+        else [bool(value) for value in distribution.activity_mask.detach().cpu()[0].tolist()]
+    )
+    activity_memory = (
+        None
+        if distribution.activity_memory is None
+        else [
+            [float(value) for value in row]
+            for row in distribution.activity_memory.detach().cpu()[0].tolist()
+        ]
+    )
     encoding = ArtifactEncodingResult(
         artifact_id=artifact_id,
         artifact_name=artifact_id,
@@ -174,12 +204,20 @@ def _entry(
         checkpoint_identifier=checkpoint.metadata.identifier,
         source_metadata=dict(metadata),
         preprocessing_metadata={"reference_gallery": True},
-        canonical_mapping={},
+        canonical_mapping={label: label for label in ordered_labels},
         model_input_summary=dict(metadata),
         mu=[float(value) for value in distribution.mu.detach().cpu()[0].tolist()],
         logvar=[float(value) for value in distribution.logvar.detach().cpu()[0].tolist()],
         attention_weights=attention,
         embedding_seconds=seconds,
+        source_activity_labels=ordered_labels,
+        source_canonical_activity_labels=ordered_labels,
+        allowed_activity_slots=[
+            f"A{index}" in labels
+            for index in range(checkpoint.model.tree_tokenizer.max_activities)
+        ],
+        copy_activity_slots=copy_slots,
+        activity_memory=activity_memory,
         process_group=sample.equivalence_id,
         warnings=list(warnings or []),
     )

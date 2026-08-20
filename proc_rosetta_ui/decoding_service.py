@@ -2,17 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from proc_rosetta.artifact_io import ArtifactModality
 from proc_rosetta.inference import (
     DecodeResult,
     DecodeStep,
     LoadedCheckpoint,
+    combine_encoding_decode_evidence,
     decode_latent,
     fuse_latent_distributions,
     sample_latent_distribution,
 )
 from proc_rosetta_ui.ui_types import WorkspaceArtifact
 from proc_rosetta_ui.cache_service import cache_key, cache_put
+from proc_rosetta.pm4py_bridge import TREE_NORMALIZATION_VERSION
 
 
 def decode_workspace_selection(
@@ -20,6 +21,9 @@ def decode_workspace_selection(
     checkpoint: LoadedCheckpoint,
     *,
     max_length: int = 512,
+    beam_size: int = 5,
+    constrain_to_source_activities: bool = True,
+    avoid_duplicate_activity_labels: bool = True,
     weights: Sequence[float] | None = None,
     progress_callback: Callable[[DecodeStep], None] | None = None,
     decode_cache: dict[str, object] | None = None,
@@ -39,6 +43,9 @@ def decode_workspace_selection(
         latent=latent,
         latent_source=latent_source,
         max_length=max_length,
+        beam_size=beam_size,
+        constrain_to_source_activities=constrain_to_source_activities,
+        avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
         progress_callback=progress_callback,
         decode_cache=decode_cache,
     )
@@ -52,15 +59,26 @@ def decode_workspace_latent(
     latent: Sequence[float],
     latent_source: str,
     max_length: int = 512,
+    beam_size: int = 5,
+    constrain_to_source_activities: bool = True,
+    avoid_duplicate_activity_labels: bool = True,
     progress_callback: Callable[[DecodeStep], None] | None = None,
     decode_cache: dict[str, object] | None = None,
 ) -> DecodeResult:
     mapping = _shared_mapping(items)
+    allowed_slots, copy_slots, activity_memory = combine_encoding_decode_evidence(
+        [item.encoding for item in items if item.encoding is not None]
+    )
     key = cache_key(
         checkpoint.metadata.identifier,
         list(latent),
         max_length,
+        beam_size,
         mapping,
+        allowed_slots,
+        constrain_to_source_activities,
+        avoid_duplicate_activity_labels,
+        TREE_NORMALIZATION_VERSION,
         [item.artifact_id for item in items],
         latent_source,
     )
@@ -74,6 +92,12 @@ def decode_workspace_latent(
             latent_source=latent_source,
             canonical_mapping=mapping,
             max_length=max_length,
+            beam_size=beam_size,
+            allowed_activity_slots=allowed_slots,
+            copy_activity_slots=copy_slots,
+            activity_memory=activity_memory,
+            constrain_to_source_activities=constrain_to_source_activities,
+            avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
             progress_callback=progress_callback,
         )
         if decode_cache is not None:
@@ -112,8 +136,6 @@ def sampled_workspace_latents(
 
 
 def _shared_mapping(items: Sequence[WorkspaceArtifact]) -> dict[str, str] | None:
-    if any(item.parsed.modality is ArtifactModality.PETRI_NET for item in items):
-        return None
     mappings = [item.encoding.canonical_mapping for item in items if item.encoding is not None]
     if len(mappings) == 1:
         return mappings[0]

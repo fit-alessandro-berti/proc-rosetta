@@ -28,6 +28,7 @@ from proc_rosetta.benchmarks import (
 )
 from proc_rosetta.inference import (
     LoadedCheckpoint,
+    combine_encoding_decode_evidence,
     compare_source_and_decoded,
     decode_latent,
     fuse_latent_means,
@@ -72,6 +73,7 @@ def decode_quality_iter(
             if item.parsed.modality is ArtifactModality.EVENT_LOG
             else None,
             "latent_source": f"{item.parsed.modality.value}_mean",
+            "encodings": [item.encoding],
         }
         for item in selected
     ]
@@ -120,10 +122,14 @@ def decode_quality_iter(
                     None,
                 ),
                 "latent_source": "fused_mean",
+                "encodings": [member.encoding for member in members],
             }
         )
     start = perf_counter()
     for index, task in enumerate(tasks, 1):
+        allowed, copy, activity_memory = combine_encoding_decode_evidence(
+            task["encodings"]
+        )
         decode = decode_latent(
             checkpoint,
             task["latent"],
@@ -132,6 +138,9 @@ def decode_quality_iter(
             latent_source=task["latent_source"],
             canonical_mapping=task["mapping"],
             max_length=max_length,
+            allowed_activity_slots=allowed,
+            copy_activity_slots=copy,
+            activity_memory=activity_memory,
         )
         comparison: dict[str, Any]
         try:
@@ -235,7 +244,7 @@ def neural_loss_iter(
         positive_mask = moved.get("positive_mask")
         losses = multimodal_tree_loss(
             outputs,
-            tree_tokens,
+            moved.get("decoder_targets", tree_tokens),
             checkpoint.model.tree_tokenizer.pad_id,
             positive_mask=positive_mask,
         )
@@ -338,6 +347,9 @@ def discovery_comparison_iter(
     started = perf_counter()
     for item in logs:
         decode_started = perf_counter()
+        allowed, copy, activity_memory = combine_encoding_decode_evidence(
+            [item.encoding]
+        )
         decoded = decode_latent(
             checkpoint,
             item.encoding.mu,
@@ -346,6 +358,9 @@ def discovery_comparison_iter(
             latent_source="event_log_mean",
             canonical_mapping=item.encoding.canonical_mapping,
             max_length=max_length,
+            allowed_activity_slots=allowed,
+            copy_activity_slots=copy,
+            activity_memory=activity_memory,
         )
         proc_row: dict[str, Any] = {
             "artifact": item.parsed.display_name,
