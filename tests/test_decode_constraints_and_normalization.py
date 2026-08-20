@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import argparse
 from copy import deepcopy
 import random
+from types import SimpleNamespace
 
 import torch
 
@@ -11,17 +13,29 @@ from proc_rosetta.artifact_io import (
     prepare_artifact_for_model,
 )
 from proc_rosetta.data import ProcessBatchCollator
-from proc_rosetta.inference import build_decode_result, decode_latent_iter, petri_graph_to_tensors
+from proc_rosetta.inference import (
+    ArtifactEncodingResult,
+    build_decode_result,
+    combine_encoding_decode_evidence,
+    decode_latent_iter,
+    petri_graph_to_tensors,
+    simulate_decoded_behavior,
+)
+from proc_rosetta.losses import LossWeights
 from proc_rosetta.models import DecodeConstraints, PetriGraphEncoder, ProcRosettaModel
 from proc_rosetta.pm4py_bridge import (
     fold_process_tree,
     prepare_tree_for_model,
+    simulate_traces,
     tree_to_petri_net,
 )
 from proc_rosetta.synthetic import ProcessSample, decoder_target_trees_for_sample
 from proc_rosetta.tokenizers import ActivityTokenizer, TreeTokenizer
-from proc_rosetta.training import TrainConfig
+from proc_rosetta.training import TrainConfig, gradient_norm_diagnostics
 from proc_rosetta.tree import ProcessTreeNode, sanitize_activity_labels
+from proc_rosetta_ui.decoding_service import _decode_cache_key
+from proc_rosetta_ui.export_service import process_tree_ptml
+from scripts._common import add_decode_constraint_arguments
 
 
 def _model(max_activities: int = 4) -> ProcRosettaModel:
@@ -74,6 +88,22 @@ def test_semantic_fold_is_idempotent_and_model_view_remains_bounded():
     )
 
 
+def test_semantic_fold_preserves_representative_visible_behavior():
+    tree = ProcessTreeNode.seq(
+        ProcessTreeNode.tau(),
+        ProcessTreeNode.seq(
+            ProcessTreeNode.activity("A0"),
+            ProcessTreeNode.activity("A1"),
+        ),
+        ProcessTreeNode.tau(),
+    )
+
+    before = {tuple(trace) for trace in simulate_traces(tree, 20)}
+    after = {tuple(trace) for trace in simulate_traces(fold_process_tree(tree), 20)}
+
+    assert before == after == {("A0", "A1")}
+
+
 def test_sanitization_replaces_illegal_and_duplicate_labels_before_folding():
     tree = ProcessTreeNode.seq(
         ProcessTreeNode.activity("A0"),
@@ -123,6 +153,14 @@ def test_shared_constraint_mask_keeps_tau_and_masks_illegal_or_used_activities()
     assert not next_mask[tokenizer.token_to_id["A0"]]
     assert next_mask[tokenizer.token_to_id["TAU"]]
 
+    legacy_mask = model.tree_decoder.decode_constraint_mask(
+        prefix,
+        grammar_mask=grammar,
+        allowed_activity_mask=torch.tensor([[True, True, False]]),
+        avoid_duplicate_activity_labels=False,
+    )[0, -1]
+    assert legacy_mask[tokenizer.token_to_id["A0"]]
+
 
 def test_greedy_beam_and_progressive_decoding_respect_source_and_duplicates():
     torch.manual_seed(4)
@@ -160,7 +198,7 @@ def test_greedy_beam_and_progressive_decoding_respect_source_and_duplicates():
     assert sum(step.chosen_token == "A0" for step in steps) <= 1
 
 
-def test_build_result_preserves_raw_and_normalized_views_and_restores_last():
+def test_build_result_preserves_raw_and_normalized_views_and_restores_last(tmp_path):
     model = _model(3)
     tokenizer = model.tree_tokenizer
     raw_names = ["<bos>", "SEQ", "ARITY_3", "A0", "A0", "A2", "<eos>"]
@@ -184,6 +222,46 @@ def test_build_result_preserves_raw_and_normalized_views_and_restores_last():
     assert result.duplicate_activities_replaced == 1
     assert result.source_alphabet_respected and result.duplicate_free
     assert result.output_fold_idempotent
+
+    exported = tmp_path / "normalized.ptml"
+    exported.write_bytes(process_tree_ptml(result))
+    assert parse_artifact(exported).tree == result.restored_tree
+    assert {
+        label for label in result.petri_net.graph.transition_labels if label is not None
+    } == {"Original"}
+    assert set(simulate_decoded_behavior(result, num_traces=10)) == {("Original",)}
+
+
+def test_fused_source_evidence_uses_union_of_allowed_activities():
+    left = _encoding(
+        "left",
+        allowed=[True, False, False],
+        copy=[True, False, False],
+        activity_memory=[[1.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+    )
+    right = _encoding(
+        "right",
+        allowed=[False, True, False],
+        copy=[False, True, False],
+        activity_memory=[[0.0, 0.0], [0.0, 1.0], [0.0, 0.0]],
+    )
+
+    allowed, copy, memory = combine_encoding_decode_evidence([left, right])
+
+    assert allowed == [True, True, False]
+    assert copy == [True, True, False]
+    assert memory == [[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]
+
+
+def test_command_line_duplicate_opt_out_restores_legacy_policy():
+    parser = argparse.ArgumentParser()
+    add_decode_constraint_arguments(parser)
+
+    assert parser.parse_args([]).avoid_duplicate_transitions is True
+    assert (
+        parser.parse_args(["--no-avoid-duplicate-transitions"]).avoid_duplicate_transitions
+        is False
+    )
 
 
 def test_pnml_preparation_is_label_aware_and_exposes_allowed_slots():
@@ -333,6 +411,133 @@ def test_incremental_decoder_cache_matches_full_prefix_evaluation():
 
 def test_gradient_diagnostics_are_disabled_by_default():
     assert TrainConfig().gradient_diagnostics_interval == 0
+
+
+def test_gradient_diagnostics_do_not_change_optimizer_updates():
+    torch.manual_seed(12)
+    reference = SimpleNamespace(
+        tree_encoder=torch.nn.Linear(3, 2),
+        trace_encoder=torch.nn.Linear(3, 2),
+        petri_encoder=torch.nn.Linear(3, 2),
+    )
+    diagnosed = deepcopy(reference)
+    inputs = torch.randn(4, 3)
+
+    def update(model, *, diagnose):
+        optimizer = torch.optim.SGD(
+            [
+                parameter
+                for encoder in (
+                    model.tree_encoder,
+                    model.trace_encoder,
+                    model.petri_encoder,
+                )
+                for parameter in encoder.parameters()
+            ],
+            lr=0.05,
+        )
+        reconstructions = {
+            name: getattr(model, f"{name}_encoder")(inputs).square().mean()
+            for name in ("tree", "trace", "petri")
+        }
+        metric = sum(
+            getattr(model, f"{name}_encoder")(inputs).mean()
+            for name in ("tree", "trace", "petri")
+        )
+        losses = {
+            "tree_reconstruction": reconstructions["tree"],
+            "trace_to_tree": reconstructions["trace"],
+            "petri_to_tree": reconstructions["petri"],
+            "exact_contrastive": metric,
+            "within_modality_contrastive": metric * 0.5,
+            "soft_behavior_geometry": metric * 0.25,
+            "variance": metric * 0.125,
+            "covariance": metric * 0.0625,
+        }
+        weights = LossWeights()
+        total = (
+            weights.tree_reconstruction * losses["tree_reconstruction"]
+            + weights.trace_to_tree * losses["trace_to_tree"]
+            + weights.petri_to_tree * losses["petri_to_tree"]
+            + weights.exact_contrastive * losses["exact_contrastive"]
+            + weights.within_modality_contrastive * losses["within_modality_contrastive"]
+            + weights.soft_behavior_geometry * losses["soft_behavior_geometry"]
+            + weights.variance * losses["variance"]
+            + weights.covariance * losses["covariance"]
+        )
+        if diagnose:
+            gradient_norm_diagnostics(model, losses, weights)
+        total.backward()
+        optimizer.step()
+
+    update(reference, diagnose=False)
+    update(diagnosed, diagnose=True)
+
+    for left_encoder, right_encoder in (
+        (reference.tree_encoder, diagnosed.tree_encoder),
+        (reference.trace_encoder, diagnosed.trace_encoder),
+        (reference.petri_encoder, diagnosed.petri_encoder),
+    ):
+        for left, right in zip(left_encoder.parameters(), right_encoder.parameters()):
+            assert torch.equal(left, right)
+
+
+def test_decode_cache_key_separates_source_alphabet_and_duplicate_policy():
+    arguments = {
+        "checkpoint_identifier": "checkpoint",
+        "latent": [0.1, 0.2],
+        "max_length": 32,
+        "beam_size": 5,
+        "mapping": {"original": "A0"},
+        "copy_slots": [True, False],
+        "activity_memory": [[1.0], [0.0]],
+        "constrain_to_source_activities": True,
+        "artifact_ids": ["source"],
+        "latent_source": "test",
+    }
+    baseline = _decode_cache_key(
+        **arguments,
+        allowed_slots=[True, False],
+        avoid_duplicate_activity_labels=True,
+    )
+    different_alphabet = _decode_cache_key(
+        **arguments,
+        allowed_slots=[False, True],
+        avoid_duplicate_activity_labels=True,
+    )
+    duplicates_allowed = _decode_cache_key(
+        **arguments,
+        allowed_slots=[True, False],
+        avoid_duplicate_activity_labels=False,
+    )
+
+    assert len({baseline, different_alphabet, duplicates_allowed}) == 3
+
+
+def _encoding(
+    artifact_id: str,
+    *,
+    allowed: list[bool],
+    copy: list[bool],
+    activity_memory: list[list[float]],
+) -> ArtifactEncodingResult:
+    return ArtifactEncodingResult(
+        artifact_id=artifact_id,
+        artifact_name=artifact_id,
+        modality=ArtifactModality.EVENT_LOG,
+        checkpoint_identifier="checkpoint",
+        source_metadata={},
+        preprocessing_metadata={},
+        canonical_mapping={},
+        model_input_summary={},
+        mu=[0.0],
+        logvar=[0.0],
+        attention_weights=None,
+        embedding_seconds=0.0,
+        allowed_activity_slots=allowed,
+        copy_activity_slots=copy,
+        activity_memory=activity_memory,
+    )
 
 
 def _walk(tree: ProcessTreeNode):

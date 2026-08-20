@@ -16,6 +16,38 @@ from proc_rosetta_ui.cache_service import cache_key, cache_put
 from proc_rosetta.pm4py_bridge import TREE_NORMALIZATION_VERSION
 
 
+def _decode_cache_key(
+    checkpoint_identifier: str,
+    latent: Sequence[float],
+    *,
+    max_length: int,
+    beam_size: int,
+    mapping: dict[str, str] | None,
+    allowed_slots: Sequence[bool] | None,
+    copy_slots: Sequence[bool] | None,
+    activity_memory: Sequence[Sequence[float]] | None,
+    constrain_to_source_activities: bool,
+    avoid_duplicate_activity_labels: bool,
+    artifact_ids: Sequence[str],
+    latent_source: str,
+) -> str:
+    return cache_key(
+        checkpoint_identifier,
+        list(latent),
+        max_length,
+        beam_size,
+        mapping,
+        allowed_slots,
+        copy_slots,
+        activity_memory,
+        constrain_to_source_activities,
+        avoid_duplicate_activity_labels,
+        TREE_NORMALIZATION_VERSION,
+        list(artifact_ids),
+        latent_source,
+    )
+
+
 def decode_workspace_selection(
     items: Sequence[WorkspaceArtifact],
     checkpoint: LoadedCheckpoint,
@@ -69,18 +101,19 @@ def decode_workspace_latent(
     allowed_slots, copy_slots, activity_memory = combine_encoding_decode_evidence(
         [item.encoding for item in items if item.encoding is not None]
     )
-    key = cache_key(
+    key = _decode_cache_key(
         checkpoint.metadata.identifier,
-        list(latent),
-        max_length,
-        beam_size,
-        mapping,
-        allowed_slots,
-        constrain_to_source_activities,
-        avoid_duplicate_activity_labels,
-        TREE_NORMALIZATION_VERSION,
-        [item.artifact_id for item in items],
-        latent_source,
+        latent,
+        max_length=max_length,
+        beam_size=beam_size,
+        mapping=mapping,
+        allowed_slots=allowed_slots,
+        copy_slots=copy_slots,
+        activity_memory=activity_memory,
+        constrain_to_source_activities=constrain_to_source_activities,
+        avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+        artifact_ids=[item.artifact_id for item in items],
+        latent_source=latent_source,
     )
     cached = decode_cache.get(key) if decode_cache else None
     if cached is None:

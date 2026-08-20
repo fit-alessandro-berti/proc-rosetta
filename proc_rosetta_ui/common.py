@@ -19,8 +19,9 @@ from proc_rosetta_ui.app_state import initialize_state, reset_inference_for_chec
 
 
 PETRI_WARNING = (
-    "The current external Petri-net encoder path does not use visible transition labels. "
-    "PNML-derived decodes use canonical labels and do not preserve source activity names."
+    "This legacy checkpoint has no trained Petri transition-label embeddings. "
+    "PNML labels are still canonicalized, constrained, and restored, but activity-copy "
+    "quality requires a checkpoint trained with the label-aware encoder."
 )
 
 

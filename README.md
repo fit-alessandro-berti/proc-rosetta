@@ -179,13 +179,12 @@ The studio provides:
 - PTML, derived PNML, embedding, validation-report, and complete-workspace exports;
 - checkpoint configuration and training-history inspection.
 
-The current external PNML inference path intentionally matches the direct
-scripts: it passes graph structure, node types, and markings, but not visible
-transition-label tensors. The studio therefore displays a structural-only
-warning during PNML upload, encoding, translation, comparison, and reporting,
-and never offers original-label restoration for a PNML-derived decode. The
-training model has label-aware capacity for newly trained internal batches;
-that does not make the established external PNML path label-preserving.
+External PNML inference canonicalizes visible transition labels, supplies their
+token IDs to the Petri encoder, constrains decoding to that source alphabet,
+and restores original labels in normalized exports. The studio shows a warning
+only when a legacy checkpoint lacks compatible trained transition-label
+embeddings; such checkpoints need retraining for meaningful PNML activity-copy
+quality.
 
 ## Retraining A Checkpoint
 
@@ -210,6 +209,19 @@ data/
   validation/samples.jsonl
   test/samples.jsonl
 ```
+
+Generated trees and modality-specific reconstruction targets carry the
+`pm4py-fold-v1` normalization marker. To upgrade an existing split archive
+without regenerating its sampled behavior, run:
+
+```bash
+scripts/migrate_dataset_normalization.py data
+```
+
+The migration folds each semantic tree once, rebuilds source-legal tree, trace,
+and Petri decoder targets, and writes the current schema metadata. Checkpoints
+from an older model architecture still require retraining; changing their
+metadata cannot make incompatible tensor shapes valid.
 
 `sample.py` shows per-split `tqdm` progress on stderr while triplets are
 generated. Pass `--quiet` to suppress the progress bars.

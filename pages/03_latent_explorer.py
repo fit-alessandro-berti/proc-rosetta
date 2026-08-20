@@ -9,6 +9,7 @@ from proc_rosetta_ui.common import checkpoint_sidebar, configure_page, page_head
 from proc_rosetta.artifact_io import ArtifactModality, event_log_statistics
 from proc_rosetta.inference import (
     ArtifactEncodingResult,
+    combine_encoding_decode_evidence,
     decode_latent,
     fuse_latent_distributions,
     interpolate_latents,
@@ -77,6 +78,7 @@ def fused_group_encodings(source_encodings, source_groups):
         if len(members) < 2:
             continue
         mu, logvar = fuse_latent_distributions(members)
+        allowed, copy, activity_memory = combine_encoding_decode_evidence(members)
         fused.append(
             ArtifactEncodingResult(
                 artifact_id=f"fused::{group}",
@@ -91,6 +93,19 @@ def fused_group_encodings(source_encodings, source_groups):
                 logvar=logvar,
                 attention_weights=None,
                 embedding_seconds=0.0,
+                source_activity_labels=sorted(
+                    {label for member in members for label in member.source_activity_labels}
+                ),
+                source_canonical_activity_labels=sorted(
+                    {
+                        label
+                        for member in members
+                        for label in member.source_canonical_activity_labels
+                    }
+                ),
+                allowed_activity_slots=allowed or [],
+                copy_activity_slots=copy or [],
+                activity_memory=activity_memory,
                 process_group=group,
             )
         )
@@ -410,13 +425,25 @@ with interpolation_tab:
             left_encoding = next(e for e in encodings if e.artifact_id == left_id)
             right_encoding = next(e for e in encodings if e.artifact_id == right_id)
             latent = interpolate_latents(left_encoding.mu, right_encoding.mu, alpha)
+            allowed, copy, activity_memory = combine_encoding_decode_evidence(
+                [left_encoding, right_encoding]
+            )
+            mapping = (
+                left_encoding.canonical_mapping
+                if left_encoding.canonical_mapping == right_encoding.canonical_mapping
+                else None
+            )
             result = decode_latent(
                 checkpoint,
                 latent,
                 source_artifact_ids=[left_id, right_id],
                 source_modalities=[left_encoding.modality, right_encoding.modality],
                 latent_source=f"linear_interpolation_alpha_{alpha:.2f}",
+                canonical_mapping=mapping,
                 max_length=256,
+                allowed_activity_slots=allowed,
+                copy_activity_slots=copy,
+                activity_memory=activity_memory,
             )
             st.session_state["interpolation_result"] = result
         interpolation_result = st.session_state.get("interpolation_result")

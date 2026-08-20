@@ -25,8 +25,13 @@ from proc_rosetta.data import (
 from proc_rosetta.devices import default_device, resolve_device
 from proc_rosetta.losses import LossWeights, multimodal_tree_loss
 from proc_rosetta.models import LatentDistribution, ProcRosettaModel
+from proc_rosetta.pm4py_bridge import TREE_NORMALIZATION_VERSION
 from proc_rosetta.synthetic import SyntheticConfig
 from proc_rosetta.tokenizers import ActivityTokenizer, TreeTokenizer
+
+
+CHECKPOINT_FORMAT_VERSION = 5
+MODEL_ARCHITECTURE_VERSION = "proc-rosetta-latent-transformer-v5"
 
 
 @dataclass(frozen=True)
@@ -200,13 +205,11 @@ def train_epoch(
             behavior_signatures=batch.get("behavior_signatures"),
             tokenizer=model.tree_tokenizer,
         )
-        run_gradient_diagnostics = (
-            train_config is None
-            or epoch is None
-            or (
-                train_config.gradient_diagnostics_interval > 0
-                and (epoch - 1) % train_config.gradient_diagnostics_interval == 0
-            )
+        diagnostics_interval = (
+            0 if train_config is None else train_config.gradient_diagnostics_interval
+        )
+        run_gradient_diagnostics = diagnostics_interval > 0 and (
+            epoch is None or (epoch - 1) % diagnostics_interval == 0
         )
         if batches == 0 and run_gradient_diagnostics:
             gradient_metrics = gradient_norm_diagnostics(
@@ -1808,7 +1811,10 @@ def save_checkpoint(
     checkpoint_path = Path(checkpoint_path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "version": 5,
+        "version": CHECKPOINT_FORMAT_VERSION,
+        "model_architecture": MODEL_ARCHITECTURE_VERSION,
+        "data_schema_version": 5,
+        "tree_normalization_version": TREE_NORMALIZATION_VERSION,
         "epoch": epoch,
         "model_state_dict": model.state_dict(),
         "train_config": asdict(train_config),
@@ -2019,10 +2025,25 @@ def load_checkpoint(
         raise FileNotFoundError(f"checkpoint does not exist: {checkpoint_path}")
     torch_device = resolve_device(device)
     checkpoint = torch.load(checkpoint_path, map_location=torch_device)
+    checkpoint_architecture = checkpoint.get("model_architecture")
+    if (
+        checkpoint_architecture is not None
+        and checkpoint_architecture != MODEL_ARCHITECTURE_VERSION
+    ):
+        raise RuntimeError(
+            f"checkpoint architecture {checkpoint_architecture!r} is incompatible with "
+            f"{MODEL_ARCHITECTURE_VERSION!r}; retrain it instead of changing metadata"
+        )
     train_config = train_config_from_checkpoint(checkpoint, torch_device)
     synthetic_config = SyntheticConfig.from_dict(checkpoint["synthetic_config"])
     model = build_model(train_config, synthetic_config, torch_device)
-    incompatible = model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+    try:
+        incompatible = model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "checkpoint tensors are incompatible with the current v5 architecture; "
+            "checkpoint migration is unsafe, so retrain from schema-v5 data"
+        ) from exc
     allowed_missing = {"petri_encoder.transition_label_embedding.weight"}
     unexpected_missing = set(incompatible.missing_keys) - allowed_missing
     if unexpected_missing or incompatible.unexpected_keys:

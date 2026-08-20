@@ -286,6 +286,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
 
     saved = torch.load(checkpoint, map_location="cpu", weights_only=False)
     assert saved["version"] == 5
+    assert saved["model_architecture"] == "proc-rosetta-latent-transformer-v5"
+    assert saved["tree_normalization_version"] == "pm4py-fold-v1"
     assert saved["semantic_latent_stochastic"] is False
     assert saved["loss_weights"]["kl"] == 0.0
     assert "optimizer_state_dict" in saved

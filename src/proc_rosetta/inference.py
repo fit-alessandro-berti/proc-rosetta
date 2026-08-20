@@ -639,6 +639,12 @@ def decode_latent(
 ) -> DecodeResult:
     start = perf_counter()
     steps: list[DecodeStep] = []
+    if allowed_activity_slots is None and canonical_mapping is not None:
+        canonical_labels = set(canonical_mapping.values())
+        allowed_activity_slots = [
+            f"A{index}" in canonical_labels
+            for index in range(checkpoint.model.tree_tokenizer.max_activities)
+        ]
     allowed = _activity_slot_tensor(
         allowed_activity_slots,
         max_activities=checkpoint.model.tree_tokenizer.max_activities,
@@ -800,7 +806,6 @@ def build_decode_result(
             output_fold_idempotent = refolded.canonical_key() == tree.canonical_key()
             model_normalized_ids = tokenizer.encode_tree(tree, canonicalize=False)
             model_normalized_names = [tokenizer.tokens[token_id] for token_id in model_normalized_ids]
-            bundle = tree_to_petri_net(tree)
         except Exception as exc:
             errors.append(f"Output normalization failed: {type(exc).__name__}: {exc}")
     if out_of_source_replaced:
@@ -830,6 +835,11 @@ def build_decode_result(
             "Generated canonical labels without source mappings were kept unchanged: "
             + ", ".join(unmapped)
         )
+    if restored_tree is not None:
+        try:
+            bundle = tree_to_petri_net(restored_tree)
+        except Exception as exc:
+            errors.append(f"Petri-net conversion failed: {type(exc).__name__}: {exc}")
     return DecodeResult(
         source_artifact_ids=list(source_artifact_ids),
         source_modalities=modalities,

@@ -135,11 +135,6 @@ def petri_net_pnml(result: DecodeResult) -> bytes:
             str(path),
         )
         note = "Derived deterministically from a ProcRosetta-decoded process tree; not independently generated."
-        if any(modality.value == "petri_net" for modality in result.source_modalities):
-            note += (
-                " The source PNML transition labels were not used by the external encoder and "
-                "canonical decoded labels do not preserve source semantics."
-            )
         return _annotate_xml(path.read_bytes(), note)
 
 

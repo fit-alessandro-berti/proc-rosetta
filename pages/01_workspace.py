@@ -229,7 +229,10 @@ with manage_right:
         set_process_group(items[selected_id], group)
 
 item = items[selected_id]
-if item.parsed.modality is ArtifactModality.PETRI_NET:
+if (
+    item.parsed.modality is ArtifactModality.PETRI_NET
+    and not checkpoint.metadata.petri_label_embeddings_trained
+):
     st.warning(PETRI_WARNING, icon="⚠️")
 
 preview_tab, model_tab, diagnostics_tab = st.tabs(
@@ -268,13 +271,12 @@ with model_tab:
         "Reversible",
         "yes"
         if len(item.prepared.canonical_frequencies) == len(item.prepared.canonical_mapping)
-        and item.parsed.modality is not ArtifactModality.PETRI_NET
         else "no",
     )
     if mapping_rows:
         st.dataframe(mapping_rows, use_container_width=True, hide_index=True)
     else:
-        st.caption("No label mapping is sent by the structural PNML encoding path.")
+        st.caption("The source contains no visible activity labels to map.")
     st.markdown("#### Preprocessing ledger")
     st.json(item.prepared.preprocessing_metadata)
     st.markdown("#### Model input summary")
