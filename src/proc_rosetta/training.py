@@ -1447,7 +1447,7 @@ def train_synthetic(
     train_config = train_config or TrainConfig()
     synthetic_config = synthetic_config or SyntheticConfig()
     torch.manual_seed(train_config.seed)
-    device = resolve_device(train_config.device)
+    device = torch.device("cpu")
 
     model = build_model(train_config, synthetic_config, device)
     dataloader = build_synthetic_dataloader(
@@ -1491,7 +1491,7 @@ def train_from_data_dir(
 ) -> tuple[ProcRosettaModel, list[dict[str, object]]]:
     train_config = train_config or TrainConfig()
     torch.manual_seed(train_config.seed)
-    device = resolve_device(train_config.device)
+    device = torch.device("cpu")
     debug(f"Loading metadata from {Path(data_dir) / 'metadata.json'}", enabled=show_progress)
     metadata = load_data_metadata(data_dir)
     if int(metadata.get("version", 0)) < 5:
