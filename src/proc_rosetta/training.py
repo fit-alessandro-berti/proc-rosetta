@@ -33,6 +33,13 @@ from proc_rosetta.tokenizers import ActivityTokenizer, TreeTokenizer
 
 CHECKPOINT_FORMAT_VERSION = 6
 MODEL_ARCHITECTURE_VERSION = "proc-rosetta-latent-transformer-v6"
+RESUME_POLICY_OVERRIDE_FIELDS = frozenset(
+    {
+        "scheduled_sampling_max",
+        "scheduled_sampling_start_epoch",
+        "scheduled_sampling_ramp_epochs",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -1524,13 +1531,24 @@ def train_from_data_dir(
         enabled=show_progress,
     )
     resume_checkpoint: dict[str, object] | None = None
+    resume_policy_overrides: dict[str, dict[str, object]] = {}
     if resume:
         model, resume_checkpoint = load_checkpoint(checkpoint_path, device)
-        validate_resume_configuration(
+        resume_policy_overrides = validate_resume_configuration(
             checkpoint=resume_checkpoint,
             train_config=train_config,
             synthetic_config=synthetic_config,
         )
+        if resume_policy_overrides:
+            formatted_overrides = ", ".join(
+                f"{name}: checkpoint={values['checkpoint']!r}, "
+                f"requested={values['requested']!r}"
+                for name, values in sorted(resume_policy_overrides.items())
+            )
+            debug(
+                f"Applying resume runtime-policy overrides ({formatted_overrides})",
+                enabled=show_progress,
+            )
     else:
         model = build_model(train_config, synthetic_config, device)
     debug("Loading training split", enabled=show_progress)
@@ -1868,6 +1886,11 @@ def train_from_data_dir(
         }
         if stage_metrics is not None and run_stage_gate:
             row["stage_metrics"] = stage_metrics
+        if resume_policy_overrides and epoch == start_epoch:
+            row["resume_policy_overrides"] = {
+                name: dict(values)
+                for name, values in resume_policy_overrides.items()
+            }
         history.append(row)
         save_checkpoint(
             checkpoint_path=checkpoint_path,
@@ -2394,14 +2417,28 @@ def validate_resume_configuration(
     checkpoint: dict[str, object],
     train_config: TrainConfig,
     synthetic_config: SyntheticConfig,
-) -> None:
+) -> dict[str, dict[str, object]]:
     checkpoint_train_config = train_config_from_checkpoint(checkpoint, train_config.device)
     checkpoint_values = asdict(checkpoint_train_config)
     requested_values = asdict(train_config)
+    policy_overrides = {
+        name: {
+            "checkpoint": checkpoint_values[name],
+            "requested": requested_values[name],
+        }
+        for name in RESUME_POLICY_OVERRIDE_FIELDS
+        if checkpoint_values[name] != requested_values[name]
+    }
     differences = {
         name: (checkpoint_values[name], requested_values[name])
         for name in checkpoint_values
-        if name not in {"epochs", "device", "restore_best_weights"}
+        if name
+        not in {
+            "epochs",
+            "device",
+            "restore_best_weights",
+            *RESUME_POLICY_OVERRIDE_FIELDS,
+        }
         and checkpoint_values[name] != requested_values[name]
     }
     if differences:
@@ -2414,6 +2451,7 @@ def validate_resume_configuration(
     checkpoint_synthetic = SyntheticConfig.from_dict(checkpoint["synthetic_config"])
     if checkpoint_synthetic.to_dict() != synthetic_config.to_dict():
         raise ValueError("resume data configuration differs from checkpoint synthetic_config")
+    return policy_overrides
 
 
 def train_config_from_checkpoint(

@@ -381,10 +381,14 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
             "16",
             "--latent-dim",
             "8",
+            "--scheduled-sampling-max",
+            "0",
             "--resume",
         ]
     ) == 0
     captured = capsys.readouterr()
+    assert "Applying resume runtime-policy overrides" in captured.err
+    assert "scheduled_sampling_max" in captured.err
     assert "Legacy checkpoint has no optimizer" in captured.err
     assert "Starting epoch 2/2" in captured.err
     assert json.loads(captured.out.strip().splitlines()[-1])["epoch"] == 2
@@ -394,6 +398,12 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     resumed = torch.load(checkpoint, map_location="cpu", weights_only=False)
     assert resumed["epoch"] == 2
     assert len(resumed["history"]) == 2
+    assert resumed["history"][-1]["resume_policy_overrides"] == {
+        "scheduled_sampling_max": {
+            "checkpoint": 0.075,
+            "requested": 0.0,
+        }
+    }
     assert "optimizer_state_dict" in resumed
 
     assert main(
@@ -413,6 +423,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
             "16",
             "--latent-dim",
             "8",
+            "--scheduled-sampling-max",
+            "0",
             "--resume",
         ]
     ) == 0

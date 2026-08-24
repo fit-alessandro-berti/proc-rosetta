@@ -1,6 +1,6 @@
 import torch
 import pytest
-from dataclasses import replace
+from dataclasses import asdict, replace
 from torch.utils.data import DataLoader
 
 from proc_rosetta.data import (
@@ -35,11 +35,12 @@ from proc_rosetta.training import (
     stage_acceptance_report,
     train_synthetic,
     train_from_data_dir,
+    validate_resume_configuration,
 )
 from types import SimpleNamespace
 
 
-def test_model_forward_and_loss():
+def test_model_forward_and_loss(monkeypatch):
     synthetic_config = SyntheticConfig(max_depth=2, max_activities=5, traces_per_sample=3)
     tree_tokenizer = TreeTokenizer(max_activities=5, max_arity=3)
     activity_tokenizer = ActivityTokenizer(max_activities=5)
@@ -69,15 +70,159 @@ def test_model_forward_and_loss():
     assert all(parameter.grad is None for parameter in model.tree_decoder.parameters())
 
     model.zero_grad(set_to_none=True)
+    decoder_forward_calls = 0
+    incremental_grad_modes = []
+    original_forward = model.tree_decoder.forward
+    original_incremental_step = model.tree_decoder._incremental_step
+
+    def counted_forward(*args, **kwargs):
+        nonlocal decoder_forward_calls
+        decoder_forward_calls += 1
+        return original_forward(*args, **kwargs)
+
+    def checked_incremental_step(*args, **kwargs):
+        incremental_grad_modes.append(torch.is_grad_enabled())
+        return original_incremental_step(*args, **kwargs)
+
+    monkeypatch.setattr(model.tree_decoder, "forward", counted_forward)
+    monkeypatch.setattr(
+        model.tree_decoder,
+        "_incremental_step",
+        checked_incremental_step,
+    )
     sampled_outputs = model(
         batch,
         deterministic=True,
         scheduled_sampling_probability=1.0,
     )
+    sampled_losses = multimodal_tree_loss(
+        outputs=sampled_outputs,
+        tree_tokens=batch["tree_tokens"],
+    )
+    sampled_losses["loss"].backward()
+
+    assert decoder_forward_calls == 1
+    assert incremental_grad_modes and not any(incremental_grad_modes)
     assert all(
         torch.isfinite(logits).any(dim=-1).all()
         for logits in sampled_outputs["tree_logits"].values()
     )
+    assert torch.isfinite(sampled_losses["loss"])
+    assert any(parameter.grad is not None for parameter in model.tree_decoder.parameters())
+
+
+def test_scheduled_sampling_masks_illegal_targets_and_stops_finished_rows(monkeypatch):
+    tree_tokenizer = TreeTokenizer(max_activities=3, max_arity=3)
+    model = ProcRosettaModel(
+        tree_tokenizer,
+        ActivityTokenizer(max_activities=3),
+        latent_dim=8,
+        hidden_dim=16,
+        decoder_layers=1,
+    )
+    tokens = tree_tokenizer.token_to_id
+    stacked_targets = torch.tensor(
+        [
+            [
+                tree_tokenizer.bos_id,
+                tokens["SEQ"],
+                tokens["ARITY_2"],
+                tokens["A0"],
+                tokens["A1"],
+                tree_tokenizer.eos_id,
+            ]
+        ]
+    )
+    source = LatentDistribution(
+        mu=torch.zeros(1, 8),
+        logvar=torch.zeros(1, 8),
+    )
+    positions = []
+
+    def forced_incremental_step(input_token, position, memory, layer_caches, **kwargs):
+        positions.append(position)
+        logits = torch.full(
+            (input_token.shape[0], tree_tokenizer.vocab_size),
+            -torch.inf,
+        )
+        if position == 0:
+            logits[:, tokens["SEQ"]] = 0.0
+            logits[:, tokens["A0"]] = 1.0
+        else:
+            logits[:, tree_tokenizer.eos_id] = 1.0
+        caches = [
+            torch.zeros(input_token.shape[0], position + 1, 16)
+            for _ in model.tree_decoder.decoder.layers
+        ]
+        return logits, caches
+
+    monkeypatch.setattr(
+        model.tree_decoder,
+        "_incremental_step",
+        forced_incremental_step,
+    )
+    sampled_input, loss_targets = model._scheduled_sampling_inputs(
+        source,
+        stacked_targets[:, :-1],
+        None,
+        stacked_targets=stacked_targets,
+        probability=1.0,
+        input_token_dropout=0.0,
+    )
+
+    assert positions == [0, 1]
+    assert sampled_input.tolist() == [
+        [
+            tree_tokenizer.bos_id,
+            tokens["A0"],
+            tree_tokenizer.eos_id,
+            tree_tokenizer.pad_id,
+            tree_tokenizer.pad_id,
+        ]
+    ]
+    assert loss_targets.tolist() == [
+        [
+            tree_tokenizer.bos_id,
+            tokens["SEQ"],
+            tree_tokenizer.pad_id,
+            tree_tokenizer.pad_id,
+            tree_tokenizer.pad_id,
+            tree_tokenizer.pad_id,
+        ]
+    ]
+
+
+def test_resume_allows_and_reports_scheduled_sampling_policy_overrides():
+    checkpoint_config = TrainConfig(device="cpu")
+    synthetic_config = SyntheticConfig()
+    checkpoint = {
+        "train_config": asdict(checkpoint_config),
+        "synthetic_config": synthetic_config.to_dict(),
+    }
+    requested = replace(
+        checkpoint_config,
+        epochs=checkpoint_config.epochs + 1,
+        scheduled_sampling_max=0.0,
+    )
+
+    overrides = validate_resume_configuration(
+        checkpoint,
+        requested,
+        synthetic_config,
+    )
+
+    assert overrides == {
+        "scheduled_sampling_max": {
+            "checkpoint": checkpoint_config.scheduled_sampling_max,
+            "requested": 0.0,
+        }
+    }
+    with pytest.raises(ValueError, match="learning_rate"):
+        validate_resume_configuration(
+            checkpoint,
+            replace(requested, learning_rate=1e-3),
+            synthetic_config,
+        )
 
 
 def test_positive_latent_alignment_is_real_and_uses_family_views():

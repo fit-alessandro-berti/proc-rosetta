@@ -338,6 +338,12 @@ synchronized with that history before training continues. Checkpoints created
 before resume-state support can still be continued from their model weights,
 but their optimizer momentum and exact random state cannot be recovered.
 
+Scheduled-sampling policy can be changed while resuming. For example, continue
+an epoch-19 checkpoint without scheduled sampling using
+`--scheduled-sampling-max 0`. Overrides to the maximum, start epoch, or ramp
+length are logged and recorded in the first new checkpoint-history row. Other
+training-configuration differences remain rejected on resume.
+
 Useful training controls:
 
 ```bash

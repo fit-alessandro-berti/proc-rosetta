@@ -295,6 +295,9 @@ def multimodal_tree_loss(
         decoder_targets = {
             name: tree_tokens for name in ("tree", "trace", "petri")
         }
+    decoder_loss_targets = outputs.get("decoder_loss_targets")
+    if not isinstance(decoder_loss_targets, dict):
+        decoder_loss_targets = decoder_targets
     logits = outputs["tree_logits"]
     dists = outputs["dists"]
     assert isinstance(logits, dict)
@@ -304,7 +307,7 @@ def multimodal_tree_loss(
     def reconstruction(name: str) -> torch.Tensor:
         return sequence_cross_entropy(
             logits[name],
-            decoder_targets[name][:, 1:],
+            decoder_loss_targets[name][:, 1:],
             pad_id,
             label_smoothing=weights.label_smoothing,
             token_weights=token_weight_tensor,

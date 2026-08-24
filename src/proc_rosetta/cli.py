@@ -212,7 +212,12 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--trace-set-layers", type=int, default=1)
     train.add_argument("--petri-message-passing-steps", type=int, default=5)
     train.add_argument("--decoder-input-dropout", type=float, default=0.15)
-    train.add_argument("--scheduled-sampling-max", type=float, default=0.075)
+    train.add_argument(
+        "--scheduled-sampling-max",
+        type=float,
+        default=0.075,
+        help="Maximum scheduled-sampling probability; set to 0 to disable it.",
+    )
     train.add_argument("--scheduled-sampling-start-epoch", type=int, default=20)
     train.add_argument("--scheduled-sampling-ramp-epochs", type=int, default=20)
     train.add_argument("--gradient-clip-norm", type=float, default=5.0)

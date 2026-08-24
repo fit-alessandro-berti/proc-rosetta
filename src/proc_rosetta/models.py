@@ -761,6 +761,7 @@ class GrammarTreeDecoder(nn.Module):
         position: int,
         memory: torch.Tensor,
         layer_caches: list[torch.Tensor | None],
+        input_token_dropout: float = 0.0,
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         """Evaluate one decoder position while caching causal self-attention keys."""
 
@@ -768,6 +769,13 @@ class GrammarTreeDecoder(nn.Module):
         x = x + self.position_embedding(
             torch.full_like(input_token, position)
         ).unsqueeze(1)
+        if self.training and input_token_dropout > 0:
+            drop = torch.rand(input_token.shape, device=input_token.device)
+            drop = drop < input_token_dropout
+            drop &= input_token.ne(self.tokenizer.bos_id)
+            drop &= input_token.ne(self.tokenizer.pad_id)
+            x = x.masked_fill(drop.view(-1, 1, 1), 0.0)
+        x = self.dropout(x)
         next_caches: list[torch.Tensor] = []
         for layer, cached in zip(self.decoder.layers, layer_caches):
             if not layer.norm_first:
@@ -798,6 +806,62 @@ class GrammarTreeDecoder(nn.Module):
         if self.decoder.norm is not None:
             x = self.decoder.norm(x)
         return x, next_caches
+
+    def _incremental_step(
+        self,
+        input_token: torch.Tensor,
+        position: int,
+        memory: torch.Tensor,
+        layer_caches: list[torch.Tensor | None],
+        *,
+        open_nodes: torch.Tensor,
+        pending_operator: torch.Tensor,
+        activity_mask: torch.Tensor | None = None,
+        activity_memory: torch.Tensor | None = None,
+        allowed_activity_mask: torch.Tensor | None = None,
+        avoid_duplicate_activity_labels: bool = False,
+        duplicate_policy: str = "disallow",
+        used_activity_mask: torch.Tensor | None = None,
+        input_token_dropout: float = 0.0,
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        """Decode one constrained position using reusable incremental state."""
+
+        hidden, next_caches = self._incremental_hidden(
+            input_token,
+            position,
+            memory,
+            layer_caches,
+            input_token_dropout=input_token_dropout,
+        )
+        logits = self._project_hidden(hidden)
+        one_token = input_token.unsqueeze(1)
+        source_constraint = self.decode_constraint_mask(
+            one_token,
+            allowed_activity_mask=allowed_activity_mask,
+        )
+        logits = logits.masked_fill(~source_constraint, -torch.inf)
+        if activity_mask is not None:
+            logits = self._mix_activity_copy(
+                logits,
+                hidden,
+                activity_mask,
+                activity_memory,
+                allowed_activity_mask,
+            )
+        grammar = self._incremental_grammar_mask(
+            open_nodes,
+            pending_operator,
+        ).unsqueeze(1)
+        hard_constraint = self.decode_constraint_mask(
+            one_token,
+            grammar_mask=grammar,
+            allowed_activity_mask=allowed_activity_mask,
+            avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+            duplicate_policy=duplicate_policy,
+            used_activity_mask=used_activity_mask,
+        )
+        logits = logits.masked_fill(~hard_constraint, -torch.inf)
+        return logits[:, 0], next_caches
 
     def _incremental_grammar_mask(
         self,
@@ -981,42 +1045,22 @@ class GrammarTreeDecoder(nn.Module):
         caches: list[torch.Tensor | None] = [None] * len(self.decoder.layers)
         current = generated[:, 0]
         for position in range(max_length - 1):
-            hidden, caches = self._incremental_hidden(
+            logits, caches = self._incremental_step(
                 current,
                 position,
                 memory,
                 caches,
-            )
-            logits = self._project_hidden(hidden)
-            one_token = current.unsqueeze(1)
-            source_constraint = self.decode_constraint_mask(
-                one_token,
-                allowed_activity_mask=allowed_activity_mask,
-            )
-            logits = logits.masked_fill(~source_constraint, -torch.inf)
-            if activity_mask is not None:
-                logits = self._mix_activity_copy(
-                    logits,
-                    hidden,
-                    activity_mask,
-                    activity_memory,
-                    allowed_activity_mask,
-                )
-            grammar = self._incremental_grammar_mask(
-                open_nodes,
-                pending_operator,
-            ).unsqueeze(1)
-            hard_constraint = self.decode_constraint_mask(
-                one_token,
-                grammar_mask=grammar,
+                open_nodes=open_nodes,
+                pending_operator=pending_operator,
+                activity_mask=activity_mask,
+                activity_memory=activity_memory,
                 allowed_activity_mask=allowed_activity_mask,
                 avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
                 duplicate_policy=duplicate_policy,
                 used_activity_mask=used,
             )
-            logits = logits.masked_fill(~hard_constraint, -torch.inf)
             active = ~finished
-            next_token = logits[:, 0].argmax(dim=-1)
+            next_token = logits.argmax(dim=-1)
             next_token = torch.where(
                 active,
                 next_token,
@@ -1334,21 +1378,29 @@ class ProcRosettaModel(nn.Module):
             if any(value is None for value in allowed_rows)
             else torch.cat(allowed_rows, dim=0)
         )
-        teacher_logits = self.tree_decoder(
+        decoder_loss_targets = decoder_targets
+        if self.training and scheduled_sampling_probability > 0:
+            stacked_targets = torch.cat(
+                [decoder_targets[name] for name in names],
+                dim=0,
+            )
+            stacked_input, stacked_loss_targets = self._scheduled_sampling_inputs(
+                stacked_distribution,
+                stacked_input,
+                stacked_allowed,
+                stacked_targets=stacked_targets,
+                probability=scheduled_sampling_probability,
+                input_token_dropout=input_token_dropout,
+            )
+            split_loss_targets = stacked_loss_targets.split(batch_size, dim=0)
+            decoder_loss_targets = dict(zip(names, split_loss_targets))
+        stacked_logits = self.tree_decoder(
             stacked_distribution,
             stacked_input,
             allowed_activity_mask=stacked_allowed,
             input_token_dropout=input_token_dropout,
         )
-        if self.training and scheduled_sampling_probability > 0:
-            teacher_logits = self._scheduled_sampling_logits(
-                stacked_distribution,
-                stacked_input,
-                stacked_allowed,
-                probability=scheduled_sampling_probability,
-                input_token_dropout=input_token_dropout,
-            )
-        split_logits = teacher_logits.split(batch_size, dim=0)
+        split_logits = stacked_logits.split(batch_size, dim=0)
         logits = dict(zip(names, split_logits))
         contrastive_embeddings = {
             name: F.normalize(self.contrastive_head(dists[name].mu), dim=-1)
@@ -1360,61 +1412,124 @@ class ProcRosettaModel(nn.Module):
             "contrastive_embeddings": contrastive_embeddings,
             "tree_logits": logits,
             "decoder_targets": decoder_targets,
+            "decoder_loss_targets": decoder_loss_targets,
         }
 
-    def _scheduled_sampling_logits(
+    @torch.no_grad()
+    def _scheduled_sampling_inputs(
         self,
         source: LatentDistribution,
         teacher_input: torch.Tensor,
         allowed_activity_mask: torch.Tensor | None,
         *,
+        stacked_targets: torch.Tensor,
         probability: float,
         input_token_dropout: float,
-    ) -> torch.Tensor:
-        """Sample a legal prefix one token at a time.
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Build sampled prefixes with cached, graph-free incremental decoding.
 
         Every predicted replacement is produced under the same grammar and
         source-activity constraints as normal decoding.  A teacher token that
-        became illegal under a sampled prefix is replaced unconditionally, and
-        rows are padded after EOS/PAD instead of sampling beyond termination.
+        became illegal under a sampled prefix is replaced unconditionally and
+        excluded from the reconstruction loss. Rows are compacted after
+        EOS/PAD or the end of their teacher target, so completed sequences do
+        not consume later incremental decoder steps.
         """
 
         sampled_input = torch.full_like(teacher_input, self.tree_tokenizer.pad_id)
         sampled_input[:, 0] = teacher_input[:, 0]
-        active = sampled_input[:, 0].ne(self.tree_tokenizer.eos_id)
-        step_logits: list[torch.Tensor] = []
+        loss_targets = torch.full_like(stacked_targets, self.tree_tokenizer.pad_id)
+        loss_targets[:, 0] = stacked_targets[:, 0]
+
+        memory, activity_mask = self.tree_decoder.source_memory(source)
+        activity_memory = source.activity_memory
+        batch_size = teacher_input.shape[0]
+        row_ids = torch.arange(batch_size, device=teacher_input.device)
+        row_ids = row_ids[
+            teacher_input[:, 0].ne(self.tree_tokenizer.eos_id)
+            & teacher_input[:, 0].ne(self.tree_tokenizer.pad_id)
+            & stacked_targets[:, 1].ne(self.tree_tokenizer.pad_id)
+        ]
+        memory = memory[row_ids]
+        if activity_mask is not None:
+            activity_mask = activity_mask[row_ids]
+        if activity_memory is not None:
+            activity_memory = activity_memory[row_ids]
+        if allowed_activity_mask is not None:
+            allowed_activity_mask = allowed_activity_mask.to(teacher_input.device)
+            if allowed_activity_mask.ndim == 1:
+                allowed_activity_mask = allowed_activity_mask.unsqueeze(0)
+            if allowed_activity_mask.shape[0] == 1 and batch_size > 1:
+                allowed_activity_mask = allowed_activity_mask.expand(batch_size, -1)
+            allowed_activity_mask = allowed_activity_mask[row_ids]
+
+        open_nodes = torch.ones(
+            row_ids.numel(), dtype=torch.long, device=teacher_input.device
+        )
+        pending_operator = torch.zeros_like(open_nodes)
+        caches: list[torch.Tensor | None] = [None] * len(
+            self.tree_decoder.decoder.layers
+        )
+        current = teacher_input[row_ids, 0]
         for position in range(teacher_input.shape[1]):
-            prefix = sampled_input[:, : position + 1]
-            logits = self.tree_decoder(
-                source,
-                prefix,
+            if row_ids.numel() == 0:
+                break
+            current_logits, caches = self.tree_decoder._incremental_step(
+                current,
+                position,
+                memory,
+                caches,
+                open_nodes=open_nodes,
+                pending_operator=pending_operator,
+                activity_mask=activity_mask,
+                activity_memory=activity_memory,
                 allowed_activity_mask=allowed_activity_mask,
                 input_token_dropout=input_token_dropout,
             )
-            current = logits[:, -1]
-            step_logits.append(current)
+            teacher_next = stacked_targets[row_ids, position + 1]
+            teacher_is_legal = torch.isfinite(
+                current_logits.gather(1, teacher_next.unsqueeze(1)).squeeze(1)
+            )
+            legal_target = teacher_next.ne(self.tree_tokenizer.pad_id)
+            legal_target &= teacher_is_legal
+            loss_targets[row_ids, position + 1] = torch.where(
+                legal_target,
+                teacher_next,
+                torch.full_like(teacher_next, self.tree_tokenizer.pad_id),
+            )
             if position + 1 >= teacher_input.shape[1]:
                 continue
 
-            teacher_next = teacher_input[:, position + 1]
-            prediction = current.detach().argmax(dim=-1)
-            teacher_is_legal = torch.isfinite(
-                current.detach().gather(1, teacher_next.unsqueeze(1)).squeeze(1)
-            )
-            replace = (
-                torch.rand(teacher_next.shape, device=teacher_next.device) < probability
-            )
-            replace = active & (replace | ~teacher_is_legal)
+            prediction = current_logits.argmax(dim=-1)
+            replace = torch.rand(teacher_next.shape, device=teacher_next.device)
+            replace = (replace < probability) | ~teacher_is_legal
             next_token = torch.where(replace, prediction, teacher_next)
-            next_token = torch.where(
-                active,
-                next_token,
-                torch.full_like(next_token, self.tree_tokenizer.pad_id),
+            sampled_input[row_ids, position + 1] = next_token
+            active = next_token.ne(self.tree_tokenizer.eos_id)
+            active &= next_token.ne(self.tree_tokenizer.pad_id)
+            active &= stacked_targets[row_ids, position + 2].ne(
+                self.tree_tokenizer.pad_id
             )
-            sampled_input[:, position + 1] = next_token
-            active = active & next_token.ne(self.tree_tokenizer.eos_id)
-            active = active & next_token.ne(self.tree_tokenizer.pad_id)
-        return torch.stack(step_logits, dim=1)
+            self.tree_decoder._advance_incremental_grammar(
+                next_token,
+                open_nodes,
+                pending_operator,
+                torch.ones_like(active),
+            )
+
+            row_ids = row_ids[active]
+            current = next_token[active]
+            memory = memory[active]
+            open_nodes = open_nodes[active]
+            pending_operator = pending_operator[active]
+            caches = [cache[active] for cache in caches]
+            if activity_mask is not None:
+                activity_mask = activity_mask[active]
+            if activity_memory is not None:
+                activity_memory = activity_memory[active]
+            if allowed_activity_mask is not None:
+                allowed_activity_mask = allowed_activity_mask[active]
+        return sampled_input, loss_targets
 
 
 def _stack_latent_distributions(
