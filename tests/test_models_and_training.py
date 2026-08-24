@@ -29,9 +29,11 @@ from proc_rosetta.training import (
     build_model,
     build_optimizer,
     checkpoint_selection_key,
+    epoch_snapshot_directory,
     loss_weights_from_checkpoint,
     loss_weights_from_config,
     replay_scheduler_history,
+    save_epoch_snapshot,
     stage_acceptance_report,
     train_synthetic,
     train_from_data_dir,
@@ -223,6 +225,51 @@ def test_resume_allows_and_reports_scheduled_sampling_policy_overrides():
             replace(requested, learning_rate=1e-3),
             synthetic_config,
         )
+
+
+def test_epoch_snapshot_archives_checkpoint_and_matching_metrics(tmp_path):
+    checkpoint = tmp_path / "checkpoints" / "model.pt"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"epoch-one")
+    metrics = checkpoint.parent / "training_metrics.csv"
+    history = [
+        {
+            "epoch": 1,
+            "training": {"loss": 1.0},
+            "validation": {"loss": 1.5},
+            "generalization_gap": {"loss": 0.5},
+            "learning_rate": 1e-3,
+            "epoch_seconds": 2.0,
+            "best_validation_loss": 1.5,
+            "is_best": True,
+            "epochs_without_improvement": 0,
+        }
+    ]
+
+    archived_checkpoint, archived_metrics = save_epoch_snapshot(
+        checkpoint,
+        metrics,
+        history,
+        epoch=1,
+    )
+
+    assert epoch_snapshot_directory(checkpoint, 1) == checkpoint.parent / "00001"
+    assert archived_checkpoint == checkpoint.parent / "00001" / "model.pt"
+    assert archived_checkpoint.read_bytes() == b"epoch-one"
+    assert archived_metrics == checkpoint.parent / "00001" / "training_metrics.csv"
+    assert archived_metrics.read_text(encoding="utf-8").splitlines()[1].startswith("1,")
+
+    checkpoint.write_bytes(b"epoch-two")
+    second_checkpoint, _ = save_epoch_snapshot(
+        checkpoint,
+        metrics,
+        [*history, {**history[0], "epoch": 2}],
+        epoch=2,
+    )
+    assert second_checkpoint.read_bytes() == b"epoch-two"
+    assert archived_checkpoint.read_bytes() == b"epoch-one"
+    with pytest.raises(ValueError, match="epoch >= 1"):
+        epoch_snapshot_directory(checkpoint, 0)
 
 
 def test_positive_latent_alignment_is_real_and_uses_family_views():

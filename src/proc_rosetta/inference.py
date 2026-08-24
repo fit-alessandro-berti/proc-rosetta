@@ -208,8 +208,12 @@ def list_trusted_checkpoints(directory: str | Path) -> list[Path]:
     if not root.exists():
         return []
     return sorted(
-        (path for path in root.glob("*.pt") if path.is_file()),
-        key=lambda path: ("best" not in path.stem.lower(), path.name.lower()),
+        (path for path in root.rglob("*.pt") if path.is_file()),
+        key=lambda path: (
+            "best" not in path.stem.lower(),
+            len(path.relative_to(root).parts) > 1,
+            path.relative_to(root).as_posix().lower(),
+        ),
     )
 
 

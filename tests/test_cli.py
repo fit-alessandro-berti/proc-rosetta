@@ -330,6 +330,16 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert "learning_rate" in row
     assert "epoch_seconds" in row
     assert checkpoint.exists()
+    epoch_one_directory = checkpoint.parent / "00001"
+    epoch_one_checkpoint = epoch_one_directory / checkpoint.name
+    epoch_one_metrics = epoch_one_directory / metrics_csv.name
+    assert epoch_one_checkpoint.exists()
+    assert epoch_one_metrics.exists()
+    assert torch.load(
+        epoch_one_checkpoint,
+        map_location="cpu",
+        weights_only=False,
+    )["epoch"] == 1
     assert checkpoint.with_name("model.best.pt").exists()
     for objective in ("loss", "trace", "edit", "latent"):
         assert checkpoint.with_name(f"model.best_{objective}.pt").exists()
@@ -405,6 +415,17 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
         }
     }
     assert "optimizer_state_dict" in resumed
+    assert (checkpoint.parent / "00002" / checkpoint.name).exists()
+    with (checkpoint.parent / "00002" / metrics_csv.name).open(
+        newline="",
+        encoding="utf-8",
+    ) as handle:
+        assert [row["epoch"] for row in csv.DictReader(handle)] == ["1", "2"]
+    assert torch.load(
+        epoch_one_checkpoint,
+        map_location="cpu",
+        weights_only=False,
+    )["version"] == 6
 
     assert main(
         [
@@ -443,6 +464,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
         "edit",
         "latent",
     }
+    epoch_three_checkpoint = checkpoint.parent / "00003" / checkpoint.name
+    assert epoch_three_checkpoint.exists()
 
     assert main(
         [
@@ -450,7 +473,7 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
             "--data-dir",
             str(data_dir),
             "--checkpoint",
-            str(checkpoint),
+            str(epoch_three_checkpoint),
             "--checkpoint-selection",
             "latest",
             "--batch-size",

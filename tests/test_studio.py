@@ -49,6 +49,27 @@ def studio_checkpoint():
     return load_trusted_checkpoint(paths[0], trusted_directory=CHECKPOINT_DIR, device="cpu")
 
 
+def test_trusted_checkpoint_listing_discovers_epoch_subdirectories(tmp_path):
+    best = tmp_path / "model.best.pt"
+    latest = tmp_path / "model.pt"
+    epoch_one = tmp_path / "00001" / "model.pt"
+    epoch_two = tmp_path / "00002" / "model.pt"
+    for path in (best, latest, epoch_one, epoch_two):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"checkpoint")
+    (tmp_path / "00002" / "training_metrics.csv").write_text(
+        "epoch\n2\n",
+        encoding="utf-8",
+    )
+
+    assert list_trusted_checkpoints(tmp_path) == [
+        best.resolve(),
+        latest.resolve(),
+        epoch_one.resolve(),
+        epoch_two.resolve(),
+    ]
+
+
 def test_trace_selection_is_reproducible_and_bounded():
     traces = tuple((f"A{index % 3}", str(index)) for index in range(20))
     settings = PreprocessingSettings(

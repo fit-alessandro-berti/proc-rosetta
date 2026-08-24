@@ -7,6 +7,7 @@ from dataclasses import asdict
 from dataclasses import dataclass
 from pathlib import Path
 import random
+import shutil
 import sys
 from time import perf_counter
 
@@ -1962,8 +1963,16 @@ def train_from_data_dir(
                         ema=ema,
                     )
         append_metrics_csv(metrics_csv_path, row)
+        epoch_checkpoint_path, epoch_metrics_path = save_epoch_snapshot(
+            checkpoint_path=checkpoint_path,
+            metrics_csv_path=metrics_csv_path,
+            history=history,
+            epoch=epoch,
+        )
         debug(
             f"Epoch {epoch} checkpoint saved to {checkpoint_path}; "
+            f"epoch snapshot: {epoch_checkpoint_path.parent}; "
+            f"metrics: {epoch_metrics_path.name}; "
             f"best checkpoint: {best_checkpoint_path if improved else 'unchanged'} ({elapsed:.1f}s)",
             enabled=show_progress,
         )
@@ -2351,6 +2360,48 @@ def flatten_epoch_row(row: dict[str, object]) -> dict[str, object]:
         flat[f"validation_{name}"] = validation.get(name, "")
         flat[f"gap_{name}"] = gap.get(name, "")
     return flat
+
+
+def epoch_snapshot_directory(
+    checkpoint_path: str | Path,
+    epoch: int,
+) -> Path:
+    """Return the stable sibling directory used for one epoch snapshot."""
+
+    if epoch < 1:
+        raise ValueError("epoch snapshots require epoch >= 1")
+    return Path(checkpoint_path).parent / f"{epoch:05d}"
+
+
+def save_epoch_snapshot(
+    checkpoint_path: str | Path,
+    metrics_csv_path: str | Path,
+    history: list[dict[str, object]],
+    epoch: int,
+) -> tuple[Path, Path]:
+    """Atomically archive the resumable checkpoint and matching epoch metrics."""
+
+    source_checkpoint = Path(checkpoint_path)
+    if not source_checkpoint.is_file():
+        raise FileNotFoundError(
+            f"latest checkpoint does not exist for epoch snapshot: {source_checkpoint}"
+        )
+    snapshot_directory = epoch_snapshot_directory(source_checkpoint, epoch)
+    snapshot_directory.mkdir(parents=True, exist_ok=True)
+    snapshot_checkpoint = snapshot_directory / source_checkpoint.name
+    snapshot_metrics = snapshot_directory / Path(metrics_csv_path).name
+    temporary_checkpoint = snapshot_checkpoint.with_name(
+        f".{snapshot_checkpoint.name}.tmp"
+    )
+
+    try:
+        shutil.copy2(source_checkpoint, temporary_checkpoint)
+        write_metrics_csv(snapshot_metrics, history)
+        temporary_checkpoint.replace(snapshot_checkpoint)
+    finally:
+        if temporary_checkpoint.exists():
+            temporary_checkpoint.unlink()
+    return snapshot_checkpoint, snapshot_metrics
 
 
 def save_checkpoint(

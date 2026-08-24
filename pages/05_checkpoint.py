@@ -137,7 +137,8 @@ with config_tab:
         clear_inference_caches(st.session_state)
         st.rerun()
 with compare_tab:
-    paths = list_trusted_checkpoints(trusted_checkpoint_directory())
+    checkpoint_directory = trusted_checkpoint_directory()
+    paths = list_trusted_checkpoints(checkpoint_directory)
     comparison = []
     for path in paths:
         try:
@@ -145,7 +146,7 @@ with compare_tab:
             meta = checkpoint_metadata(path, model, raw)
             comparison.append(
                 {
-                    "Checkpoint": meta.filename,
+                    "Checkpoint": path.relative_to(checkpoint_directory).as_posix(),
                     "Type": meta.checkpoint_type,
                     "Epoch": meta.epoch,
                     "Latent": meta.latent_dimension,
@@ -156,7 +157,12 @@ with compare_tab:
                 }
             )
         except Exception as exc:
-            comparison.append({"Checkpoint": path.name, "Error": f"{type(exc).__name__}: {exc}"})
+            comparison.append(
+                {
+                    "Checkpoint": path.relative_to(checkpoint_directory).as_posix(),
+                    "Error": f"{type(exc).__name__}: {exc}",
+                }
+            )
     st.dataframe(comparison, use_container_width=True, hide_index=True)
     st.caption(
         "Embeddings from different checkpoints are never combined automatically, even when dimensions match."

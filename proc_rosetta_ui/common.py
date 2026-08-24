@@ -81,7 +81,7 @@ def checkpoint_sidebar(*, required: bool = True) -> LoadedCheckpoint | None:
             "Checkpoint",
             options=paths,
             index=default_index,
-            format_func=lambda path: path.name,
+            format_func=lambda path: path.relative_to(directory).as_posix(),
             key="checkpoint_selector",
         )
         device = st.selectbox(

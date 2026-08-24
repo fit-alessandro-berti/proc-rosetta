@@ -130,7 +130,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     train = subparsers.add_parser("train", help="train the first-stage multimodal model")
     train.add_argument("--data-dir", default="data")
-    train.add_argument("--checkpoint", default="checkpoints/proc_rosetta.pt")
+    train.add_argument(
+        "--checkpoint",
+        default="checkpoints/proc_rosetta.pt",
+        help=(
+            "latest checkpoint path; every completed epoch is also archived as "
+            "<parent>/00001/<filename>, <parent>/00002/<filename>, and so on"
+        ),
+    )
     train.add_argument("--epochs", type=int, default=100)
     train.add_argument("--batch-size", type=int, default=128)
     train.add_argument("--learning-rate", type=float, default=3e-4)
