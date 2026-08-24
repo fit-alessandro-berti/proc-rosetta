@@ -380,6 +380,7 @@ def decode_tree_from_latent(
             ),
             constrain_to_source_activities=constrain_source_activities,
             avoid_duplicate_activity_labels=avoid_duplicate_transitions,
+            completion_policy="bounded",
         ),
     )
     token_ids = [int(token_id) for token_id in decoded[0].detach().cpu().tolist()]
@@ -397,6 +398,7 @@ def decode_tree_from_latent(
         allowed_activity_slots=slots,
         constrain_to_source_activities=constrain_source_activities,
         avoid_duplicate_activity_labels=avoid_duplicate_transitions,
+        completion_policy="bounded",
         max_length=max_decode_length,
     )
     if result.tree is None:

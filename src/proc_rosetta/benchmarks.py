@@ -93,7 +93,7 @@ def rich_test_report(
         show_progress=show_progress,
     )
     test_debug(
-        f"[3/{stage_count}] Evaluating {4 * len(samples)} greedy decodes",
+        f"[3/{stage_count}] Evaluating {8 * len(samples)} matched raw/deployment decodes",
         enabled=show_progress,
     )
     decode_quality = decode_quality_report(
@@ -103,6 +103,16 @@ def rich_test_report(
         device=device_name,
         max_decode_length=max_decode_length,
         show_progress=show_progress,
+        completion_policy="prefix_only",
+    )
+    deployment_decode_quality = decode_quality_report(
+        model,
+        samples,
+        batch_size=batch_size,
+        device=device_name,
+        max_decode_length=max_decode_length,
+        show_progress=show_progress,
+        completion_policy="bounded",
     )
     test_debug(
         f"[4/{stage_count}] Running {2 * len(samples)} "
@@ -178,6 +188,7 @@ def rich_test_report(
             if key != "mean_l1"
         },
         "decode_quality": decode_quality,
+        "deployment_decode_quality": deployment_decode_quality,
         "discovery_quality": discovery_quality,
         "cross_modal_retrieval": cross_modal_retrieval(
             neural_embeddings,
@@ -799,6 +810,7 @@ def decode_quality_report(
     max_decode_length: int = 512,
     behavior_traces_per_sample: int = 128,
     show_progress: bool = False,
+    completion_policy: str = "prefix_only",
 ) -> dict[str, object]:
     model.eval()
     torch_device = resolve_device(device)
@@ -850,6 +862,7 @@ def decode_quality_report(
                     latent,
                     max_length=max_decode_length,
                     allowed_activity_mask=allowed_masks[name],
+                    completion_policy=completion_policy,
                 )
                 for sample, token_ids in zip(batch_samples, decoded.detach().cpu().tolist()):
                     row = evaluate_single_decode(
@@ -857,6 +870,7 @@ def decode_quality_report(
                         sample,
                         token_ids,
                         behavior_traces_per_sample=behavior_traces_per_sample,
+                        completion_policy=completion_policy,
                     )
                     rows[name].append(row)
                     successful_decodes += int(row["behavior_evaluable"])
@@ -870,10 +884,16 @@ def decode_quality_report(
     return {
         "description": (
             "Length-normalized beam decodes from each ProcRosetta source into the grammar-masked "
-            "process-tree decoder. Petri validity is measured by converting the "
-            "decoded process tree to a Petri net."
+            f"process-tree decoder under {completion_policy!r} completion. Petri validity is "
+            "measured by converting the decoded process tree to a Petri net."
+        ),
+        "evaluation_scope": (
+            "raw_model_quality"
+            if completion_policy == "prefix_only"
+            else "deployment_system_quality"
         ),
         "max_decode_length": int(max_decode_length),
+        "completion_policy": completion_policy,
         "behavior_traces_per_sample": int(behavior_traces_per_sample),
         "methods": {name: summarize_decode_quality(values) for name, values in rows.items()},
     }
@@ -886,6 +906,7 @@ def decode_with_beam(
     max_length: int,
     beam_size: int = 5,
     allowed_activity_mask: torch.Tensor | None = None,
+    completion_policy: str = "prefix_only",
 ):
     if hasattr(decoder, "decode_beam"):
         return decoder.decode_beam(
@@ -894,12 +915,14 @@ def decode_with_beam(
             beam_size=beam_size,
             length_penalty=0.7,
             allowed_activity_mask=allowed_activity_mask,
+            completion_policy=completion_policy,
         )
     return decoder.decode_greedy(
         source.mu if hasattr(source, "mu") else source,
         max_length=max_length,
         apply_grammar_mask=True,
         allowed_activity_mask=allowed_activity_mask,
+        completion_policy=completion_policy,
     )
 
 
@@ -913,6 +936,7 @@ def decode_trace_with_conformance_reranking(
     fitness_weight: float = 0.25,
     footprint_precision_weight: float = 0.25,
     allowed_activity_mask: torch.Tensor | None = None,
+    completion_policy: str = "bounded",
 ) -> list[list[int]]:
     decoder = model.tree_decoder
     if not hasattr(decoder, "decode_beam_candidates"):
@@ -922,6 +946,7 @@ def decode_trace_with_conformance_reranking(
             max_length=max_length,
             beam_size=beam_size,
             allowed_activity_mask=allowed_activity_mask,
+            completion_policy=completion_policy,
         )
         return decoded.detach().cpu().tolist()
     candidate_rows = decoder.decode_beam_candidates(
@@ -930,6 +955,7 @@ def decode_trace_with_conformance_reranking(
         beam_size=beam_size,
         length_penalty=0.7,
         allowed_activity_mask=allowed_activity_mask,
+        completion_policy=completion_policy,
     )
     selected: list[list[int]] = []
     for sample, candidates in zip(samples, candidate_rows):
@@ -962,6 +988,7 @@ def evaluate_single_decode(
     sample: ProcessSample,
     token_ids: Sequence[int],
     behavior_traces_per_sample: int = 128,
+    completion_policy: str = "prefix_only",
 ) -> dict[str, object]:
     tokenizer = model.tree_tokenizer
     decoded_tokens = trim_tree_token_sequence(token_ids, tokenizer)
@@ -969,6 +996,25 @@ def evaluate_single_decode(
     target_tokens = tokenizer.encode_tree(sample.tree, canonicalize=False)
     normalized_denominator = max(len(target_tokens), len(decoded_tokens), 1)
     token_edit_distance = levenshtein_distance(target_tokens, decoded_tokens)
+    decoded_names = [
+        tokenizer.tokens[int(token_id)]
+        for token_id in decoded_tokens
+        if 0 <= int(token_id) < tokenizer.vocab_size
+    ]
+    operator_count = sum(name in tokenizer.operator_tokens for name in decoded_names)
+    leaf_count = sum(
+        name == "TAU" or name in tokenizer.activity_tokens
+        for name in decoded_names
+    )
+    unresolved_open_slots: int | None = None
+    try:
+        grammar_state, pending_operator, open_nodes = tokenizer._grammar_state(decoded_tokens)
+        if grammar_state.value != "invalid":
+            unresolved_open_slots = int(open_nodes)
+            if pending_operator is not None:
+                unresolved_open_slots += tokenizer.minimum_legal_arity(pending_operator)
+    except Exception:
+        pass
     row: dict[str, object] = {
         "motif": str(sample.metadata.get("motif", "ordinary_tree")),
         "contains_loop": tree_contains_loop(sample.tree),
@@ -982,6 +1028,12 @@ def evaluate_single_decode(
             )
         ),
         "terminated": tokenizer.eos_id in [int(token_id) for token_id in token_ids],
+        "completion_policy": completion_policy,
+        "generated_length": len(decoded_tokens),
+        "operator_count": operator_count,
+        "leaf_count": leaf_count,
+        "operator_to_leaf_ratio": operator_count / max(leaf_count, 1),
+        "unresolved_open_slots": unresolved_open_slots,
         "valid_tree": False,
         "exact_tree_match": False,
         "petri_convertible": False,
@@ -1038,6 +1090,17 @@ def summarize_decode_quality(rows: Sequence[dict[str, object]]) -> dict[str, obj
             mean(row["normalized_token_edit_distance"] for row in rows)
         ),
         "mean_behavior_l1": round_float(mean(behavior_values)),
+        "mean_generated_length": round_float(mean(row["generated_length"] for row in rows)),
+        "mean_operator_to_leaf_ratio": round_float(
+            mean(row["operator_to_leaf_ratio"] for row in rows)
+        ),
+        "mean_unresolved_open_slots": round_float(
+            mean(
+                row["unresolved_open_slots"]
+                for row in rows
+                if isinstance(row.get("unresolved_open_slots"), int)
+            )
+        ),
         "median_behavior_l1": round_float(float(np.median(behavior_values))) if behavior_values else 0.0,
         "invalid_decode_count": count_false(rows, "valid_tree"),
         "petri_conversion_error_count": count_false(rows, "petri_convertible"),

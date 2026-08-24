@@ -5,6 +5,7 @@ from copy import deepcopy
 import random
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from proc_rosetta.artifact_io import (
@@ -373,6 +374,276 @@ def test_vectorized_grammar_masks_match_reference_for_random_prefixes():
     )
 
 
+def test_bounded_completion_masks_exact_boundaries_and_operator_arities():
+    tokenizer = TreeTokenizer(max_activities=2, max_arity=4)
+    tokens = tokenizer.token_to_id
+
+    shortest = tokenizer.next_token_mask(
+        [tokenizer.bos_id],
+        remaining_tokens=2,
+    )
+    assert shortest[tokens["TAU"]]
+    assert shortest[tokens["A0"]]
+    assert not shortest[tokens["SEQ"]]
+
+    operator_boundary = tokenizer.next_token_mask(
+        [tokenizer.bos_id],
+        remaining_tokens=5,
+    )
+    assert operator_boundary[tokens["SEQ"]]
+    assert not tokenizer.next_token_mask(
+        [tokenizer.bos_id],
+        remaining_tokens=4,
+    )[tokens["SEQ"]]
+
+    pending_boundary = tokenizer.next_token_mask(
+        [tokenizer.bos_id, tokens["SEQ"]],
+        remaining_tokens=4,
+    )
+    assert pending_boundary[tokens["ARITY_2"]]
+    assert not pending_boundary[tokens["ARITY_3"]]
+
+    class TernaryXorTokenizer(TreeTokenizer):
+        def legal_arities(self, operator: str | int) -> tuple[int, ...]:
+            name = self.tokens[int(operator)] if isinstance(operator, int) else operator
+            return (3,) if name == "XOR" else super().legal_arities(operator)
+
+    specialized = TernaryXorTokenizer(max_activities=2, max_arity=4)
+    specialized_tokens = specialized.token_to_id
+    root_boundary = specialized.next_token_mask(
+        [specialized.bos_id],
+        remaining_tokens=5,
+    )
+    assert root_boundary[specialized_tokens["SEQ"]]
+    assert not root_boundary[specialized_tokens["XOR"]]
+    xor_arity = specialized.next_token_mask(
+        [specialized.bos_id, specialized_tokens["XOR"]],
+        remaining_tokens=5,
+    )
+    assert xor_arity[specialized_tokens["ARITY_3"]]
+    assert not xor_arity[specialized_tokens["ARITY_2"]]
+
+
+def test_every_bounded_candidate_leaves_a_fitting_completion():
+    tokenizer = TreeTokenizer(max_activities=3, max_arity=4)
+    pending_values = [
+        0,
+        *(tokenizer.token_to_id[name] for name in tokenizer.operator_tokens),
+    ]
+    for open_slots in range(5):
+        for pending in pending_values:
+            if pending and open_slots < 0:
+                continue
+            open_nodes = torch.tensor([open_slots])
+            pending_operator = torch.tensor([pending])
+            grammar = tokenizer.prefix_grammar_mask(open_nodes, pending_operator)[0]
+            for remaining in range(1, 11):
+                completion = tokenizer.completion_feasibility_mask(
+                    open_nodes,
+                    pending_operator,
+                    remaining,
+                )[0]
+                for token_id in torch.where(grammar)[0].tolist():
+                    next_open = open_nodes.clone()
+                    next_pending = pending_operator.clone()
+                    tokenizer.advance_grammar_state(
+                        torch.tensor([token_id]),
+                        next_open,
+                        next_pending,
+                        torch.tensor([True]),
+                    )
+                    minimum_after = (
+                        0
+                        if token_id == tokenizer.eos_id
+                        else int(
+                            tokenizer.minimum_tokens_to_finish(
+                                next_open,
+                                next_pending,
+                            )[0]
+                        )
+                    )
+                    assert bool(completion[token_id]) == (
+                        minimum_after <= remaining - 1
+                    )
+
+
+def _expansion_biased_model() -> ProcRosettaModel:
+    model = _model(2)
+    tokenizer = model.tree_tokenizer
+    decoder = model.tree_decoder
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.zero_()
+        structural_ids = decoder.structural_token_ids.tolist()
+        loop_output = structural_ids.index(tokenizer.token_to_id["LOOP"])
+        decoder.structural_output.bias[loop_output] = 20.0
+        arity_ids = decoder.arity_token_ids.tolist()
+        arity_output = arity_ids.index(tokenizer.token_to_id["ARITY_3"])
+        decoder.arity_output.bias[arity_output] = 20.0
+    return model.eval()
+
+
+def test_bounded_runaway_decode_terminates_and_reports_interventions():
+    model = _expansion_biased_model()
+    tokenizer = model.tree_tokenizer
+    latent = torch.zeros(1, 8)
+
+    raw = model.tree_decoder.decode_greedy(
+        latent,
+        max_length=8,
+        completion_policy="prefix_only",
+        constrain_to_source_activities=False,
+        avoid_duplicate_activity_labels=False,
+    )[0].tolist()
+    bounded = model.tree_decoder.decode_greedy(
+        latent,
+        max_length=8,
+        completion_policy="bounded",
+        constrain_to_source_activities=False,
+        avoid_duplicate_activity_labels=False,
+    )[0].tolist()
+    steps = list(
+        decode_latent_iter(
+            model,
+            latent,
+            max_length=8,
+            completion_policy="bounded",
+            constrain_to_source_activities=False,
+            avoid_duplicate_activity_labels=False,
+        )
+    )
+
+    assert tokenizer.eos_id not in raw
+    assert tokenizer.eos_id in bounded
+    tokenizer.decode_tree(bounded)
+    assert any(step.budget_mask_active for step in steps)
+    assert any(step.argmax_overridden for step in steps)
+    overridden = next(step for step in steps if step.argmax_overridden)
+    assert overridden.selected_pre_budget_probability < 1.0
+    assert overridden.selected_conditional_probability >= overridden.selected_pre_budget_probability
+    result = build_decode_result(
+        model,
+        latent,
+        source_artifact_ids=["synthetic"],
+        source_modalities=[ArtifactModality.PROCESS_TREE],
+        latent_source="test",
+        token_ids=bounded,
+        steps=steps,
+        completion_policy="bounded",
+        max_length=8,
+    )
+    assert result.decoder_configuration["completion_policy"] == "bounded"
+    assert result.budget_intervention_steps > 0
+    assert result.argmax_override_steps > 0
+    assert result.minimum_completion_slack is not None
+    assert result.minimum_completion_slack >= 0
+    assert result.raw_unresolved_open_slots == 0
+
+
+def test_bounded_decoding_has_cross_path_decision_parity():
+    model = _expansion_biased_model()
+    tokenizer = model.tree_tokenizer
+    latent = torch.zeros(1, 8)
+    arguments = {
+        "max_length": 8,
+        "completion_policy": "bounded",
+        "constrain_to_source_activities": False,
+        "avoid_duplicate_activity_labels": False,
+    }
+
+    incremental = model.tree_decoder.decode_greedy(latent, **arguments)[0].tolist()
+    model.train()
+    full_prefix = model.tree_decoder.decode_greedy(latent, **arguments)[0].tolist()
+    model.eval()
+    beam = model.tree_decoder.decode_beam_candidates(
+        latent,
+        beam_size=1,
+        **arguments,
+    )[0][0][0]
+    progressive = [tokenizer.bos_id]
+    progressive.extend(
+        step.chosen_token_id
+        for step in decode_latent_iter(model, latent, **arguments)
+    )
+
+    assert incremental == full_prefix == beam == progressive
+
+
+def test_every_bounded_decode_emits_eos_and_converts_to_petri():
+    torch.manual_seed(19)
+    model = _model(3)
+    tokenizer = model.tree_tokenizer
+    latent = torch.randn(12, 8)
+    for max_length in (3, 7, 12):
+        decoded = model.tree_decoder.decode_greedy(
+            latent,
+            max_length=max_length,
+            completion_policy="bounded",
+            constrain_to_source_activities=False,
+            avoid_duplicate_activity_labels=False,
+        )
+        for token_ids in decoded.tolist():
+            assert tokenizer.eos_id in token_ids
+            tree = tokenizer.decode_tree(token_ids)
+            tree_to_petri_net(tree)
+
+
+def test_budget_mask_does_not_renormalize_beam_scores():
+    model = _expansion_biased_model()
+    tokenizer = model.tree_tokenizer
+    prefix = torch.tensor([[tokenizer.bos_id]])
+    scores = model.tree_decoder.next_token_scores(
+        torch.zeros(1, 8),
+        prefix,
+        completion_policy="bounded",
+        remaining_tokens=2,
+    )
+    removed_operator = tokenizer.token_to_id["LOOP"]
+    selected_leaf = tokenizer.token_to_id["TAU"]
+
+    assert scores.prefix_grammar_mask[0, removed_operator]
+    assert not scores.completion_mask[0, removed_operator]
+    assert torch.equal(
+        scores.search_scores[0, selected_leaf],
+        scores.base_log_probs[0, selected_leaf],
+    )
+    surviving_mass = scores.search_scores[0].exp().sum()
+    assert 0 < surviving_mass < 1
+
+
+def test_prefix_only_forward_is_unchanged_and_bounded_contract_is_explicit():
+    model = _model(2)
+    tokenizer = model.tree_tokenizer
+    latent = torch.zeros(1, 8)
+    prefix = torch.tensor([[tokenizer.bos_id]])
+
+    historical = model.tree_decoder(latent, prefix)
+    explicit = model.tree_decoder(
+        latent,
+        prefix,
+        completion_policy="prefix_only",
+    )
+    assert torch.equal(historical, explicit)
+
+    with pytest.raises(ValueError, match="remaining token budget"):
+        model.tree_decoder(latent, prefix, completion_policy="bounded")
+    with pytest.raises(ValueError, match="requires grammar masking"):
+        model.tree_decoder(
+            latent,
+            prefix,
+            apply_grammar_mask=False,
+            completion_policy="bounded",
+            remaining_tokens=2,
+        )
+    with pytest.raises(ValueError, match="max_length >= 3"):
+        model.tree_decoder.decode_greedy(latent, max_length=2)
+    with pytest.raises(ValueError, match="valid grammar prefix"):
+        tokenizer.next_token_mask(
+            [tokenizer.bos_id, tokenizer.eos_id],
+            remaining_tokens=2,
+        )
+
+
 def test_sparse_and_dense_petri_paths_match_outputs_and_gradients():
     torch.manual_seed(2)
     tokenizer = ActivityTokenizer(max_activities=3)
@@ -578,8 +849,14 @@ def test_decode_cache_key_separates_source_alphabet_and_duplicate_policy():
         allowed_slots=[True, False],
         avoid_duplicate_activity_labels=False,
     )
+    raw_policy = _decode_cache_key(
+        **arguments,
+        allowed_slots=[True, False],
+        avoid_duplicate_activity_labels=True,
+        completion_policy="prefix_only",
+    )
 
-    assert len({baseline, different_alphabet, duplicates_allowed}) == 3
+    assert len({baseline, different_alphabet, duplicates_allowed, raw_policy}) == 4
 
 
 def _encoding(

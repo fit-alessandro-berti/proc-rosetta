@@ -63,8 +63,9 @@ tabs = st.tabs(
 )
 with tabs[0]:
     st.caption(
-        "Quick distribution comparison runs automatically. Expensive alignment fitness and precision "
-        "are deliberately kept as a separate manual stage."
+        "Each artifact is decoded twice with the same cap: prefix-only exposes raw model quality, "
+        "while bounded completion measures deployment behavior. Expensive alignment fitness and "
+        "precision are deliberately kept as a separate manual stage."
     )
     exact_behavior = st.checkbox("Also run expensive alignment fitness and precision", False)
     if st.button("Run progressive evaluation", type="primary", disabled=not selected_ids):
@@ -77,25 +78,35 @@ with tabs[0]:
             max_length,
             simulation_count,
             exact_behavior,
+            ["prefix_only", "bounded"],
         )
         rows = evaluation_cache.get(key)
         if rows is None:
             rows = []
             progress = st.progress(0.0, text="Starting evaluation…")
             table = st.empty()
-            for update in decode_quality_iter(
-                chosen,
-                checkpoint,
-                max_length=max_length,
-                simulated_traces=int(simulation_count),
-                exact_conformance=exact_behavior,
-            ):
-                rows.append(update.result)
-                table.dataframe(rows, use_container_width=True, hide_index=True)
-                progress.progress(
-                    update.completed / max(update.total, 1),
-                    text=f"Completed {update.completed}/{update.total} · {update.elapsed_seconds:.1f}s",
-                )
+            policies = ("prefix_only", "bounded")
+            for policy_index, completion_policy in enumerate(policies):
+                for update in decode_quality_iter(
+                    chosen,
+                    checkpoint,
+                    max_length=max_length,
+                    simulated_traces=int(simulation_count),
+                    exact_conformance=exact_behavior,
+                    completion_policy=completion_policy,
+                ):
+                    rows.append(update.result)
+                    table.dataframe(rows, use_container_width=True, hide_index=True)
+                    fraction = (
+                        policy_index + update.completed / max(update.total, 1)
+                    ) / len(policies)
+                    progress.progress(
+                        fraction,
+                        text=(
+                            f"{completion_policy}: {update.completed}/{update.total} · "
+                            f"{update.elapsed_seconds:.1f}s"
+                        ),
+                    )
             cache_put(evaluation_cache, key, rows)
         else:
             st.info("Loaded decode-quality results from the evaluation cache.")

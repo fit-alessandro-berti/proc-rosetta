@@ -28,7 +28,7 @@ from proc_rosetta.artifact_io import (
 )
 from proc_rosetta.behavior import behavioral_distance
 from proc_rosetta.devices import resolve_device
-from proc_rosetta.models import DecodeConstraints, LatentDistribution
+from proc_rosetta.models import CompletionPolicy, DecodeConstraints, LatentDistribution
 from proc_rosetta.pm4py_bridge import (
     TREE_NORMALIZATION_VERSION,
     PetriGraph,
@@ -134,6 +134,15 @@ class DecodeStep:
     open_child_slots: int
     subtree_position: str
     eos_emitted: bool
+    budget_mask_active: bool = False
+    argmax_overridden: bool = False
+    operators_removed: int = 0
+    arities_removed: int = 0
+    pre_budget_top_token: str = ""
+    pre_budget_top_probability: float = 0.0
+    selected_pre_budget_probability: float = 0.0
+    selected_conditional_probability: float = 0.0
+    completion_slack: int | None = None
 
 
 @dataclass
@@ -166,6 +175,13 @@ class DecodeResult:
     duplicate_free: bool = True
     output_fold_changed: bool = False
     output_fold_idempotent: bool = False
+    budget_intervention_steps: int = 0
+    argmax_override_steps: int = 0
+    first_budget_intervention_step: int | None = None
+    minimum_completion_slack: int | None = None
+    operators_removed: int = 0
+    arities_removed: int = 0
+    raw_unresolved_open_slots: int | None = None
     decoder_configuration: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -488,11 +504,16 @@ def decode_latent_iter(
     constrain_to_source_activities: bool = True,
     avoid_duplicate_activity_labels: bool = True,
     duplicate_policy: str = "disallow",
+    completion_policy: CompletionPolicy = "bounded",
+    chosen_token_ids: Sequence[int] | None = None,
 ) -> Iterator[DecodeStep]:
-    """Yield every shared-constraint greedy decoder decision."""
+    """Yield shared-step diagnostics for greedy or supplied decoder decisions."""
 
-    if max_length < 2:
-        raise ValueError("max_length must be at least 2")
+    if completion_policy not in {"prefix_only", "bounded"}:
+        raise ValueError("completion_policy must be 'prefix_only' or 'bounded'")
+    minimum_length = 3 if completion_policy == "bounded" else 2
+    if max_length < minimum_length:
+        raise ValueError(f"{completion_policy} completion requires max_length >= {minimum_length}")
     device = next(model.parameters()).device
     tokenizer = model.tree_tokenizer
     source = _decoder_source(
@@ -523,69 +544,83 @@ def decode_latent_iter(
     current = torch.tensor([tokenizer.bos_id], dtype=torch.long, device=device)
 
     for step_index in range(1, max_length):
-        hidden, caches = model.tree_decoder._incremental_hidden(
+        if chosen_token_ids is not None and step_index > len(chosen_token_ids):
+            break
+        remaining_tokens = max_length - step_index
+        scores, caches = model.tree_decoder._incremental_next_token_scores(
             current,
             step_index - 1,
             memory,
             caches,
-        )
-        raw = model.tree_decoder._project_hidden(hidden)
-        one_token = current.unsqueeze(1)
-        source_mask = model.tree_decoder.decode_constraint_mask(
-            one_token,
-            allowed_activity_mask=allowed,
-        )
-        raw = raw.masked_fill(~source_mask, -torch.inf)
-        if copy_mask is not None:
-            raw = model.tree_decoder._mix_activity_copy(
-                raw,
-                hidden,
-                copy_mask,
-                source.activity_memory,
-                allowed,
-            )
-        raw_logits = raw[0, 0]
-        grammar = model.tree_decoder._incremental_grammar_mask(
-            open_nodes,
-            pending_operator,
-        ).unsqueeze(1)
-        mask = model.tree_decoder.decode_constraint_mask(
-            one_token,
-            grammar_mask=grammar,
+            open_nodes=open_nodes,
+            pending_operator=pending_operator,
+            activity_mask=copy_mask,
+            activity_memory=source.activity_memory,
             allowed_activity_mask=allowed,
             avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
             duplicate_policy=duplicate_policy,
             used_activity_mask=used_activity_mask,
-        )[0, -1]
-        masked_logits = raw_logits.masked_fill(~mask, -torch.inf)
+            completion_policy=completion_policy,
+            remaining_tokens=remaining_tokens,
+        )
+        mask = scores.effective_mask[0]
         valid_ids = torch.where(mask)[0]
-        valid_probs = torch.softmax(masked_logits[valid_ids], dim=0)
-        chosen_id = int(masked_logits.argmax().item())
-        chosen_probability = float(
-            valid_probs[(valid_ids == chosen_id).nonzero(as_tuple=True)[0][0]].item()
+        base_probabilities = scores.base_log_probs[0].exp()
+        conditional_probabilities = torch.softmax(scores.logits[0, valid_ids], dim=0)
+        chosen_id = (
+            int(scores.search_scores[0].argmax().item())
+            if chosen_token_ids is None
+            else int(chosen_token_ids[step_index - 1])
+        )
+        if not 0 <= chosen_id < tokenizer.vocab_size or not bool(mask[chosen_id]):
+            raise ValueError(
+                f"supplied token {chosen_id} is infeasible at decode step {step_index}"
+            )
+        selected_index = (valid_ids == chosen_id).nonzero(as_tuple=True)[0][0]
+        chosen_probability = float(base_probabilities[chosen_id].item())
+        chosen_conditional_probability = float(
+            conditional_probabilities[selected_index].item()
         )
         valid_pairs = sorted(
             (
                 (tokenizer.tokens[int(token_id)], float(probability))
-                for token_id, probability in zip(valid_ids.tolist(), valid_probs.tolist())
+                for token_id, probability in zip(
+                    valid_ids.tolist(), base_probabilities[valid_ids].tolist()
+                )
             ),
             key=lambda item: item[1],
             reverse=True,
         )[: max(1, top_k)]
         invalid_ids = torch.where(~mask)[0]
-        invalid_pairs: list[tuple[str, float]] = []
-        if len(invalid_ids):
-            invalid_probabilities = torch.softmax(raw_logits, dim=0)
-            invalid_pairs = sorted(
-                (
-                    (tokenizer.tokens[int(token_id)], float(invalid_probabilities[token_id]))
-                    for token_id in invalid_ids.tolist()
-                ),
-                key=lambda item: item[1],
-                reverse=True,
-            )[: max(1, top_k)]
-        grammar_state = "need_arity" if int(pending_operator[0]) else "need_node"
+        invalid_pairs = sorted(
+            (
+                (tokenizer.tokens[int(token_id)], float(base_probabilities[token_id]))
+                for token_id in invalid_ids.tolist()
+            ),
+            key=lambda item: item[1],
+            reverse=True,
+        )[: max(1, top_k)]
+        grammar_state = (
+            "need_arity"
+            if int(pending_operator[0])
+            else "complete" if int(open_nodes[0]) == 0 else "need_node"
+        )
         open_slots = int(open_nodes[0])
+        removed = scores.prefix_grammar_mask[0] & ~scores.completion_mask[0]
+        budget_mask_active = bool(removed.any())
+        pre_budget_top_id = int(scores.base_log_probs[0].argmax().item())
+        argmax_overridden = bool(
+            scores.prefix_grammar_mask[0, pre_budget_top_id]
+            and not scores.completion_mask[0, pre_budget_top_id]
+        )
+        operators_removed = sum(
+            bool(removed[tokenizer.token_to_id[token]])
+            for token in tokenizer.operator_tokens
+        )
+        arities_removed = sum(
+            bool(removed[tokenizer.token_to_id[token]])
+            for token in tokenizer.arity_tokens
+        )
         chosen_name = tokenizer.tokens[chosen_id]
         prefix_ids.append(chosen_id)
         prefix_names.append(chosen_name)
@@ -599,6 +634,14 @@ def decode_latent_iter(
             pending_operator,
             torch.ones(1, dtype=torch.bool, device=device),
         )
+        completion_slack = remaining_tokens - 1
+        if chosen_id != tokenizer.eos_id:
+            completion_slack -= int(
+                tokenizer.minimum_tokens_to_finish(
+                    open_nodes,
+                    pending_operator,
+                )[0]
+            )
         yield DecodeStep(
             step_index=step_index,
             grammar_state=grammar_state,
@@ -612,6 +655,15 @@ def decode_latent_iter(
             open_child_slots=int(open_slots),
             subtree_position=_next_subtree_position(prefix_names[:-1]),
             eos_emitted=chosen_id == tokenizer.eos_id,
+            budget_mask_active=budget_mask_active,
+            argmax_overridden=argmax_overridden,
+            operators_removed=operators_removed,
+            arities_removed=arities_removed,
+            pre_budget_top_token=tokenizer.tokens[pre_budget_top_id],
+            pre_budget_top_probability=float(base_probabilities[pre_budget_top_id]),
+            selected_pre_budget_probability=chosen_probability,
+            selected_conditional_probability=chosen_conditional_probability,
+            completion_slack=completion_slack,
         )
         if chosen_id == tokenizer.eos_id:
             break
@@ -635,6 +687,7 @@ def decode_latent(
     constrain_to_source_activities: bool = True,
     avoid_duplicate_activity_labels: bool = True,
     duplicate_policy: str = "disallow",
+    completion_policy: CompletionPolicy = "bounded",
     progress_callback: Callable[[DecodeStep], None] | None = None,
 ) -> DecodeResult:
     start = perf_counter()
@@ -655,6 +708,7 @@ def decode_latent(
         constrain_to_source_activities=constrain_to_source_activities,
         avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
         duplicate_policy=duplicate_policy,
+        completion_policy=completion_policy,
     )
     if beam_size > 1 and progress_callback is None:
         source = _decoder_source(
@@ -672,6 +726,29 @@ def decode_latent(
             constraints=constraints,
         )
         token_ids = decoded[0].detach().cpu().tolist()
+        chosen_ids: list[int] = []
+        for token_id in token_ids[1:]:
+            if token_id == checkpoint.model.tree_tokenizer.pad_id:
+                break
+            chosen_ids.append(token_id)
+            if token_id == checkpoint.model.tree_tokenizer.eos_id:
+                break
+        steps = list(
+            decode_latent_iter(
+                checkpoint.model,
+                latent,
+                max_length=max_length,
+                top_k=top_k,
+                allowed_activity_slots=allowed,
+                copy_activity_slots=copy_activity_slots,
+                activity_memory=activity_memory,
+                constrain_to_source_activities=constrain_to_source_activities,
+                avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+                duplicate_policy=duplicate_policy,
+                completion_policy=completion_policy,
+                chosen_token_ids=chosen_ids,
+            )
+        )
     else:
         for step in decode_latent_iter(
             checkpoint.model,
@@ -684,6 +761,7 @@ def decode_latent(
             constrain_to_source_activities=constrain_to_source_activities,
             avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
             duplicate_policy=duplicate_policy,
+            completion_policy=completion_policy,
         ):
             steps.append(step)
             if progress_callback is not None:
@@ -703,6 +781,7 @@ def decode_latent(
         constrain_to_source_activities=constrain_to_source_activities,
         avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
         duplicate_policy=duplicate_policy,
+        completion_policy=completion_policy,
         token_strategy="beam" if beam_size > 1 and progress_callback is None else "greedy",
         beam_size=beam_size,
         max_length=max_length,
@@ -724,6 +803,7 @@ def build_decode_result(
     constrain_to_source_activities: bool = True,
     avoid_duplicate_activity_labels: bool = True,
     duplicate_policy: str = "disallow",
+    completion_policy: CompletionPolicy = "prefix_only",
     token_strategy: str = "greedy",
     beam_size: int = 1,
     max_length: int = 512,
@@ -840,6 +920,23 @@ def build_decode_result(
             bundle = tree_to_petri_net(restored_tree)
         except Exception as exc:
             errors.append(f"Petri-net conversion failed: {type(exc).__name__}: {exc}")
+    step_rows = list(steps)
+    intervention_rows = [step for step in step_rows if step.budget_mask_active]
+    slack_values = [
+        step.completion_slack
+        for step in step_rows
+        if step.completion_slack is not None
+    ]
+    unresolved_open_slots: int | None = None
+    if vocabulary_valid:
+        try:
+            grammar_state, pending_operator, open_nodes = tokenizer._grammar_state(ids)
+            if grammar_state.value != "invalid":
+                unresolved_open_slots = int(open_nodes)
+                if pending_operator is not None:
+                    unresolved_open_slots += tokenizer.minimum_legal_arity(pending_operator)
+        except Exception:
+            unresolved_open_slots = None
     return DecodeResult(
         source_artifact_ids=list(source_artifact_ids),
         source_modalities=modalities,
@@ -850,7 +947,7 @@ def build_decode_result(
         raw_tree=raw_tree,
         model_normalized_token_ids=model_normalized_ids,
         model_normalized_token_names=model_normalized_names,
-        steps=list(steps),
+        steps=step_rows,
         eos_emitted=eos,
         grammar_valid=grammar_valid,
         arity_valid=arity_valid,
@@ -874,11 +971,21 @@ def build_decode_result(
         ),
         output_fold_changed=output_fold_changed,
         output_fold_idempotent=output_fold_idempotent,
+        budget_intervention_steps=len(intervention_rows),
+        argmax_override_steps=sum(step.argmax_overridden for step in step_rows),
+        first_budget_intervention_step=(
+            intervention_rows[0].step_index if intervention_rows else None
+        ),
+        minimum_completion_slack=(min(slack_values) if slack_values else None),
+        operators_removed=sum(step.operators_removed for step in step_rows),
+        arities_removed=sum(step.arities_removed for step in step_rows),
+        raw_unresolved_open_slots=unresolved_open_slots,
         decoder_configuration={
             "maximum_token_length": max_length,
             "token_strategy": token_strategy,
             "beam_size": beam_size,
             "grammar_mask": True,
+            "completion_policy": completion_policy,
             "constrain_to_source_activities": constrain_to_source_activities,
             "avoid_duplicate_activity_labels": avoid_duplicate_activity_labels,
             "duplicate_policy": duplicate_policy,

@@ -2,12 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from typing import Literal
 
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 from proc_rosetta.tokenizers import ActivityTokenizer, TreeTokenizer
+
+
+CompletionPolicy = Literal["prefix_only", "bounded"]
+
+
+def _validate_completion_policy(policy: str) -> None:
+    if policy not in {"prefix_only", "bounded"}:
+        raise ValueError("completion_policy must be 'prefix_only' or 'bounded'")
 
 
 def _attention_heads(hidden_dim: int) -> int:
@@ -39,17 +48,34 @@ class DecodeConstraints:
     ``allowed_activity_slots`` is indexed by canonical activity slot (A0,
     A1, ...), not by full tree-vocabulary ID.  ``activity_mask`` on
     :class:`LatentDistribution` remains copy evidence and is intentionally a
-    separate concept.
+    separate concept. ``completion_policy`` is likewise independent of the
+    ordinary prefix grammar and defaults to the deployment-safe bounded mode.
     """
 
     allowed_activity_slots: torch.Tensor | None = None
     constrain_to_source_activities: bool = True
     avoid_duplicate_activity_labels: bool = True
     duplicate_policy: str = "disallow"
+    completion_policy: CompletionPolicy = "bounded"
 
     def __post_init__(self) -> None:
         if self.duplicate_policy not in {"disallow", "penalize", "allow"}:
             raise ValueError("duplicate_policy must be 'disallow', 'penalize', or 'allow'")
+        _validate_completion_policy(self.completion_policy)
+
+
+@dataclass(frozen=True)
+class NextTokenScores:
+    """Next-token scores with ordinary legality and budget feasibility separate."""
+
+    logits: torch.Tensor
+    base_log_probs: torch.Tensor
+    search_scores: torch.Tensor
+    prefix_grammar_mask: torch.Tensor
+    completion_mask: torch.Tensor
+    source_constraint_mask: torch.Tensor
+    duplicate_constraint_mask: torch.Tensor
+    effective_mask: torch.Tensor
 
 
 class SemanticProjection(nn.Module):
@@ -580,7 +606,14 @@ class GrammarTreeDecoder(nn.Module):
         duplicate_policy: str = "disallow",
         used_activity_mask: torch.Tensor | None = None,
         input_token_dropout: float = 0.0,
+        completion_policy: CompletionPolicy = "prefix_only",
+        remaining_tokens: int | torch.Tensor | None = None,
     ) -> torch.Tensor:
+        _validate_completion_policy(completion_policy)
+        if completion_policy == "bounded" and not apply_grammar_mask:
+            raise ValueError("bounded completion requires grammar masking")
+        if completion_policy == "bounded" and remaining_tokens is None:
+            raise ValueError("bounded completion requires a remaining token budget")
         if input_tokens.shape[1] > self.max_sequence_length:
             raise ValueError("decoder input exceeds position capacity")
         memory, source_activity_mask = self.source_memory(source)
@@ -626,7 +659,12 @@ class GrammarTreeDecoder(nn.Module):
                 allowed_activity_mask,
             )
         grammar = (
-            self.tokenizer.valid_next_token_masks(input_tokens)
+            self.tokenizer.valid_next_token_masks(
+                input_tokens,
+                remaining_tokens=(
+                    remaining_tokens if completion_policy == "bounded" else None
+                ),
+            )
             if apply_grammar_mask
             else None
         )
@@ -863,34 +901,168 @@ class GrammarTreeDecoder(nn.Module):
         logits = logits.masked_fill(~hard_constraint, -torch.inf)
         return logits[:, 0], next_caches
 
+    def _finalize_next_token_scores(
+        self,
+        base_logits: torch.Tensor,
+        input_tokens: torch.Tensor,
+        *,
+        prefix_grammar_mask: torch.Tensor,
+        completion_mask: torch.Tensor,
+        allowed_activity_mask: torch.Tensor | None,
+        avoid_duplicate_activity_labels: bool,
+        duplicate_policy: str,
+        used_activity_mask: torch.Tensor | None,
+    ) -> NextTokenScores:
+        source_constraint = self.decode_constraint_mask(
+            input_tokens,
+            allowed_activity_mask=allowed_activity_mask,
+        )[:, -1]
+        duplicate_constraint = self.decode_constraint_mask(
+            input_tokens,
+            avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+            duplicate_policy=duplicate_policy,
+            used_activity_mask=used_activity_mask,
+        )[:, -1]
+        held_constraint = (
+            prefix_grammar_mask & source_constraint & duplicate_constraint
+        )
+        base_logits = base_logits.masked_fill(~held_constraint, -torch.inf)
+        if not held_constraint.any(dim=-1).all():
+            raise RuntimeError("ordinary decode constraints produced an empty candidate set")
+        base_log_probs = F.log_softmax(base_logits, dim=-1)
+        effective = held_constraint & completion_mask
+        if not effective.any(dim=-1).all():
+            raise RuntimeError("bounded completion produced an empty candidate set")
+        return NextTokenScores(
+            logits=base_logits.masked_fill(~effective, -torch.inf),
+            base_log_probs=base_log_probs,
+            search_scores=base_log_probs.masked_fill(~effective, -torch.inf),
+            prefix_grammar_mask=prefix_grammar_mask,
+            completion_mask=completion_mask,
+            source_constraint_mask=source_constraint,
+            duplicate_constraint_mask=duplicate_constraint,
+            effective_mask=effective,
+        )
+
+    def next_token_scores(
+        self,
+        source: torch.Tensor | LatentDistribution,
+        input_tokens: torch.Tensor,
+        *,
+        activity_mask: torch.Tensor | None = None,
+        activity_memory: torch.Tensor | None = None,
+        allowed_activity_mask: torch.Tensor | None = None,
+        avoid_duplicate_activity_labels: bool = False,
+        duplicate_policy: str = "disallow",
+        used_activity_mask: torch.Tensor | None = None,
+        completion_policy: CompletionPolicy = "prefix_only",
+        remaining_tokens: int | torch.Tensor | None = None,
+    ) -> NextTokenScores:
+        """Score a full prefix while preserving pre-budget model probability."""
+
+        _validate_completion_policy(completion_policy)
+        if completion_policy == "bounded" and remaining_tokens is None:
+            raise ValueError("bounded completion requires a remaining token budget")
+        base_logits = self.forward(
+            source,
+            input_tokens,
+            apply_grammar_mask=True,
+            activity_mask=activity_mask,
+            activity_memory=activity_memory,
+            allowed_activity_mask=allowed_activity_mask,
+            avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+            duplicate_policy=duplicate_policy,
+            used_activity_mask=used_activity_mask,
+            completion_policy="prefix_only",
+        )[:, -1]
+        prefix_grammar = self.tokenizer.valid_next_token_masks(input_tokens)[:, -1]
+        if completion_policy == "bounded":
+            bounded = self.tokenizer.valid_next_token_masks(
+                input_tokens,
+                remaining_tokens=remaining_tokens,
+            )[:, -1]
+            completion = ~prefix_grammar | bounded
+        else:
+            completion = torch.ones_like(prefix_grammar)
+        return self._finalize_next_token_scores(
+            base_logits,
+            input_tokens,
+            prefix_grammar_mask=prefix_grammar,
+            completion_mask=completion,
+            allowed_activity_mask=allowed_activity_mask,
+            avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+            duplicate_policy=duplicate_policy,
+            used_activity_mask=used_activity_mask,
+        )
+
+    def _incremental_next_token_scores(
+        self,
+        input_token: torch.Tensor,
+        position: int,
+        memory: torch.Tensor,
+        layer_caches: list[torch.Tensor | None],
+        *,
+        open_nodes: torch.Tensor,
+        pending_operator: torch.Tensor,
+        activity_mask: torch.Tensor | None = None,
+        activity_memory: torch.Tensor | None = None,
+        allowed_activity_mask: torch.Tensor | None = None,
+        avoid_duplicate_activity_labels: bool = False,
+        duplicate_policy: str = "disallow",
+        used_activity_mask: torch.Tensor | None = None,
+        completion_policy: CompletionPolicy = "prefix_only",
+        remaining_tokens: int | torch.Tensor | None = None,
+    ) -> tuple[NextTokenScores, list[torch.Tensor]]:
+        """Shared cached step used by greedy and progressive decoding."""
+
+        _validate_completion_policy(completion_policy)
+        if completion_policy == "bounded" and remaining_tokens is None:
+            raise ValueError("bounded completion requires a remaining token budget")
+        base_logits, next_caches = self._incremental_step(
+            input_token,
+            position,
+            memory,
+            layer_caches,
+            open_nodes=open_nodes,
+            pending_operator=pending_operator,
+            activity_mask=activity_mask,
+            activity_memory=activity_memory,
+            allowed_activity_mask=allowed_activity_mask,
+            avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+            duplicate_policy=duplicate_policy,
+            used_activity_mask=used_activity_mask,
+        )
+        prefix_grammar = self.tokenizer.prefix_grammar_mask(
+            open_nodes,
+            pending_operator,
+        )
+        completion = (
+            self.tokenizer.completion_feasibility_mask(
+                open_nodes,
+                pending_operator,
+                remaining_tokens,
+            )
+            if completion_policy == "bounded"
+            else torch.ones_like(prefix_grammar)
+        )
+        scores = self._finalize_next_token_scores(
+            base_logits,
+            input_token.unsqueeze(1),
+            prefix_grammar_mask=prefix_grammar,
+            completion_mask=completion,
+            allowed_activity_mask=allowed_activity_mask,
+            avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+            duplicate_policy=duplicate_policy,
+            used_activity_mask=used_activity_mask,
+        )
+        return scores, next_caches
+
     def _incremental_grammar_mask(
         self,
         open_nodes: torch.Tensor,
         pending_operator: torch.Tensor,
     ) -> torch.Tensor:
-        mask = torch.zeros(
-            (open_nodes.shape[0], self.tokenizer.vocab_size),
-            dtype=torch.bool,
-            device=open_nodes.device,
-        )
-        awaiting = pending_operator.ne(0)
-        ordinary = awaiting & pending_operator.eq(1)
-        loop = awaiting & pending_operator.eq(2)
-        for arity in range(2, self.tokenizer.max_arity + 1):
-            token_id = self.tokenizer.token_to_id[f"ARITY_{arity}"]
-            mask[ordinary, token_id] = True
-            if arity in {2, 3}:
-                mask[loop, token_id] = True
-        complete = ~awaiting & open_nodes.eq(0)
-        mask[complete, self.tokenizer.eos_id] = True
-        need_node = ~awaiting & open_nodes.gt(0)
-        mask[need_node, self.tokenizer.token_to_id["TAU"]] = True
-        rows = torch.where(need_node)[0]
-        if rows.numel():
-            mask[rows.unsqueeze(1), self.activity_token_ids.unsqueeze(0)] = True
-            operator_ids = self.structural_token_ids[4:]
-            mask[rows.unsqueeze(1), operator_ids.unsqueeze(0)] = True
-        return mask
+        return self.tokenizer.prefix_grammar_mask(open_nodes, pending_operator)
 
     def _advance_incremental_grammar(
         self,
@@ -899,28 +1071,12 @@ class GrammarTreeDecoder(nn.Module):
         pending_operator: torch.Tensor,
         active: torch.Tensor,
     ) -> None:
-        awaiting = active & pending_operator.ne(0)
-        for arity in range(2, self.tokenizer.max_arity + 1):
-            selected = awaiting & chosen.eq(
-                self.tokenizer.token_to_id[f"ARITY_{arity}"]
-            )
-            open_nodes[selected] += arity
-        pending_operator[awaiting] = 0
-        need_node = active & ~awaiting & open_nodes.gt(0)
-        leaf = chosen.eq(self.tokenizer.token_to_id["TAU"])
-        leaf |= chosen.unsqueeze(-1).eq(self.activity_token_ids.view(1, -1)).any(dim=-1)
-        operator_ids = {
-            self.tokenizer.token_to_id[name] for name in self.tokenizer.operator_tokens
-        }
-        operator = torch.zeros_like(active)
-        for token_id in operator_ids:
-            operator |= chosen.eq(token_id)
-        consumed = need_node & (leaf | operator)
-        open_nodes[consumed] -= 1
-        pending_operator[need_node & operator] = 1
-        pending_operator[
-            need_node & chosen.eq(self.tokenizer.token_to_id["LOOP"])
-        ] = 2
+        self.tokenizer.advance_grammar_state(
+            chosen,
+            open_nodes,
+            pending_operator,
+            active,
+        )
 
     @torch.no_grad()
     def decode_greedy(
@@ -933,6 +1089,7 @@ class GrammarTreeDecoder(nn.Module):
         constrain_to_source_activities: bool = True,
         avoid_duplicate_activity_labels: bool = True,
         duplicate_policy: str = "disallow",
+        completion_policy: CompletionPolicy = "bounded",
         constraints: DecodeConstraints | None = None,
     ) -> torch.Tensor:
         if constraints is not None:
@@ -940,6 +1097,12 @@ class GrammarTreeDecoder(nn.Module):
             constrain_to_source_activities = constraints.constrain_to_source_activities
             avoid_duplicate_activity_labels = constraints.avoid_duplicate_activity_labels
             duplicate_policy = constraints.duplicate_policy
+            completion_policy = constraints.completion_policy
+        _validate_completion_policy(completion_policy)
+        if completion_policy == "bounded" and not apply_grammar_mask:
+            raise ValueError("bounded completion requires grammar masking")
+        if completion_policy == "bounded" and max_length < 3:
+            raise ValueError("bounded completion requires max_length >= 3")
         if not constrain_to_source_activities:
             allowed_activity_mask = None
         activity_memory = (
@@ -976,6 +1139,7 @@ class GrammarTreeDecoder(nn.Module):
                 allowed_activity_mask=allowed_activity_mask,
                 avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
                 duplicate_policy=duplicate_policy,
+                completion_policy=completion_policy,
             )
         for _ in range(max_length - 1):
             active_rows = torch.where(~finished)[0]
@@ -993,17 +1157,31 @@ class GrammarTreeDecoder(nn.Module):
                 active_allowed = allowed_activity_mask
             else:
                 active_allowed = allowed_activity_mask[active_rows]
-            active_logits = self.forward(
-                memory[active_rows],
-                generated[active_rows],
-                apply_grammar_mask=apply_grammar_mask,
-                activity_mask=active_activity_mask,
-                activity_memory=active_activity_memory,
-                allowed_activity_mask=active_allowed,
-                avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
-                duplicate_policy=duplicate_policy,
-                used_activity_mask=used_activity_mask[active_rows],
-            )[:, -1]
+            if apply_grammar_mask:
+                active_logits = self.next_token_scores(
+                    memory[active_rows],
+                    generated[active_rows],
+                    activity_mask=active_activity_mask,
+                    activity_memory=active_activity_memory,
+                    allowed_activity_mask=active_allowed,
+                    avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+                    duplicate_policy=duplicate_policy,
+                    used_activity_mask=used_activity_mask[active_rows],
+                    completion_policy=completion_policy,
+                    remaining_tokens=max_length - generated.shape[1],
+                ).search_scores
+            else:
+                active_logits = self.forward(
+                    memory[active_rows],
+                    generated[active_rows],
+                    apply_grammar_mask=False,
+                    activity_mask=active_activity_mask,
+                    activity_memory=active_activity_memory,
+                    allowed_activity_mask=active_allowed,
+                    avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+                    duplicate_policy=duplicate_policy,
+                    used_activity_mask=used_activity_mask[active_rows],
+                )[:, -1]
             next_token = torch.full(
                 (batch_size,),
                 self.tokenizer.pad_id,
@@ -1032,6 +1210,7 @@ class GrammarTreeDecoder(nn.Module):
         allowed_activity_mask: torch.Tensor | None,
         avoid_duplicate_activity_labels: bool,
         duplicate_policy: str,
+        completion_policy: CompletionPolicy,
     ) -> torch.Tensor:
         batch_size = memory.shape[0]
         finished = torch.zeros(batch_size, dtype=torch.bool, device=memory.device)
@@ -1045,7 +1224,7 @@ class GrammarTreeDecoder(nn.Module):
         caches: list[torch.Tensor | None] = [None] * len(self.decoder.layers)
         current = generated[:, 0]
         for position in range(max_length - 1):
-            logits, caches = self._incremental_step(
+            scores, caches = self._incremental_next_token_scores(
                 current,
                 position,
                 memory,
@@ -1058,9 +1237,11 @@ class GrammarTreeDecoder(nn.Module):
                 avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
                 duplicate_policy=duplicate_policy,
                 used_activity_mask=used,
+                completion_policy=completion_policy,
+                remaining_tokens=max_length - position - 1,
             )
             active = ~finished
-            next_token = logits.argmax(dim=-1)
+            next_token = scores.search_scores.argmax(dim=-1)
             next_token = torch.where(
                 active,
                 next_token,
@@ -1093,6 +1274,7 @@ class GrammarTreeDecoder(nn.Module):
         constrain_to_source_activities: bool = True,
         avoid_duplicate_activity_labels: bool = True,
         duplicate_policy: str = "disallow",
+        completion_policy: CompletionPolicy = "bounded",
         constraints: DecodeConstraints | None = None,
     ) -> torch.Tensor:
         if beam_size <= 1:
@@ -1103,6 +1285,7 @@ class GrammarTreeDecoder(nn.Module):
                 constrain_to_source_activities=constrain_to_source_activities,
                 avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
                 duplicate_policy=duplicate_policy,
+                completion_policy=completion_policy,
                 constraints=constraints,
             )
         candidates = self.decode_beam_candidates(
@@ -1114,6 +1297,7 @@ class GrammarTreeDecoder(nn.Module):
             constrain_to_source_activities=constrain_to_source_activities,
             avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
             duplicate_policy=duplicate_policy,
+            completion_policy=completion_policy,
             constraints=constraints,
         )
         memory, _ = self.source_memory(source)
@@ -1139,6 +1323,7 @@ class GrammarTreeDecoder(nn.Module):
         constrain_to_source_activities: bool = True,
         avoid_duplicate_activity_labels: bool = True,
         duplicate_policy: str = "disallow",
+        completion_policy: CompletionPolicy = "bounded",
         constraints: DecodeConstraints | None = None,
     ) -> list[list[tuple[list[int], float]]]:
         if constraints is not None:
@@ -1146,6 +1331,10 @@ class GrammarTreeDecoder(nn.Module):
             constrain_to_source_activities = constraints.constrain_to_source_activities
             avoid_duplicate_activity_labels = constraints.avoid_duplicate_activity_labels
             duplicate_policy = constraints.duplicate_policy
+            completion_policy = constraints.completion_policy
+        _validate_completion_policy(completion_policy)
+        if completion_policy == "bounded" and max_length < 3:
+            raise ValueError("bounded completion requires max_length >= 3")
         if not constrain_to_source_activities:
             allowed_activity_mask = None
         memory, activity_mask = self.source_memory(source)
@@ -1187,19 +1376,18 @@ class GrammarTreeDecoder(nn.Module):
                         candidates.append((prefix, score, used_activity_mask))
                         continue
                     tokens = torch.tensor([prefix], device=memory.device)
-                    log_prob = F.log_softmax(
-                        self.forward(
-                            row_memory,
-                            tokens,
-                            activity_mask=row_mask,
-                            activity_memory=row_activity_memory,
-                            allowed_activity_mask=row_allowed,
-                            avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
-                            duplicate_policy=duplicate_policy,
-                            used_activity_mask=used_activity_mask.unsqueeze(0),
-                        )[0, -1],
-                        dim=-1,
-                    )
+                    log_prob = self.next_token_scores(
+                        row_memory,
+                        tokens,
+                        activity_mask=row_mask,
+                        activity_memory=row_activity_memory,
+                        allowed_activity_mask=row_allowed,
+                        avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+                        duplicate_policy=duplicate_policy,
+                        used_activity_mask=used_activity_mask.unsqueeze(0),
+                        completion_policy=completion_policy,
+                        remaining_tokens=max_length - len(prefix),
+                    ).search_scores[0]
                     legal_ids = torch.where(torch.isfinite(log_prob))[0]
                     legal_count = int(legal_ids.numel())
                     if legal_count == 0:

@@ -510,6 +510,7 @@ def evaluate_epoch(
                 max_length=maximum_length,
                 allowed_activity_mask=trace_allowed,
                 avoid_duplicate_activity_labels=False,
+                completion_policy="prefix_only",
             )
             shuffled_decoded: torch.Tensor | None = None
             zero_decoded: torch.Tensor | None = None
@@ -562,12 +563,14 @@ def evaluate_epoch(
                     max_length=maximum_length,
                     allowed_activity_mask=trace_allowed,
                     avoid_duplicate_activity_labels=False,
+                    completion_policy="prefix_only",
                 )
                 zero_decoded = model.tree_decoder.decode_greedy(
                     zero_distribution,
                     max_length=maximum_length,
                     allowed_activity_mask=trace_allowed,
                     avoid_duplicate_activity_labels=False,
+                    completion_policy="prefix_only",
                 )
             samples = batch.get("samples")
             assert isinstance(samples, list)

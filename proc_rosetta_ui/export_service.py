@@ -116,6 +116,15 @@ def process_tree_report(result: DecodeResult) -> bytes:
             "output_fold_changed": result.output_fold_changed,
             "output_fold_idempotent": result.output_fold_idempotent,
         },
+        "completion_diagnostics": {
+            "budget_intervention_steps": result.budget_intervention_steps,
+            "argmax_override_steps": result.argmax_override_steps,
+            "first_budget_intervention_step": result.first_budget_intervention_step,
+            "minimum_completion_slack": result.minimum_completion_slack,
+            "operators_removed": result.operators_removed,
+            "arities_removed": result.arities_removed,
+            "raw_unresolved_open_slots": result.raw_unresolved_open_slots,
+        },
         "decoder_configuration": result.decoder_configuration,
     }
     return json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")

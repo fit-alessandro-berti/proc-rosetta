@@ -57,6 +57,7 @@ def decode_quality_iter(
     max_length: int = 512,
     simulated_traces: int = 100,
     exact_conformance: bool = False,
+    completion_policy: str = "prefix_only",
 ) -> Iterator[EvaluationUpdate]:
     selected = [item for item in items if item.encoding is not None and item.encoding.mu]
     tasks = [
@@ -141,6 +142,7 @@ def decode_quality_iter(
             allowed_activity_slots=allowed,
             copy_activity_slots=copy,
             activity_memory=activity_memory,
+            completion_policy=completion_policy,
         )
         comparison: dict[str, Any]
         try:
@@ -160,6 +162,15 @@ def decode_quality_iter(
             "petri_conversion": decode.petri_convertible,
             "decode_length": len(decode.token_ids),
             "decode_seconds": decode.decode_seconds,
+            "completion_policy": completion_policy,
+            "evaluation_scope": (
+                "raw_model_quality"
+                if completion_policy == "prefix_only"
+                else "deployment_system_quality"
+            ),
+            "budget_intervention_steps": decode.budget_intervention_steps,
+            "argmax_override_steps": decode.argmax_override_steps,
+            "raw_unresolved_open_slots": decode.raw_unresolved_open_slots,
             **comparison,
         }
         if (

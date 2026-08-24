@@ -59,6 +59,22 @@ class TreeTokenizer:
     def arity_tokens(self) -> tuple[str, ...]:
         return tuple(f"ARITY_{arity}" for arity in range(2, self.max_arity + 1))
 
+    def legal_arities(self, operator: str | int) -> tuple[int, ...]:
+        """Return the grammar's legal arities for one operator token."""
+
+        name = self.tokens[int(operator)] if isinstance(operator, int) else operator
+        if name not in self.operator_tokens:
+            raise ValueError(f"not an operator token: {name}")
+        if name == "LOOP":
+            return tuple(arity for arity in (2, 3) if arity <= self.max_arity)
+        return tuple(range(2, self.max_arity + 1))
+
+    def minimum_legal_arity(self, operator: str | int) -> int:
+        legal = self.legal_arities(operator)
+        if not legal:
+            raise ValueError(f"operator has no legal arity: {operator}")
+        return min(legal)
+
     def encode_tree(self, tree: ProcessTreeNode, canonicalize: bool = True) -> list[int]:
         tree = tree.normalize(
             self.max_arity,
@@ -103,37 +119,199 @@ class TreeTokenizer:
             raise ValueError("extra tokens after valid process tree")
         return tree
 
-    def next_token_mask(self, prefix_ids: Sequence[int], device: torch.device | None = None) -> torch.Tensor:
-        valid = torch.zeros(self.vocab_size, dtype=torch.bool, device=device)
+    def next_token_mask(
+        self,
+        prefix_ids: Sequence[int],
+        device: torch.device | None = None,
+        *,
+        remaining_tokens: int | None = None,
+    ) -> torch.Tensor:
+        """Return the next-token grammar mask, optionally bounded by a budget.
+
+        ``remaining_tokens`` includes the token about to be selected. Omitting
+        it preserves the historical prefix-only grammar behavior.
+        """
+
         state, pending_operator, open_nodes = self._grammar_state(prefix_ids)
 
         if state is GrammarState.INVALID:
+            if remaining_tokens is not None:
+                raise ValueError("bounded completion requires a valid grammar prefix")
+            valid = torch.zeros(self.vocab_size, dtype=torch.bool, device=device)
             valid[self.eos_id] = True
             return valid
         if state is GrammarState.DONE:
+            valid = torch.zeros(self.vocab_size, dtype=torch.bool, device=device)
             valid[self.pad_id] = True
             return valid
-        if state is GrammarState.NEED_ARITY:
-            assert pending_operator is not None
-            if pending_operator == "LOOP":
-                for arity in (2, 3):
-                    if arity <= self.max_arity:
-                        valid[self.token_to_id[f"ARITY_{arity}"]] = True
-            else:
-                for token in self.arity_tokens:
-                    valid[self.token_to_id[token]] = True
-            return valid
+        pending_id = 0 if pending_operator is None else self.token_to_id[pending_operator]
+        open_tensor = torch.tensor([open_nodes], dtype=torch.long, device=device)
+        pending_tensor = torch.tensor([pending_id], dtype=torch.long, device=device)
+        grammar = self.prefix_grammar_mask(open_tensor, pending_tensor)[0]
+        if remaining_tokens is None:
+            return grammar
+        completion = self.completion_feasibility_mask(
+            open_tensor,
+            pending_tensor,
+            remaining_tokens,
+        )[0]
+        bounded = grammar & completion
+        if not bounded.any():
+            raise ValueError("no grammar-legal completion fits the remaining token budget")
+        return bounded
 
-        if open_nodes == 0:
-            valid[self.eos_id] = True
-            return valid
+    def prefix_grammar_mask(
+        self,
+        open_nodes: torch.Tensor,
+        pending_operator: torch.Tensor,
+    ) -> torch.Tensor:
+        """Build prefix-legal masks from the shared incremental grammar state.
 
-        valid[self.token_to_id["TAU"]] = True
+        A zero ``pending_operator`` means that no arity token is pending;
+        otherwise it is the vocabulary ID of the operator awaiting its arity.
+        """
+
+        if open_nodes.shape != pending_operator.shape:
+            raise ValueError("grammar state tensors must have identical shapes")
+        if (open_nodes < 0).any():
+            raise ValueError("grammar state cannot contain negative open slots")
+        flat_open = open_nodes.reshape(-1)
+        flat_pending = pending_operator.reshape(-1)
+        mask = torch.zeros(
+            (flat_open.shape[0], self.vocab_size),
+            dtype=torch.bool,
+            device=open_nodes.device,
+        )
+        awaiting = flat_pending.ne(0)
+        known_pending = torch.zeros_like(awaiting)
+        for operator in self.operator_tokens:
+            operator_id = self.token_to_id[operator]
+            rows = awaiting & flat_pending.eq(operator_id)
+            known_pending |= rows
+            for arity in self.legal_arities(operator):
+                mask[rows, self.token_to_id[f"ARITY_{arity}"]] = True
+        if (awaiting & ~known_pending).any():
+            raise ValueError("grammar state contains an unknown pending operator")
+
+        complete = ~awaiting & flat_open.eq(0)
+        mask[complete, self.eos_id] = True
+        need_node = ~awaiting & flat_open.gt(0)
+        mask[need_node, self.token_to_id["TAU"]] = True
+        rows = torch.where(need_node)[0]
+        if rows.numel():
+            activity_ids = torch.tensor(
+                [self.token_to_id[token] for token in self.activity_tokens],
+                dtype=torch.long,
+                device=open_nodes.device,
+            )
+            operator_ids = torch.tensor(
+                [self.token_to_id[token] for token in self.operator_tokens],
+                dtype=torch.long,
+                device=open_nodes.device,
+            )
+            mask[rows.unsqueeze(1), activity_ids.unsqueeze(0)] = True
+            mask[rows.unsqueeze(1), operator_ids.unsqueeze(0)] = True
+        return mask.reshape((*open_nodes.shape, self.vocab_size))
+
+    def minimum_tokens_to_finish(
+        self,
+        open_nodes: torch.Tensor,
+        pending_operator: torch.Tensor,
+    ) -> torch.Tensor:
+        """Minimum continuation length, including a still-unemitted EOS."""
+
+        if open_nodes.shape != pending_operator.shape:
+            raise ValueError("grammar state tensors must have identical shapes")
+        minimum = open_nodes + 1
+        for operator in self.operator_tokens:
+            rows = pending_operator.eq(self.token_to_id[operator])
+            minimum = torch.where(
+                rows,
+                open_nodes + self.minimum_legal_arity(operator) + 2,
+                minimum,
+            )
+        unknown = pending_operator.ne(0)
+        for operator in self.operator_tokens:
+            unknown &= pending_operator.ne(self.token_to_id[operator])
+        if unknown.any():
+            raise ValueError("grammar state contains an unknown pending operator")
+        return minimum
+
+    def completion_feasibility_mask(
+        self,
+        open_nodes: torch.Tensor,
+        pending_operator: torch.Tensor,
+        remaining_tokens: int | torch.Tensor,
+    ) -> torch.Tensor:
+        """Keep candidates that leave a complete tree and EOS within budget."""
+
+        remaining = torch.as_tensor(
+            remaining_tokens,
+            dtype=torch.long,
+            device=open_nodes.device,
+        )
+        try:
+            remaining = torch.broadcast_to(remaining, open_nodes.shape).reshape(-1)
+        except RuntimeError as exc:
+            raise ValueError("remaining token budget has incompatible shape") from exc
+        if (remaining < 1).any():
+            raise ValueError("remaining token budget must include the next token")
+
+        flat_open = open_nodes.reshape(-1)
+        flat_pending = pending_operator.reshape(-1)
+        feasible = torch.ones(
+            (flat_open.shape[0], self.vocab_size),
+            dtype=torch.bool,
+            device=open_nodes.device,
+        )
+        awaiting = flat_pending.ne(0)
+        leaf_feasible = remaining >= flat_open + 1
+        leaf_ids = [self.token_to_id["TAU"]]
+        leaf_ids.extend(self.token_to_id[token] for token in self.activity_tokens)
+        feasible[:, leaf_ids] = leaf_feasible.unsqueeze(1)
+
+        for operator in self.operator_tokens:
+            operator_id = self.token_to_id[operator]
+            feasible[:, operator_id] = (
+                remaining
+                >= flat_open + self.minimum_legal_arity(operator) + 2
+            )
+
+        for arity in range(2, self.max_arity + 1):
+            arity_id = self.token_to_id[f"ARITY_{arity}"]
+            feasible[:, arity_id] = remaining >= flat_open + arity + 2
+
+        feasible[:, self.eos_id] = (~awaiting & flat_open.eq(0) & remaining.ge(1))
+        return feasible.reshape((*open_nodes.shape, self.vocab_size))
+
+    def advance_grammar_state(
+        self,
+        chosen: torch.Tensor,
+        open_nodes: torch.Tensor,
+        pending_operator: torch.Tensor,
+        active: torch.Tensor,
+    ) -> None:
+        """Advance shared grammar state in place after a legal selection."""
+
+        if not (chosen.shape == open_nodes.shape == pending_operator.shape == active.shape):
+            raise ValueError("chosen token and grammar state tensors must have identical shapes")
+        awaiting = active & pending_operator.ne(0)
+        for arity in range(2, self.max_arity + 1):
+            selected = awaiting & chosen.eq(self.token_to_id[f"ARITY_{arity}"])
+            open_nodes[selected] += arity
+        pending_operator[awaiting] = 0
+
+        need_node = active & ~awaiting & open_nodes.gt(0)
+        leaf = chosen.eq(self.token_to_id["TAU"])
         for token in self.activity_tokens:
-            valid[self.token_to_id[token]] = True
+            leaf |= chosen.eq(self.token_to_id[token])
+        operator = torch.zeros_like(active)
         for token in self.operator_tokens:
-            valid[self.token_to_id[token]] = True
-        return valid
+            selected = need_node & chosen.eq(self.token_to_id[token])
+            operator |= selected
+            pending_operator[selected] = self.token_to_id[token]
+        consumed = need_node & (leaf | operator)
+        open_nodes[consumed] -= 1
 
     def _grammar_state(self, prefix_ids: Sequence[int]) -> tuple[GrammarState, str | None, int]:
         tokens = [self.tokens[int(token_id)] for token_id in prefix_ids if int(token_id) != self.pad_id]
@@ -152,9 +330,7 @@ class TreeTokenizer:
                 if not token.startswith("ARITY_"):
                     return GrammarState.INVALID, None, 0
                 arity = int(token.split("_", 1)[1])
-                if arity < 2 or arity > self.max_arity:
-                    return GrammarState.INVALID, None, 0
-                if pending_operator == "LOOP" and arity not in {2, 3}:
+                if arity not in self.legal_arities(pending_operator):
                     return GrammarState.INVALID, None, 0
                 open_nodes += arity
                 pending_operator = None
@@ -184,8 +360,18 @@ class TreeTokenizer:
     def _is_activity_token(token: str) -> bool:
         return len(token) > 1 and token[0] == "A" and token[1:].isdigit()
 
-    def valid_next_token_masks(self, prefixes: torch.Tensor) -> torch.Tensor:
-        """Compute every prefix mask with one vectorized recurrence over time."""
+    def valid_next_token_masks(
+        self,
+        prefixes: torch.Tensor,
+        *,
+        remaining_tokens: int | torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Compute every prefix mask with one vectorized recurrence over time.
+
+        With a scalar budget, the value applies to the final prefix and earlier
+        positions receive the positions between them and the final prefix.
+        Omitting the budget is exactly the historical teacher-forcing behavior.
+        """
 
         masks = torch.zeros(
             (*prefixes.shape, self.vocab_size),
@@ -199,7 +385,7 @@ class TreeTokenizer:
         invalid = torch.zeros_like(started)
         ended = torch.zeros_like(started)
         open_nodes = torch.zeros(batch, dtype=torch.long, device=prefixes.device)
-        # 0 = none, 1 = ordinary associative operator, 2 = loop.
+        # 0 = none; otherwise the actual pending operator vocabulary ID.
         pending = torch.zeros(batch, dtype=torch.long, device=prefixes.device)
         activity_ids = torch.tensor(
             [self.token_to_id[token] for token in self.activity_tokens],
@@ -209,8 +395,6 @@ class TreeTokenizer:
             [self.token_to_id[token] for token in self.operator_tokens],
             device=prefixes.device,
         )
-        loop_id = self.token_to_id["LOOP"]
-
         for position in range(prefixes.shape[-1]):
             token = flat_prefixes[:, position]
             non_padding = token.ne(self.pad_id)
@@ -234,8 +418,13 @@ class TreeTokenizer:
                 matches = token.eq(self.token_to_id[f"ARITY_{value}"])
                 arity = torch.where(matches, torch.full_like(arity, value), arity)
                 is_arity |= matches
-            valid_arity = awaiting_arity & is_arity
-            valid_arity &= (pending.ne(2) | arity.eq(2) | arity.eq(3))
+            valid_arity = torch.zeros_like(awaiting_arity)
+            for operator in self.operator_tokens:
+                operator_rows = awaiting_arity & pending.eq(self.token_to_id[operator])
+                legal = torch.zeros_like(operator_rows)
+                for value in self.legal_arities(operator):
+                    legal |= arity.eq(value)
+                valid_arity |= operator_rows & is_arity & legal
             invalid |= awaiting_arity & ~valid_arity
             open_nodes = torch.where(valid_arity, open_nodes + arity, open_nodes)
             pending = torch.where(valid_arity, torch.zeros_like(pending), pending)
@@ -253,46 +442,59 @@ class TreeTokenizer:
             valid_node = need_node & (is_leaf | is_operator)
             invalid |= need_node & ~valid_node
             open_nodes = torch.where(valid_node, open_nodes - 1, open_nodes)
-            pending = torch.where(
-                need_node & is_operator,
-                torch.where(
-                    token.eq(loop_id),
-                    torch.full_like(pending, 2),
-                    torch.ones_like(pending),
-                ),
-                pending,
-            )
+            pending = torch.where(need_node & is_operator, token, pending)
 
             invalid_state = invalid | ~started
             flat_masks[invalid_state, position, self.eos_id] = True
             flat_masks[ended & ~invalid, position, self.pad_id] = True
-            need_arity = started & ~invalid & ~ended & pending.ne(0)
-            ordinary_arity = need_arity & pending.eq(1)
-            loop_arity = need_arity & pending.eq(2)
-            for value in range(2, self.max_arity + 1):
-                token_id = self.token_to_id[f"ARITY_{value}"]
-                flat_masks[ordinary_arity, position, token_id] = True
-                if value in {2, 3}:
-                    flat_masks[loop_arity, position, token_id] = True
-            completed = started & ~invalid & ~ended & pending.eq(0) & open_nodes.eq(0)
-            flat_masks[completed, position, self.eos_id] = True
-            node_rows = started & ~invalid & ~ended & pending.eq(0) & open_nodes.gt(0)
-            flat_masks[node_rows, position, self.token_to_id["TAU"]] = True
-            node_indices = torch.where(node_rows)[0]
-            if node_indices.numel():
-                flat_masks[
-                    node_indices.unsqueeze(1),
-                    position,
-                    activity_ids.unsqueeze(0),
-                ] = True
-                flat_masks[
-                    node_indices.unsqueeze(1),
-                    position,
-                    operator_ids.unsqueeze(0),
-                ] = True
+            grammar_rows = started & ~invalid & ~ended
+            if grammar_rows.any():
+                flat_masks[grammar_rows, position] = self.prefix_grammar_mask(
+                    open_nodes[grammar_rows],
+                    pending[grammar_rows],
+                )
+
+            if remaining_tokens is not None:
+                if invalid.any():
+                    raise ValueError("bounded completion requires valid grammar prefixes")
+                budget = torch.as_tensor(
+                    remaining_tokens,
+                    dtype=torch.long,
+                    device=prefixes.device,
+                )
+                if budget.ndim == 0:
+                    position_budget = budget + prefixes.shape[-1] - 1 - position
+                    position_budget = position_budget.expand(batch)
+                elif budget.shape == prefixes.shape:
+                    position_budget = budget.reshape(-1, prefixes.shape[-1])[:, position]
+                else:
+                    try:
+                        final_budget = torch.broadcast_to(
+                            budget,
+                            prefixes.shape[:-1],
+                        ).reshape(-1)
+                    except RuntimeError as exc:
+                        raise ValueError("remaining token budget has incompatible shape") from exc
+                    position_budget = final_budget + prefixes.shape[-1] - 1 - position
+                if grammar_rows.any():
+                    completion = self.completion_feasibility_mask(
+                        open_nodes[grammar_rows],
+                        pending[grammar_rows],
+                        position_budget[grammar_rows],
+                    )
+                    flat_masks[grammar_rows, position] &= completion
+                    if not flat_masks[grammar_rows, position].any(dim=-1).all():
+                        raise ValueError(
+                            "no grammar-legal completion fits the remaining token budget"
+                        )
         return masks
 
-    def valid_next_token_masks_reference(self, prefixes: torch.Tensor) -> torch.Tensor:
+    def valid_next_token_masks_reference(
+        self,
+        prefixes: torch.Tensor,
+        *,
+        remaining_tokens: int | torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Quadratic reference implementation retained for equivalence tests."""
 
         masks = torch.zeros(
@@ -304,9 +506,21 @@ class TreeTokenizer:
         flat_masks = masks.reshape(-1, prefixes.shape[-1], self.vocab_size)
         for row_idx, row in enumerate(flat_prefixes):
             for pos in range(prefixes.shape[-1]):
+                budget = None
+                if remaining_tokens is not None:
+                    supplied = torch.as_tensor(remaining_tokens)
+                    if supplied.ndim == 0:
+                        budget = int(supplied) + prefixes.shape[-1] - 1 - pos
+                    elif supplied.shape == prefixes.shape:
+                        budget = int(supplied.reshape(-1, prefixes.shape[-1])[row_idx, pos])
+                    else:
+                        budget = int(
+                            torch.broadcast_to(supplied, prefixes.shape[:-1]).reshape(-1)[row_idx]
+                        ) + prefixes.shape[-1] - 1 - pos
                 flat_masks[row_idx, pos] = self.next_token_mask(
                     row[: pos + 1].tolist(),
                     device=prefixes.device,
+                    remaining_tokens=budget,
                 )
         return masks
 
