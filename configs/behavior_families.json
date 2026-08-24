@@ -5,6 +5,18 @@
   "max_arity": 3,
   "curriculum_phase": 3,
   "leaf_probability": 0.55,
+  "operator_probabilities": {
+    "seq": 0.25,
+    "xor": 0.25,
+    "and": 0.25,
+    "loop": 0.25
+  },
+  "root_operator_probabilities": {
+    "seq": 0.7,
+    "xor": 0.1,
+    "and": 0.1,
+    "loop": 0.1
+  },
   "motif_context_size": 6,
   "motif_context_min_nodes": 4,
   "motif_context_max_nodes": 12,

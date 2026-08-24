@@ -4,7 +4,12 @@ import pytest
 import torch
 
 from proc_rosetta.cli import main
-from proc_rosetta.cli import build_parser, checkpoint_for_selection, split_counts_from_args
+from proc_rosetta.cli import (
+    build_parser,
+    checkpoint_for_selection,
+    split_counts_from_args,
+    synthetic_config_from_args,
+)
 from proc_rosetta.data import (
     SplitCounts,
     multiprocessing_worker_count,
@@ -34,6 +39,15 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert sample_args.max_arity == 3
     assert sample_args.traces_per_sample == 128
     assert sample_args.curriculum_phase == 3
+    assert sample_args.operator_probabilities is None
+    assert sample_args.root_operator_probabilities is None
+    sample_config = synthetic_config_from_args(sample_args)
+    assert sample_config.root_operator_probabilities == {
+        "seq": 0.7,
+        "xor": 0.1,
+        "and": 0.1,
+        "loop": 0.1,
+    }
     assert not sample_args.multiprocessing
     assert not sample_args.quiet
     assert train_args.epochs == 100
@@ -55,6 +69,34 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert not test_args.quiet
     assert test_args.conformance_method == "token_based_replay"
     assert test_args.checkpoint_selection == "best"
+
+
+def test_sample_operator_probability_overrides_are_parsed_independently():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "sample",
+            "--operator-probabilities",
+            "seq=0.1,xor=0.2,and=0.3,loop=0.4",
+            "--root-operator-probabilities",
+            "sequence=0.7,xor=0.1,and=0.1,loop=0.1",
+        ]
+    )
+
+    config = synthetic_config_from_args(args)
+
+    assert config.operator_probabilities == {
+        "seq": 0.1,
+        "xor": 0.2,
+        "and": 0.3,
+        "loop": 0.4,
+    }
+    assert config.root_operator_probabilities == {
+        "seq": 0.7,
+        "xor": 0.1,
+        "and": 0.1,
+        "loop": 0.1,
+    }
 
 
 @pytest.mark.parametrize(("cpu_count", "expected"), [(16, 15), (2, 1), (1, 1), (None, 1)])

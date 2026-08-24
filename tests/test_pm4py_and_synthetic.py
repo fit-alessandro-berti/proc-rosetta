@@ -1,7 +1,76 @@
+import random
+
+import pytest
+
 from proc_rosetta.pm4py_bridge import petri_graph_to_net, simulate_traces, tree_to_petri_net
-from proc_rosetta.synthetic import ProcessSample, SyntheticConfig, generate_sample
+from proc_rosetta.synthetic import (
+    ProcessSample,
+    SyntheticConfig,
+    generate_process_tree,
+    generate_sample,
+)
 from proc_rosetta.families import enumerate_visible_language, generate_behavior_family
 from proc_rosetta.tree import NodeKind, ProcessTreeNode
+
+
+def test_operator_probability_defaults_and_configuration_round_trip():
+    config = SyntheticConfig()
+
+    assert config.operator_probabilities == {
+        "seq": 0.25,
+        "xor": 0.25,
+        "and": 0.25,
+        "loop": 0.25,
+    }
+    assert config.root_operator_probabilities == {
+        "seq": 0.7,
+        "xor": 0.1,
+        "and": 0.1,
+        "loop": 0.1,
+    }
+    assert SyntheticConfig.from_dict(config.to_dict()) == config
+
+
+def test_root_and_non_root_operator_probabilities_are_independent():
+    config = SyntheticConfig(
+        max_depth=2,
+        max_activities=2,
+        min_activities=2,
+        max_arity=2,
+        curriculum_phase=2,
+        leaf_probability=0.0,
+        min_tree_depth=1,
+        min_tree_size=1,
+        operator_probabilities={"xor": 1.0},
+        root_operator_probabilities={"sequence": 1.0},
+    )
+
+    tree = generate_process_tree(config, random.Random(17))
+
+    assert tree.kind is NodeKind.SEQ
+    assert tree.children
+    assert all(child.kind is NodeKind.XOR for child in tree.children)
+
+
+@pytest.mark.parametrize(
+    ("probabilities", "message"),
+    [
+        ({"seq": 0.5, "xor": 0.4}, "sum to 1.0"),
+        ({"seq": 0.5, "unknown": 0.5}, "unknown operator"),
+        ({"seq": 1.1, "xor": -0.1}, "non-negative"),
+    ],
+)
+def test_operator_probability_validation(probabilities, message):
+    with pytest.raises(ValueError, match=message):
+        SyntheticConfig(operator_probabilities=probabilities)
+
+
+def test_operator_probabilities_require_a_curriculum_eligible_choice():
+    with pytest.raises(ValueError, match="enabled in curriculum phase 2"):
+        SyntheticConfig(
+            curriculum_phase=2,
+            root_operator_probabilities={"loop": 1.0},
+        )
 
 
 def test_tree_to_petri_net_and_trace_simulation():

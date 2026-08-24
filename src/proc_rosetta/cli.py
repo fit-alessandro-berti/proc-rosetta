@@ -56,6 +56,22 @@ def build_parser() -> argparse.ArgumentParser:
     sample.add_argument("--max-activities", type=int, default=DEFAULT_MAX_ACTIVITIES)
     sample.add_argument("--min-activities", type=int, default=8)
     sample.add_argument("--leaf-probability", type=float, default=0.55)
+    sample.add_argument(
+        "--operator-probabilities",
+        default=None,
+        help=(
+            "Comma-separated operator probabilities for non-root nodes, for example "
+            "seq=0.25,xor=0.25,and=0.25,loop=0.25."
+        ),
+    )
+    sample.add_argument(
+        "--root-operator-probabilities",
+        default=None,
+        help=(
+            "Comma-separated root-operator probabilities; defaults to "
+            "seq=0.7,xor=0.1,and=0.1,loop=0.1."
+        ),
+    )
     sample.add_argument("--max-arity", type=int, default=3)
     sample.add_argument("--traces-per-sample", type=int, default=128)
     sample.add_argument("--max-trace-length", type=int, default=128)
@@ -333,6 +349,14 @@ def synthetic_config_from_args(args: argparse.Namespace) -> SyntheticConfig:
         else config.motif_weights
     )
     overrides: dict[str, object] = {"motif_weights": motif_weights}
+    if args.operator_probabilities is not None:
+        overrides["operator_probabilities"] = _parse_operator_probabilities(
+            args.operator_probabilities
+        )
+    if args.root_operator_probabilities is not None:
+        overrides["root_operator_probabilities"] = _parse_operator_probabilities(
+            args.root_operator_probabilities
+        )
     if args.min_families_per_motif is not None:
         if args.min_families_per_motif < 0:
             raise ValueError("min-families-per-motif must be non-negative")
@@ -629,6 +653,24 @@ def _parse_weights(value: str) -> dict[str, float]:
             raise ValueError("motif weights must use KIND=WEIGHT comma-separated syntax") from exc
     if not result or sum(max(0.0, weight) for weight in result.values()) <= 0:
         raise ValueError("at least one motif weight must be positive")
+    return result
+
+
+def _parse_operator_probabilities(value: str) -> dict[str, float]:
+    result: dict[str, float] = {}
+    for item in value.split(","):
+        if not item.strip():
+            continue
+        try:
+            name, probability = item.split("=", 1)
+            result[name.strip()] = float(probability)
+        except ValueError as exc:
+            raise ValueError(
+                "operator probabilities must use OPERATOR=PROBABILITY "
+                "comma-separated syntax"
+            ) from exc
+    if not result:
+        raise ValueError("at least one operator probability must be supplied")
     return result
 
 

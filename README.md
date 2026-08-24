@@ -251,6 +251,8 @@ behavior never crosses split boundaries. Useful generator controls include:
 ./sample.py --preset nonblock_ood
 ./sample.py --preset noise_ood
 ./sample.py --motif-weights duplicate_vs_silent=1,m_nonfreechoice=1
+./sample.py --root-operator-probabilities seq=0.7,xor=0.1,and=0.1,loop=0.1
+./sample.py --operator-probabilities seq=0.25,xor=0.25,and=0.25,loop=0.25
 ./sample.py --generator-config configs/behavior_families.json
 ./sample.py --generator isolated  # legacy isolated triples
 ```

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import random
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from itertools import repeat
+import math
 from typing import Callable, Sequence
 
 from proc_rosetta.pm4py_bridge import (
@@ -16,6 +18,53 @@ from proc_rosetta.tree import NodeKind, ProcessTreeNode
 
 
 DEFAULT_MAX_ACTIVITIES = 30
+OPERATOR_KINDS = (
+    NodeKind.SEQ,
+    NodeKind.XOR,
+    NodeKind.AND,
+    NodeKind.LOOP,
+)
+
+
+def _default_operator_probabilities() -> dict[str, float]:
+    return {kind.value: 0.25 for kind in OPERATOR_KINDS}
+
+
+def _default_root_operator_probabilities() -> dict[str, float]:
+    return {
+        NodeKind.SEQ.value: 0.7,
+        NodeKind.XOR.value: 0.1,
+        NodeKind.AND.value: 0.1,
+        NodeKind.LOOP.value: 0.1,
+    }
+
+
+def _normalize_operator_probabilities(
+    probabilities: Mapping[object, object],
+    *,
+    field_name: str,
+) -> dict[str, float]:
+    aliases = {"sequence": NodeKind.SEQ.value}
+    normalized = {kind.value: 0.0 for kind in OPERATOR_KINDS}
+    seen: set[str] = set()
+    for raw_kind, raw_probability in probabilities.items():
+        name = raw_kind.value if isinstance(raw_kind, NodeKind) else str(raw_kind)
+        name = aliases.get(name.strip().lower(), name.strip().lower())
+        if name not in normalized:
+            allowed = ", ".join(kind.value for kind in OPERATOR_KINDS)
+            raise ValueError(f"{field_name} contains unknown operator {raw_kind!r}; use {allowed}")
+        if name in seen:
+            raise ValueError(f"{field_name} specifies {name!r} more than once")
+        probability = float(raw_probability)
+        if not math.isfinite(probability) or probability < 0.0:
+            raise ValueError(f"{field_name} probabilities must be finite and non-negative")
+        normalized[name] = probability
+        seen.add(name)
+
+    total = sum(normalized.values())
+    if not math.isclose(total, 1.0, rel_tol=0.0, abs_tol=1e-9):
+        raise ValueError(f"{field_name} probabilities must sum to 1.0 (received {total:g})")
+    return {name: probability / total for name, probability in normalized.items()}
 
 
 @dataclass(frozen=True)
@@ -29,6 +78,12 @@ class SyntheticConfig:
     curriculum_phase: int = 3
     reuse_activity_probability: float = 0.15
     leaf_probability: float = 0.55
+    operator_probabilities: dict[str, float] = field(
+        default_factory=_default_operator_probabilities
+    )
+    root_operator_probabilities: dict[str, float] = field(
+        default_factory=_default_root_operator_probabilities
+    )
     motif_context_size: int = 6
     motif_context_min_nodes: int = 4
     motif_context_max_nodes: int = 12
@@ -74,6 +129,25 @@ class SyntheticConfig:
         }
     )
 
+    def __post_init__(self) -> None:
+        for field_name in ("operator_probabilities", "root_operator_probabilities"):
+            raw = getattr(self, field_name)
+            if not isinstance(raw, Mapping):
+                raise ValueError(f"{field_name} must map operators to probabilities")
+            probabilities = _normalize_operator_probabilities(raw, field_name=field_name)
+            object.__setattr__(self, field_name, probabilities)
+
+            enabled = {NodeKind.SEQ.value, NodeKind.XOR.value}
+            if self.curriculum_phase >= 2:
+                enabled.add(NodeKind.AND.value)
+            if self.curriculum_phase >= 3:
+                enabled.add(NodeKind.LOOP.value)
+            if sum(probabilities[kind] for kind in enabled) <= 0.0:
+                raise ValueError(
+                    f"{field_name} must assign positive probability to an operator "
+                    f"enabled in curriculum phase {self.curriculum_phase}"
+                )
+
     def to_dict(self) -> dict[str, object]:
         return {
             "max_depth": self.max_depth,
@@ -84,6 +158,8 @@ class SyntheticConfig:
             "curriculum_phase": self.curriculum_phase,
             "reuse_activity_probability": self.reuse_activity_probability,
             "leaf_probability": self.leaf_probability,
+            "operator_probabilities": dict(self.operator_probabilities),
+            "root_operator_probabilities": dict(self.root_operator_probabilities),
             "motif_context_size": self.motif_context_size,
             "motif_context_min_nodes": self.motif_context_min_nodes,
             "motif_context_max_nodes": self.motif_context_max_nodes,
@@ -145,6 +221,22 @@ class SyntheticConfig:
             curriculum_phase=int(data.get("curriculum_phase", 3)),
             reuse_activity_probability=float(data.get("reuse_activity_probability", 0.15)),
             leaf_probability=float(data.get("leaf_probability", 0.55)),
+            operator_probabilities=(
+                {
+                    str(key): float(value)
+                    for key, value in data["operator_probabilities"].items()
+                }
+                if isinstance(data.get("operator_probabilities"), dict)
+                else _default_operator_probabilities()
+            ),
+            root_operator_probabilities=(
+                {
+                    str(key): float(value)
+                    for key, value in data["root_operator_probabilities"].items()
+                }
+                if isinstance(data.get("root_operator_probabilities"), dict)
+                else _default_root_operator_probabilities()
+            ),
             motif_context_size=int(data.get("motif_context_size", 6)),
             motif_context_min_nodes=int(data.get("motif_context_min_nodes", 4)),
             motif_context_max_nodes=int(data.get("motif_context_max_nodes", 12)),
@@ -498,7 +590,16 @@ def generate_process_tree(config: SyntheticConfig, rng: random.Random | None = N
             if config.curriculum_phase >= 3:
                 operators.append(NodeKind.LOOP)
 
-            op = rng.choice(operators)
+            probabilities = (
+                config.root_operator_probabilities
+                if depth == 0
+                else config.operator_probabilities
+            )
+            op = rng.choices(
+                operators,
+                weights=[probabilities[kind.value] for kind in operators],
+                k=1,
+            )[0]
             if op is NodeKind.LOOP:
                 body = make_node(depth + 1)
                 redo = make_node(depth + 1)

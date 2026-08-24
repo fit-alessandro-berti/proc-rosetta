@@ -83,6 +83,8 @@ The process tree is the decoder target and canonical behavior description. The d
 | `curriculum_phase` | 3 | Operator set used during generation. Phase 3 enables `SEQ`, `XOR`, `AND`, and `LOOP`. |
 | `reuse_activity_probability` | 0.15 | Probability of reusing an activity label instead of introducing a new one. |
 | `leaf_probability` | 0.65 | Probability of stopping recursion early and generating a leaf. |
+| `operator_probabilities` | 0.25 each | Probabilities used when selecting a non-root operator, renormalized over operators enabled by the curriculum phase. |
+| `root_operator_probabilities` | SEQ 0.70; XOR/AND/LOOP 0.10 each | Separate probabilities used when selecting the root operator. |
 | `generator` | `behavior_families` | Generate grouped exact-equivalent behavior rows rather than isolated triples. |
 | `variants_per_behavior` | 2 | Number of representation rows per behavior family. |
 | `motif_context_size` | 4 | Shared sequence context wrapped around controlled equivalence motifs. |
