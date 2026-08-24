@@ -21,6 +21,8 @@ class LossWeights:
     covariance: float = 0.01
     latent_alignment: float = 0.075
     kl: float = 0.0
+    tree_complexity: float = 0.0
+    duplicate_activity: float = 0.0
     label_smoothing: float = 0.04
     contrastive_temperature: float = 0.3
     behavior_temperature: float = 0.2
@@ -37,6 +39,154 @@ def tree_token_weights(tokenizer: TreeTokenizer) -> torch.Tensor:
         weights[tokenizer.token_to_id[name]] = 2.0
     weights[tokenizer.pad_id] = 0.0
     return weights
+
+
+def tree_complexity_token_costs(
+    tokenizer: TreeTokenizer,
+    device: torch.device,
+) -> torch.Tensor:
+    """Return the structural cost assigned to each tree vocabulary token."""
+
+    costs = torch.zeros(
+        tokenizer.vocab_size,
+        dtype=torch.float32,
+        device=device,
+    )
+    for operator in ("SEQ", "XOR", "AND"):
+        costs[tokenizer.token_to_id[operator]] = 1.0
+    costs[tokenizer.token_to_id["LOOP"]] = 1.25
+    for arity in range(2, tokenizer.max_arity + 1):
+        costs[tokenizer.token_to_id[f"ARITY_{arity}"]] = 0.25 * max(
+            arity - 2,
+            0,
+        )
+    return costs
+
+
+def expected_tree_complexity_loss(
+    logits: torch.Tensor,
+    decoder_targets: torch.Tensor,
+    tokenizer: TreeTokenizer,
+    *,
+    required_complexity_fraction: float = 0.10,
+) -> torch.Tensor:
+    """Penalize expected structural complexity without discrete decoding.
+
+    Complexity beyond the target is fully penalized. Complexity supported by
+    the target receives only a small simplicity-prior penalty.
+    """
+
+    probabilities = F.softmax(logits.float(), dim=-1)
+    costs = tree_complexity_token_costs(tokenizer, logits.device)
+    target_next = decoder_targets[:, 1:]
+    active = target_next.ne(tokenizer.pad_id)
+
+    expected_cost = torch.einsum("btv,v->bt", probabilities, costs)
+    target_cost = costs[target_next]
+    excess_cost = F.relu(expected_cost - target_cost)
+    target_supported_cost = torch.minimum(expected_cost, target_cost)
+    per_position = (
+        excess_cost
+        + required_complexity_fraction * target_supported_cost
+    )
+
+    activity_ids = torch.tensor(
+        [
+            tokenizer.token_to_id[token]
+            for token in tokenizer.activity_tokens
+        ],
+        dtype=torch.long,
+        device=logits.device,
+    )
+    target_activity_occurrences = target_next.unsqueeze(-1).eq(
+        activity_ids.view(1, 1, -1)
+    )
+    unique_activity_count = (
+        target_activity_occurrences.any(dim=1)
+        .sum(dim=-1)
+        .to(probabilities.dtype)
+        .clamp_min(1.0)
+    )
+    per_sequence = (
+        (per_position * active).sum(dim=-1)
+        / unique_activity_count
+    )
+    return per_sequence.mean()
+
+
+def duplicate_activity_probability_loss(
+    logits: torch.Tensor,
+    decoder_inputs: torch.Tensor,
+    decoder_targets: torch.Tensor,
+    tokenizer: TreeTokenizer,
+    *,
+    required_duplicate_fraction: float = 0.15,
+) -> torch.Tensor:
+    """Penalize probability assigned to activities used in the actual prefix.
+
+    The exact repetition required by the teacher target is discounted, while
+    probability assigned to any other repeated activity remains fully
+    penalized.
+    """
+
+    probabilities = F.softmax(logits.float(), dim=-1)
+    activity_ids = torch.tensor(
+        [
+            tokenizer.token_to_id[token]
+            for token in tokenizer.activity_tokens
+        ],
+        dtype=torch.long,
+        device=logits.device,
+    )
+    activity_probabilities = probabilities.index_select(
+        dim=-1,
+        index=activity_ids,
+    )
+
+    # logits[:, t] predicts the token after decoder_inputs[:, t], so the
+    # cumulative occurrences through t are precisely the activities already
+    # present when that prediction is made.
+    actual_prefix_occurrences = decoder_inputs.unsqueeze(-1).eq(
+        activity_ids.view(1, 1, -1)
+    )
+    used_in_actual_prefix = actual_prefix_occurrences.cumsum(dim=1).gt(0)
+    repeated_probability = (
+        activity_probabilities
+        * used_in_actual_prefix.to(activity_probabilities.dtype)
+    )
+
+    target_prefix = decoder_targets[:, :-1]
+    target_next = decoder_targets[:, 1:]
+    target_prefix_occurrences = target_prefix.unsqueeze(-1).eq(
+        activity_ids.view(1, 1, -1)
+    )
+    used_in_target_prefix = target_prefix_occurrences.cumsum(dim=1).gt(0)
+    target_next_is_activity = target_next.unsqueeze(-1).eq(
+        activity_ids.view(1, 1, -1)
+    )
+    intended_duplicate = used_in_target_prefix & target_next_is_activity
+    penalty_multiplier = (
+        1.0
+        - (1.0 - required_duplicate_fraction)
+        * intended_duplicate.to(activity_probabilities.dtype)
+    )
+    per_position = (repeated_probability * penalty_multiplier).sum(dim=-1)
+    active = target_next.ne(tokenizer.pad_id)
+
+    target_activity_occurrences = target_next.unsqueeze(-1).eq(
+        activity_ids.view(1, 1, -1)
+    )
+    unique_activity_count = (
+        target_activity_occurrences.any(dim=1)
+        .sum(dim=-1)
+        .to(probabilities.dtype)
+        .clamp_min(1.0)
+    )
+    per_sequence = (
+        (per_position * active).sum(dim=-1)
+        / unique_activity_count
+    )
+    return per_sequence.mean()
 
 
 def sequence_cross_entropy(
@@ -298,6 +448,12 @@ def multimodal_tree_loss(
     decoder_loss_targets = outputs.get("decoder_loss_targets")
     if not isinstance(decoder_loss_targets, dict):
         decoder_loss_targets = decoder_targets
+    decoder_inputs = outputs.get("decoder_inputs")
+    if not isinstance(decoder_inputs, dict):
+        decoder_inputs = {
+            name: decoder_targets[name][:, :-1]
+            for name in ("tree", "trace", "petri")
+        }
     logits = outputs["tree_logits"]
     dists = outputs["dists"]
     assert isinstance(logits, dict)
@@ -338,6 +494,32 @@ def multimodal_tree_loss(
     )
     variance, covariance = variance_covariance_loss(dists)
     latent_alignment = positive_latent_alignment_loss(dists, positive_mask)
+    if tokenizer is None:
+        zero_auxiliary = rec_tree.sum() * 0.0
+        tree_complexity = zero_auxiliary
+        duplicate_activity = zero_auxiliary
+    else:
+        tree_complexity = torch.stack(
+            [
+                expected_tree_complexity_loss(
+                    logits[name],
+                    decoder_targets[name],
+                    tokenizer,
+                )
+                for name in ("tree", "trace", "petri")
+            ]
+        ).mean()
+        duplicate_activity = torch.stack(
+            [
+                duplicate_activity_probability_loss(
+                    logits[name],
+                    decoder_inputs[name],
+                    decoder_targets[name],
+                    tokenizer,
+                )
+                for name in ("tree", "trace", "petri")
+            ]
+        ).mean()
     total = (
         weights.tree_reconstruction * rec_tree
         + weights.trace_to_tree * trace_to_tree
@@ -348,6 +530,8 @@ def multimodal_tree_loss(
         + weights.variance * variance
         + weights.covariance * covariance
         + weights.latent_alignment * latent_alignment
+        + weights.tree_complexity * tree_complexity
+        + weights.duplicate_activity * duplicate_activity
     )
     ranks = torch.stack(
         [effective_rank(distribution.mu.detach()) for distribution in dists.values()]
@@ -358,6 +542,8 @@ def multimodal_tree_loss(
         "tree_reconstruction": rec_tree,
         "trace_to_tree": trace_to_tree,
         "petri_to_tree": petri_to_tree,
+        "tree_complexity": tree_complexity,
+        "duplicate_activity": duplicate_activity,
         "exact_contrastive": exact,
         "within_modality_contrastive": within,
         "soft_behavior_geometry": soft,

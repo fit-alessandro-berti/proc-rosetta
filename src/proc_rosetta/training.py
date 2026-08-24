@@ -93,6 +93,8 @@ class TrainConfig:
     covariance_weight: float = 0.01
     kl_weight: float = 0.0
     latent_alignment_weight: float = 0.075
+    tree_complexity_weight: float = 0.0
+    duplicate_activity_weight: float = 0.0
     contrastive_temperature: float = 0.3
     behavior_temperature: float = 0.2
     latent_temperature: float = 0.2
@@ -100,6 +102,8 @@ class TrainConfig:
     exact_contrastive_ramp_epochs: int = 4
     soft_geometry_start_epoch: int = 5
     soft_geometry_ramp_epochs: int = 6
+    structure_regularization_start_epoch: int = 5
+    structure_regularization_ramp_epochs: int = 5
     scheduler_monitor: str = "trace_to_tree"
     restore_best_weights: bool = True
     use_ema: bool = True
@@ -126,6 +130,9 @@ class TrainConfig:
             raise ValueError(
                 "scheduler_monitor must be trace_to_tree, reconstruction_composite, or loss"
             )
+        for name in ("tree_complexity_weight", "duplicate_activity_weight"):
+            if not getattr(self, name) >= 0.0:
+                raise ValueError(f"{name} must be nonnegative")
         for name in (
             "activity_remap_probability",
             "tree_encoder_dropout",
@@ -169,6 +176,11 @@ def loss_weights_from_config(
         start_epoch=config.soft_geometry_start_epoch,
         ramp_epochs=config.soft_geometry_ramp_epochs,
     )
+    structure_scale = _objective_ramp(
+        epoch,
+        start_epoch=config.structure_regularization_start_epoch,
+        ramp_epochs=config.structure_regularization_ramp_epochs,
+    )
     return LossWeights(
         tree_reconstruction=config.tree_reconstruction_weight,
         trace_to_tree=config.trace_to_tree_weight,
@@ -180,6 +192,8 @@ def loss_weights_from_config(
         covariance=covariance_weight * exact_scale,
         latent_alignment=config.latent_alignment_weight * exact_scale,
         kl=0.0,
+        tree_complexity=config.tree_complexity_weight * structure_scale,
+        duplicate_activity=config.duplicate_activity_weight * structure_scale,
         label_smoothing=config.label_smoothing,
         contrastive_temperature=config.contrastive_temperature,
         behavior_temperature=config.behavior_temperature,
@@ -626,6 +640,14 @@ def evaluate_epoch(
                     deployment_target_ids,
                     deployment_prediction_ids,
                 )
+                target_structure = _folded_tree_statistics(
+                    target_ids,
+                    model.tree_tokenizer,
+                )
+                decoded_structure = _folded_tree_statistics(
+                    prediction_ids,
+                    model.tree_tokenizer,
+                )
                 motif = str(sample.metadata.get("motif", "unknown"))
                 target_names = [model.tree_tokenizer.tokens[value] for value in target_ids]
                 prediction_names = [
@@ -672,6 +694,27 @@ def evaluate_epoch(
                         ),
                         "target": target_ids,
                         "prediction": prediction_ids,
+                        "target_size": (
+                            None if target_structure is None else target_structure[0]
+                        ),
+                        "target_depth": (
+                            None if target_structure is None else target_structure[1]
+                        ),
+                        "target_duplicate_count": (
+                            None if target_structure is None else target_structure[2]
+                        ),
+                        "decoded_size": (
+                            None if decoded_structure is None else decoded_structure[0]
+                        ),
+                        "decoded_depth": (
+                            None if decoded_structure is None else decoded_structure[1]
+                        ),
+                        "decoded_duplicate_count": (
+                            None if decoded_structure is None else decoded_structure[2]
+                        ),
+                        "decoded_has_duplicates": (
+                            False if decoded_structure is None else decoded_structure[3]
+                        ),
                         "token_accuracy": token_accuracy,
                         "shuffled_exact": (
                             False
@@ -837,6 +880,28 @@ def _source_normalized_token_ids(
         return None
 
 
+def _folded_tree_statistics(
+    token_ids: list[int],
+    tokenizer: TreeTokenizer,
+) -> tuple[int, int, int, bool] | None:
+    """Return size, depth, and duplicate statistics for a folded decode."""
+
+    from proc_rosetta.pm4py_bridge import fold_process_tree
+
+    try:
+        tree = fold_process_tree(tokenizer.decode_tree(token_ids))
+    except (TypeError, ValueError):
+        return None
+    labels = tree.activity_labels()
+    duplicate_count = len(labels) - len(set(labels))
+    return (
+        tree.size(),
+        tree.max_depth(),
+        duplicate_count,
+        duplicate_count > 0,
+    )
+
+
 def _tree_has_loop(tree) -> bool:
     from proc_rosetta.tree import NodeKind
 
@@ -877,6 +942,74 @@ def _summarize_discovery_metrics(
         float(np.mean([float(row["normalized_edit"]) for row in rows]))
         if rows
         else 1.0
+    )
+    structural_rows = [
+        row
+        for row in rows
+        if row.get("decoded_size") is not None
+        and row.get("target_size") is not None
+    ]
+    metrics["trace_decoded_mean_size"] = (
+        float(np.mean([float(row["decoded_size"]) for row in structural_rows]))
+        if structural_rows
+        else 0.0
+    )
+    metrics["trace_decoded_mean_depth"] = (
+        float(np.mean([float(row["decoded_depth"]) for row in structural_rows]))
+        if structural_rows
+        else 0.0
+    )
+    metrics["trace_decoded_mean_duplicate_count"] = (
+        float(
+            np.mean(
+                [float(row["decoded_duplicate_count"]) for row in structural_rows]
+            )
+        )
+        if structural_rows
+        else 0.0
+    )
+    metrics["trace_decoded_duplicate_rate"] = (
+        sum(bool(row["decoded_has_duplicates"]) for row in structural_rows)
+        / len(structural_rows)
+        if structural_rows
+        else 0.0
+    )
+    metrics["trace_decoded_mean_size_delta"] = (
+        float(
+            np.mean(
+                [
+                    float(row["decoded_size"]) - float(row["target_size"])
+                    for row in structural_rows
+                ]
+            )
+        )
+        if structural_rows
+        else 0.0
+    )
+    metrics["trace_decoded_mean_depth_delta"] = (
+        float(
+            np.mean(
+                [
+                    float(row["decoded_depth"]) - float(row["target_depth"])
+                    for row in structural_rows
+                ]
+            )
+        )
+        if structural_rows
+        else 0.0
+    )
+    metrics["trace_decoded_mean_duplicate_count_delta"] = (
+        float(
+            np.mean(
+                [
+                    float(row["decoded_duplicate_count"])
+                    - float(row["target_duplicate_count"])
+                    for row in structural_rows
+                ]
+            )
+        )
+        if structural_rows
+        else 0.0
     )
     metrics["raw_token_exact"] = (
         sum(bool(row["raw_exact"]) for row in rows) / len(rows) if rows else 0.0
@@ -2251,6 +2384,8 @@ CSV_METRIC_NAMES = (
     "tree_reconstruction",
     "trace_to_tree",
     "petri_to_tree",
+    "tree_complexity",
+    "duplicate_activity",
     "latent_alignment",
     "contrastive",
     "exact_contrastive",
@@ -2263,6 +2398,13 @@ CSV_METRIC_NAMES = (
     "trace_canonical_exact",
     "ordinary_trace_canonical_exact",
     "trace_normalized_tree_edit",
+    "trace_decoded_mean_size",
+    "trace_decoded_mean_depth",
+    "trace_decoded_mean_duplicate_count",
+    "trace_decoded_duplicate_rate",
+    "trace_decoded_mean_size_delta",
+    "trace_decoded_mean_depth_delta",
+    "trace_decoded_mean_duplicate_count_delta",
     "exact_behavior_recall_at_1",
     "behavior_distance_spearman",
     "false_negative_rate",

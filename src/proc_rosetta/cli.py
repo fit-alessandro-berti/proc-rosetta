@@ -253,6 +253,8 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--variance-weight", type=float, default=0.1)
     train.add_argument("--covariance-weight", type=float, default=0.01)
     train.add_argument("--latent-alignment-weight", type=float, default=0.075)
+    train.add_argument("--tree-complexity-weight", type=float, default=0.0)
+    train.add_argument("--duplicate-activity-weight", type=float, default=0.0)
     train.add_argument("--contrastive-temperature", type=float, default=0.3)
     train.add_argument("--behavior-temperature", type=float, default=0.2)
     train.add_argument("--latent-temperature", type=float, default=0.2)
@@ -260,6 +262,16 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--exact-contrastive-ramp-epochs", type=int, default=4)
     train.add_argument("--soft-geometry-start-epoch", type=int, default=5)
     train.add_argument("--soft-geometry-ramp-epochs", type=int, default=6)
+    train.add_argument(
+        "--structure-regularization-start-epoch",
+        type=int,
+        default=5,
+    )
+    train.add_argument(
+        "--structure-regularization-ramp-epochs",
+        type=int,
+        default=5,
+    )
     train.add_argument(
         "--scheduler-monitor",
         choices=["trace_to_tree", "reconstruction_composite", "loss"],
@@ -479,6 +491,8 @@ def run_train(args: argparse.Namespace) -> int:
         variance_weight=args.variance_weight,
         covariance_weight=args.covariance_weight,
         latent_alignment_weight=args.latent_alignment_weight,
+        tree_complexity_weight=args.tree_complexity_weight,
+        duplicate_activity_weight=args.duplicate_activity_weight,
         contrastive_temperature=args.contrastive_temperature,
         behavior_temperature=args.behavior_temperature,
         latent_temperature=args.latent_temperature,
@@ -486,6 +500,12 @@ def run_train(args: argparse.Namespace) -> int:
         exact_contrastive_ramp_epochs=args.exact_contrastive_ramp_epochs,
         soft_geometry_start_epoch=args.soft_geometry_start_epoch,
         soft_geometry_ramp_epochs=args.soft_geometry_ramp_epochs,
+        structure_regularization_start_epoch=(
+            args.structure_regularization_start_epoch
+        ),
+        structure_regularization_ramp_epochs=(
+            args.structure_regularization_ramp_epochs
+        ),
         scheduler_monitor=args.scheduler_monitor,
         restore_best_weights=args.restore_best_weights,
         use_ema=args.use_ema,

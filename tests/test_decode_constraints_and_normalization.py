@@ -172,6 +172,38 @@ def test_shared_constraint_mask_keeps_tau_and_masks_illegal_or_used_activities()
     assert legacy_mask[tokenizer.token_to_id["A0"]]
 
 
+def test_penalize_duplicate_policy_softens_search_score_without_hard_masking():
+    model = _model(3)
+    tokenizer = model.tree_tokenizer
+    prefix = torch.tensor(
+        [[
+            tokenizer.bos_id,
+            tokenizer.token_to_id["SEQ"],
+            tokenizer.token_to_id["ARITY_2"],
+            tokenizer.token_to_id["A0"],
+        ]]
+    )
+
+    scores = model.tree_decoder.next_token_scores(
+        torch.zeros(1, 8),
+        prefix,
+        avoid_duplicate_activity_labels=True,
+        duplicate_policy="penalize",
+        completion_policy="prefix_only",
+    )
+    repeated_id = tokenizer.token_to_id["A0"]
+    unused_id = tokenizer.token_to_id["A1"]
+
+    assert scores.effective_mask[0, repeated_id]
+    assert scores.search_scores[0, repeated_id].item() == pytest.approx(
+        scores.base_log_probs[0, repeated_id].item() - 0.75
+    )
+    assert torch.equal(
+        scores.search_scores[0, unused_id],
+        scores.base_log_probs[0, unused_id],
+    )
+
+
 def test_greedy_beam_and_progressive_decoding_respect_source_and_duplicates():
     torch.manual_seed(4)
     model = _model(3)

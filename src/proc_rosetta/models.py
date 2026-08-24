@@ -933,10 +933,32 @@ class GrammarTreeDecoder(nn.Module):
         effective = held_constraint & completion_mask
         if not effective.any(dim=-1).all():
             raise RuntimeError("bounded completion produced an empty candidate set")
+        search_scores = base_log_probs.masked_fill(~effective, -torch.inf)
+        if avoid_duplicate_activity_labels and duplicate_policy == "penalize":
+            if used_activity_mask is None:
+                used = input_tokens.unsqueeze(-1).eq(
+                    self.activity_token_ids.view(1, 1, -1)
+                ).any(dim=1)
+            else:
+                used = used_activity_mask.to(
+                    device=base_logits.device,
+                    dtype=torch.bool,
+                )
+                if used.ndim == 1:
+                    used = used.unsqueeze(0)
+                if used.shape != (
+                    base_logits.shape[0],
+                    self.tokenizer.max_activities,
+                ):
+                    raise ValueError("used activity mask has incompatible shape")
+            search_scores = search_scores.clone()
+            search_scores[:, self.activity_token_ids] -= (
+                0.75 * used.to(search_scores.dtype)
+            )
         return NextTokenScores(
             logits=base_logits.masked_fill(~effective, -torch.inf),
             base_log_probs=base_log_probs,
-            search_scores=base_log_probs.masked_fill(~effective, -torch.inf),
+            search_scores=search_scores,
             prefix_grammar_mask=prefix_grammar_mask,
             completion_mask=completion_mask,
             source_constraint_mask=source_constraint,
@@ -1590,6 +1612,8 @@ class ProcRosettaModel(nn.Module):
         )
         split_logits = stacked_logits.split(batch_size, dim=0)
         logits = dict(zip(names, split_logits))
+        split_inputs = stacked_input.split(batch_size, dim=0)
+        decoder_inputs = dict(zip(names, split_inputs))
         contrastive_embeddings = {
             name: F.normalize(self.contrastive_head(dists[name].mu), dim=-1)
             for name in names
@@ -1601,6 +1625,7 @@ class ProcRosettaModel(nn.Module):
             "tree_logits": logits,
             "decoder_targets": decoder_targets,
             "decoder_loss_targets": decoder_loss_targets,
+            "decoder_inputs": decoder_inputs,
         }
 
     @torch.no_grad()

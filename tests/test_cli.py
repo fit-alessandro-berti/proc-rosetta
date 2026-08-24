@@ -64,11 +64,46 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert train_args.label_smoothing == 0.04
     assert train_args.early_stopping_patience == 6
     assert train_args.activity_remap_probability == 0.5
+    assert train_args.tree_complexity_weight == 0.0
+    assert train_args.duplicate_activity_weight == 0.0
+    assert train_args.structure_regularization_start_epoch == 5
+    assert train_args.structure_regularization_ramp_epochs == 5
     assert not train_args.resume
     assert test_args.device == default_device()
     assert not test_args.quiet
     assert test_args.conformance_method == "token_based_replay"
     assert test_args.checkpoint_selection == "best"
+
+
+def test_train_cli_maps_structure_regularization_configuration(monkeypatch):
+    captured = {}
+
+    def train(**kwargs):
+        captured.update(kwargs)
+        return object(), []
+
+    monkeypatch.setattr("proc_rosetta.cli.train_from_data_dir", train)
+
+    assert main(
+        [
+            "train",
+            "--tree-complexity-weight",
+            "0.03",
+            "--duplicate-activity-weight",
+            "0.01",
+            "--structure-regularization-start-epoch",
+            "7",
+            "--structure-regularization-ramp-epochs",
+            "9",
+            "--quiet",
+        ]
+    ) == 0
+
+    config = captured["train_config"]
+    assert config.tree_complexity_weight == pytest.approx(0.03)
+    assert config.duplicate_activity_weight == pytest.approx(0.01)
+    assert config.structure_regularization_start_epoch == 7
+    assert config.structure_regularization_ramp_epochs == 9
 
 
 def test_sample_operator_probability_overrides_are_parsed_independently():

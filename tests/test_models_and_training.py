@@ -11,10 +11,14 @@ from proc_rosetta.data import (
     recreate_data_splits,
 )
 from proc_rosetta.losses import (
+    LossWeights,
     cross_modal_contrastive_loss,
+    duplicate_activity_probability_loss,
+    expected_tree_complexity_loss,
     multimodal_tree_loss,
     positive_latent_alignment_loss,
     sequence_cross_entropy,
+    tree_complexity_token_costs,
 )
 from proc_rosetta.models import LatentDistribution
 from proc_rosetta.models import ProcRosettaModel
@@ -25,6 +29,8 @@ from proc_rosetta.training import (
     BehaviorFamilyBatchSampler,
     TrainConfig,
     _different_behavior_permutation,
+    _folded_tree_statistics,
+    _summarize_discovery_metrics,
     build_lr_scheduler,
     build_model,
     build_optimizer,
@@ -37,8 +43,10 @@ from proc_rosetta.training import (
     stage_acceptance_report,
     train_synthetic,
     train_from_data_dir,
+    train_config_from_checkpoint,
     validate_resume_configuration,
 )
+from proc_rosetta.tree import ProcessTreeNode
 from types import SimpleNamespace
 
 
@@ -65,6 +73,12 @@ def test_model_forward_and_loss(monkeypatch):
     )
     assert torch.isfinite(losses["loss"])
     assert set(outputs["contrastive_embeddings"]) == {"tree", "trace", "petri"}
+    assert set(outputs["decoder_inputs"]) == {"tree", "trace", "petri"}
+    for name in ("tree", "trace", "petri"):
+        assert torch.equal(
+            outputs["decoder_inputs"][name],
+            outputs["decoder_targets"][name][:, :-1],
+        )
 
     model.zero_grad(set_to_none=True)
     losses["exact_contrastive"].backward()
@@ -73,6 +87,7 @@ def test_model_forward_and_loss(monkeypatch):
 
     model.zero_grad(set_to_none=True)
     decoder_forward_calls = 0
+    decoder_inputs_seen = []
     incremental_grad_modes = []
     original_forward = model.tree_decoder.forward
     original_incremental_step = model.tree_decoder._incremental_step
@@ -80,6 +95,7 @@ def test_model_forward_and_loss(monkeypatch):
     def counted_forward(*args, **kwargs):
         nonlocal decoder_forward_calls
         decoder_forward_calls += 1
+        decoder_inputs_seen.append(args[1].detach().clone())
         return original_forward(*args, **kwargs)
 
     def checked_incremental_step(*args, **kwargs):
@@ -104,6 +120,16 @@ def test_model_forward_and_loss(monkeypatch):
     sampled_losses["loss"].backward()
 
     assert decoder_forward_calls == 1
+    assert torch.equal(
+        decoder_inputs_seen[0],
+        torch.cat(
+            [
+                sampled_outputs["decoder_inputs"][name]
+                for name in ("tree", "trace", "petri")
+            ],
+            dim=0,
+        ),
+    )
     assert incremental_grad_modes and not any(incremental_grad_modes)
     assert all(
         torch.isfinite(logits).any(dim=-1).all()
@@ -111,6 +137,193 @@ def test_model_forward_and_loss(monkeypatch):
     )
     assert torch.isfinite(sampled_losses["loss"])
     assert any(parameter.grad is not None for parameter in model.tree_decoder.parameters())
+
+
+def _peaked_logits(
+    tokenizer: TreeTokenizer,
+    token_names: list[str],
+) -> torch.Tensor:
+    logits = torch.full((1, len(token_names), tokenizer.vocab_size), -20.0)
+    for position, name in enumerate(token_names):
+        logits[0, position, tokenizer.token_to_id[name]] = 20.0
+    return logits
+
+
+def test_expected_complexity_penalizes_operator_probability_at_leaf_position():
+    tokenizer = TreeTokenizer(max_activities=2, max_arity=4)
+    targets = torch.tensor(
+        [[tokenizer.bos_id, tokenizer.token_to_id["A0"], tokenizer.eos_id]]
+    )
+    leaf_logits = _peaked_logits(tokenizer, ["A0", "<eos>"])
+    operator_logits = _peaked_logits(tokenizer, ["SEQ", "<eos>"])
+
+    leaf_loss = expected_tree_complexity_loss(leaf_logits, targets, tokenizer)
+    operator_loss = expected_tree_complexity_loss(operator_logits, targets, tokenizer)
+
+    assert operator_loss > leaf_loss
+
+
+def test_tree_complexity_loss_charges_high_arity_more_than_binary_arity():
+    tokenizer = TreeTokenizer(max_activities=2, max_arity=4)
+    costs = tree_complexity_token_costs(tokenizer, torch.device("cpu"))
+    targets = torch.tensor(
+        [[
+            tokenizer.bos_id,
+            tokenizer.token_to_id["SEQ"],
+            tokenizer.token_to_id["ARITY_2"],
+            tokenizer.token_to_id["A0"],
+            tokenizer.token_to_id["A1"],
+            tokenizer.eos_id,
+        ]]
+    )
+    binary = _peaked_logits(
+        tokenizer,
+        ["SEQ", "ARITY_2", "A0", "A1", "<eos>"],
+    )
+    high_arity = _peaked_logits(
+        tokenizer,
+        ["SEQ", "ARITY_4", "A0", "A1", "<eos>"],
+    )
+
+    assert costs[tokenizer.token_to_id["ARITY_2"]] == 0.0
+    assert (
+        costs[tokenizer.token_to_id["ARITY_4"]]
+        > costs[tokenizer.token_to_id["ARITY_2"]]
+    )
+    assert expected_tree_complexity_loss(
+        high_arity,
+        targets,
+        tokenizer,
+    ) > expected_tree_complexity_loss(binary, targets, tokenizer)
+
+
+def test_duplicate_loss_ignores_first_occurrence_and_penalizes_repetition():
+    tokenizer = TreeTokenizer(max_activities=2)
+    targets = torch.tensor(
+        [[
+            tokenizer.bos_id,
+            tokenizer.token_to_id["A0"],
+            tokenizer.token_to_id["A1"],
+            tokenizer.eos_id,
+        ]]
+    )
+    decoder_inputs = targets[:, :-1]
+    first_only = _peaked_logits(tokenizer, ["A0", "A1", "<eos>"])
+    repeated = _peaked_logits(tokenizer, ["A0", "A0", "<eos>"])
+
+    first_loss = duplicate_activity_probability_loss(
+        first_only,
+        decoder_inputs,
+        targets,
+        tokenizer,
+    )
+    repeated_loss = duplicate_activity_probability_loss(
+        repeated,
+        decoder_inputs,
+        targets,
+        tokenizer,
+    )
+
+    assert first_loss == pytest.approx(0.0, abs=1e-8)
+    assert repeated_loss > first_loss
+
+
+def test_intended_duplicate_is_discounted_but_other_repeat_is_not():
+    tokenizer = TreeTokenizer(max_activities=2)
+    targets = torch.tensor(
+        [[
+            tokenizer.bos_id,
+            tokenizer.token_to_id["A0"],
+            tokenizer.token_to_id["A1"],
+            tokenizer.token_to_id["A0"],
+            tokenizer.eos_id,
+        ]]
+    )
+    decoder_inputs = targets[:, :-1]
+    intended = _peaked_logits(tokenizer, ["A0", "A1", "A0", "<eos>"])
+    other_repeat = _peaked_logits(tokenizer, ["A0", "A1", "A1", "<eos>"])
+
+    intended_loss = duplicate_activity_probability_loss(
+        intended,
+        decoder_inputs,
+        targets,
+        tokenizer,
+        required_duplicate_fraction=0.15,
+    )
+    other_loss = duplicate_activity_probability_loss(
+        other_repeat,
+        decoder_inputs,
+        targets,
+        tokenizer,
+        required_duplicate_fraction=0.15,
+    )
+
+    assert intended_loss == pytest.approx(other_loss.item() * 0.15, rel=1e-5)
+
+
+def test_duplicate_loss_uses_sampled_decoder_prefixes():
+    tokenizer = TreeTokenizer(max_activities=2)
+    targets = torch.tensor(
+        [[tokenizer.bos_id, tokenizer.token_to_id["A1"], tokenizer.eos_id]]
+    )
+    teacher_inputs = targets[:, :-1]
+    sampled_inputs = teacher_inputs.clone()
+    sampled_inputs[0, 0] = tokenizer.token_to_id["A0"]
+    logits = _peaked_logits(tokenizer, ["A0", "<eos>"])
+
+    teacher_loss = duplicate_activity_probability_loss(
+        logits,
+        teacher_inputs,
+        targets,
+        tokenizer,
+    )
+    sampled_loss = duplicate_activity_probability_loss(
+        logits,
+        sampled_inputs,
+        targets,
+        tokenizer,
+    )
+
+    assert sampled_loss > teacher_loss
+
+
+def test_structure_auxiliary_losses_have_finite_nonzero_logit_gradients():
+    torch.manual_seed(7)
+    tokenizer = TreeTokenizer(max_activities=2, max_arity=4)
+    targets = torch.tensor(
+        [[
+            tokenizer.bos_id,
+            tokenizer.token_to_id["SEQ"],
+            tokenizer.token_to_id["ARITY_2"],
+            tokenizer.token_to_id["A0"],
+            tokenizer.token_to_id["A0"],
+            tokenizer.eos_id,
+        ]]
+    )
+    logits = torch.randn(
+        1,
+        targets.shape[1] - 1,
+        tokenizer.vocab_size,
+        requires_grad=True,
+    )
+    complexity = expected_tree_complexity_loss(logits, targets, tokenizer)
+    duplicate = duplicate_activity_probability_loss(
+        logits,
+        targets[:, :-1],
+        targets,
+        tokenizer,
+    )
+
+    complexity_gradient = torch.autograd.grad(
+        complexity,
+        logits,
+        retain_graph=True,
+    )[0]
+    duplicate_gradient = torch.autograd.grad(duplicate, logits)[0]
+
+    for gradient in (complexity_gradient, duplicate_gradient):
+        assert torch.isfinite(gradient).all()
+        assert gradient.abs().sum() > 0
 
 
 def test_scheduled_sampling_masks_illegal_targets_and_stops_finished_rows(monkeypatch):
@@ -302,6 +515,174 @@ def test_metric_objective_ramps_replace_hard_stage_switches():
     assert epoch_six.exact_contrastive == pytest.approx(0.30)
     assert epoch_three.soft_behavior_geometry == 0.0
     assert epoch_ten.soft_behavior_geometry == pytest.approx(0.25)
+
+
+def test_structure_regularization_weights_ramp_after_delayed_start():
+    config = TrainConfig(
+        tree_complexity_weight=0.03,
+        duplicate_activity_weight=0.01,
+        structure_regularization_start_epoch=5,
+        structure_regularization_ramp_epochs=5,
+    )
+
+    before = loss_weights_from_config(config, epoch=4)
+    first = loss_weights_from_config(config, epoch=5)
+    full = loss_weights_from_config(config, epoch=9)
+
+    assert before.tree_complexity == 0.0
+    assert before.duplicate_activity == 0.0
+    assert first.tree_complexity == pytest.approx(0.03 / 5)
+    assert first.duplicate_activity == pytest.approx(0.01 / 5)
+    assert full.tree_complexity == pytest.approx(0.03)
+    assert full.duplicate_activity == pytest.approx(0.01)
+    with pytest.raises(ValueError, match="tree_complexity_weight"):
+        TrainConfig(tree_complexity_weight=-0.01)
+    with pytest.raises(ValueError, match="duplicate_activity_weight"):
+        TrainConfig(duplicate_activity_weight=-0.01)
+
+
+def test_zero_structure_weights_preserve_previous_total_exactly():
+    torch.manual_seed(21)
+    tokenizer = TreeTokenizer(max_activities=2)
+    targets = torch.tensor(
+        [[
+            tokenizer.bos_id,
+            tokenizer.token_to_id["A0"],
+            tokenizer.eos_id,
+        ]]
+    )
+    embeddings = torch.randn(1, 4)
+    dists = {
+        name: LatentDistribution(embeddings.clone(), torch.zeros_like(embeddings))
+        for name in ("tree", "trace", "petri")
+    }
+    logits = {
+        name: torch.randn(1, 2, tokenizer.vocab_size)
+        for name in ("tree", "trace", "petri")
+    }
+    outputs = {
+        "tree_logits": logits,
+        "dists": dists,
+        "decoder_targets": {name: targets for name in logits},
+        "decoder_inputs": {name: targets[:, :-1] for name in logits},
+    }
+    weights = LossWeights(tree_complexity=0.0, duplicate_activity=0.0)
+
+    losses = multimodal_tree_loss(
+        outputs,
+        targets,
+        weights=weights,
+        tokenizer=tokenizer,
+    )
+    legacy_outputs = dict(outputs)
+    legacy_outputs.pop("decoder_inputs")
+    legacy_losses = multimodal_tree_loss(
+        legacy_outputs,
+        targets,
+        weights=weights,
+        tokenizer=tokenizer,
+    )
+    previous_total = (
+        weights.tree_reconstruction * losses["tree_reconstruction"]
+        + weights.trace_to_tree * losses["trace_to_tree"]
+        + weights.petri_to_tree * losses["petri_to_tree"]
+        + weights.exact_contrastive * losses["exact_contrastive"]
+        + weights.within_modality_contrastive
+        * losses["within_modality_contrastive"]
+        + weights.soft_behavior_geometry * losses["soft_behavior_geometry"]
+        + weights.variance * losses["variance"]
+        + weights.covariance * losses["covariance"]
+        + weights.latent_alignment * losses["latent_alignment"]
+    )
+
+    assert torch.equal(losses["loss"], previous_total)
+    assert torch.equal(
+        legacy_losses["duplicate_activity"],
+        losses["duplicate_activity"],
+    )
+
+
+def test_legacy_checkpoint_defaults_new_structure_objectives_to_zero():
+    legacy_config = asdict(TrainConfig(device="cpu"))
+    for name in (
+        "tree_complexity_weight",
+        "duplicate_activity_weight",
+        "structure_regularization_start_epoch",
+        "structure_regularization_ramp_epochs",
+    ):
+        legacy_config.pop(name)
+    checkpoint = {
+        "train_config": legacy_config,
+        "loss_weights": {
+            "tree_reconstruction": 0.5,
+            "trace_to_tree": 2.0,
+            "petri_to_tree": 0.5,
+        },
+    }
+
+    restored_config = train_config_from_checkpoint(checkpoint, "cpu")
+    restored_weights = loss_weights_from_checkpoint(checkpoint, restored_config)
+
+    assert restored_config.tree_complexity_weight == 0.0
+    assert restored_config.duplicate_activity_weight == 0.0
+    assert restored_weights.tree_complexity == 0.0
+    assert restored_weights.duplicate_activity == 0.0
+
+
+def test_discovery_structure_metrics_use_folded_decoded_trees():
+    tokenizer = TreeTokenizer(max_activities=2, max_arity=3)
+    target_ids = tokenizer.encode_tree(
+        ProcessTreeNode.seq(
+            ProcessTreeNode.activity("A0"),
+            ProcessTreeNode.activity("A1"),
+        ),
+        canonicalize=False,
+    )
+    decoded_ids = tokenizer.encode_tree(
+        ProcessTreeNode.seq(
+            ProcessTreeNode.activity("A0"),
+            ProcessTreeNode.activity("A1"),
+            ProcessTreeNode.activity("A0"),
+        ),
+        canonicalize=False,
+    )
+    target = _folded_tree_statistics(target_ids, tokenizer)
+    decoded = _folded_tree_statistics(decoded_ids, tokenizer)
+    assert target is not None and decoded is not None
+    row = {
+        "motif": "ordinary_tree",
+        "ordinary": True,
+        "loop": False,
+        "exact": False,
+        "normalized_edit": 0.25,
+        "raw_exact": False,
+        "raw_normalized_edit": 0.25,
+        "deployment_exact": False,
+        "deployment_normalized_edit": 0.25,
+        "source_ablation": False,
+        "token_accuracy": {
+            "operator": (1, 1),
+            "arity": (1, 1),
+            "activity_copy": (2, 2),
+        },
+        "target_size": target[0],
+        "target_depth": target[1],
+        "target_duplicate_count": target[2],
+        "decoded_size": decoded[0],
+        "decoded_depth": decoded[1],
+        "decoded_duplicate_count": decoded[2],
+        "decoded_has_duplicates": decoded[3],
+    }
+
+    metrics = _summarize_discovery_metrics([row], {}, [], [], [])
+
+    assert metrics["trace_decoded_mean_size"] == 4.0
+    assert metrics["trace_decoded_mean_depth"] == 2.0
+    assert metrics["trace_decoded_mean_duplicate_count"] == 1.0
+    assert metrics["trace_decoded_duplicate_rate"] == 1.0
+    assert metrics["trace_decoded_mean_size_delta"] == 1.0
+    assert metrics["trace_decoded_mean_depth_delta"] == 0.0
+    assert metrics["trace_decoded_mean_duplicate_count_delta"] == 1.0
 
 
 def test_default_capacity_and_adamw_parameter_groups_are_regularized():
