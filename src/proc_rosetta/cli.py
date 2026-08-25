@@ -549,7 +549,7 @@ def run_test(args: argparse.Namespace) -> int:
     test_debug(
         f"Plan: {sample_count} {sample_label}, batch_size={args.batch_size}, device={args.device}; "
         f"{2 * sample_count} {conformance_label} conformance evaluations, "
-        f"{4 * sample_count} decodes, "
+        f"{8 * sample_count} matched raw/deployment decodes, "
         f"{sample_count * (sample_count - 1) // 2} behavioral pairs, "
         f"{'no' if args.skip_pm4py_petri_embedding else sample_count} PM4Py Petri embeddings",
         enabled=show_progress,

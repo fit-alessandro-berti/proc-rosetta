@@ -1365,76 +1365,203 @@ class GrammarTreeDecoder(nn.Module):
             if isinstance(source, LatentDistribution)
             else None
         )
-        candidate_rows: list[list[tuple[list[int], float]]] = []
-        for row in range(memory.shape[0]):
-            row_memory = memory[row : row + 1]
-            row_mask = None if activity_mask is None else activity_mask[row : row + 1]
-            if allowed_activity_mask is None or allowed_activity_mask.ndim == 1:
-                row_allowed = allowed_activity_mask
-            elif allowed_activity_mask.shape[0] > 1:
-                row_allowed = allowed_activity_mask[row : row + 1]
-            else:
-                row_allowed = allowed_activity_mask
-            row_activity_memory = (
-                None
-                if activity_memory is None
-                else activity_memory[row : row + 1]
+        batch_size = memory.shape[0]
+        if batch_size == 0:
+            return []
+
+        # Search every sample and beam together and retain each decoder layer's
+        # causal cache. This keeps one-token decoding linear in prefix length
+        # and gives accelerators a useful batch instead of serial one-row work.
+        device = memory.device
+        vocabulary_size = self.tokenizer.vocab_size
+        sequences = torch.full(
+            (batch_size, beam_size, max_length),
+            self.tokenizer.pad_id,
+            dtype=torch.long,
+            device=device,
+        )
+        sequences[:, 0, 0] = self.tokenizer.bos_id
+        scores = torch.full(
+            (batch_size, beam_size),
+            -torch.inf,
+            dtype=memory.dtype,
+            device=device,
+        )
+        scores[:, 0] = 0.0
+        lengths = torch.ones(
+            (batch_size, beam_size), dtype=torch.long, device=device
+        )
+        finished = torch.zeros(
+            (batch_size, beam_size), dtype=torch.bool, device=device
+        )
+        used_activity = torch.zeros(
+            (batch_size, beam_size, self.tokenizer.max_activities),
+            dtype=torch.bool,
+            device=device,
+        )
+        open_nodes = torch.ones(
+            (batch_size, beam_size), dtype=torch.long, device=device
+        )
+        pending_operator = torch.zeros_like(open_nodes)
+        caches: list[torch.Tensor | None] = [None] * len(self.decoder.layers)
+
+        def active_source_rows(
+            value: torch.Tensor | None,
+            active: torch.Tensor,
+            *,
+            allow_unbatched: bool = False,
+        ) -> torch.Tensor | None:
+            if value is None:
+                return None
+            value = value.to(device)
+            if allow_unbatched and value.ndim == 1:
+                value = value.unsqueeze(0)
+            if value.shape[0] == 1 and batch_size > 1:
+                value = value.expand(batch_size, *value.shape[1:])
+            if value.shape[0] != batch_size:
+                raise ValueError("beam-search source has incompatible batch size")
+            expanded = value.unsqueeze(1).expand(
+                batch_size, beam_size, *value.shape[1:]
             )
-            beams: list[tuple[list[int], float, torch.Tensor]] = [
-                (
-                    [self.tokenizer.bos_id],
-                    0.0,
-                    torch.zeros(
-                        self.tokenizer.max_activities,
-                        dtype=torch.bool,
-                        device=memory.device,
-                    ),
-                )
+            return expanded[active]
+
+        for position in range(max_length - 1):
+            valid = torch.isfinite(scores)
+            active = valid & ~finished
+            if not active.any():
+                break
+
+            current = sequences[:, :, position][active]
+            active_caches = [
+                None if cache is None else cache[active]
+                for cache in caches
             ]
-            for _ in range(max_length - 1):
-                candidates: list[tuple[list[int], float, torch.Tensor]] = []
-                for prefix, score, used_activity_mask in beams:
-                    if prefix[-1] == self.tokenizer.eos_id:
-                        candidates.append((prefix, score, used_activity_mask))
-                        continue
-                    tokens = torch.tensor([prefix], device=memory.device)
-                    log_prob = self.next_token_scores(
-                        row_memory,
-                        tokens,
-                        activity_mask=row_mask,
-                        activity_memory=row_activity_memory,
-                        allowed_activity_mask=row_allowed,
-                        avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
-                        duplicate_policy=duplicate_policy,
-                        used_activity_mask=used_activity_mask.unsqueeze(0),
-                        completion_policy=completion_policy,
-                        remaining_tokens=max_length - len(prefix),
-                    ).search_scores[0]
-                    legal_ids = torch.where(torch.isfinite(log_prob))[0]
-                    legal_count = int(legal_ids.numel())
-                    if legal_count == 0:
-                        continue
-                    k = min(beam_size, legal_count)
-                    values, legal_indices = torch.topk(log_prob[legal_ids], k)
-                    indices = legal_ids[legal_indices]
-                    for value, token in zip(values.tolist(), indices.tolist()):
-                        next_used = used_activity_mask.clone()
-                        activity_slot = torch.where(self.activity_token_ids.eq(int(token)))[0]
-                        if activity_slot.numel():
-                            next_used[int(activity_slot[0])] = True
-                        candidates.append(
-                            (prefix + [int(token)], score + float(value), next_used)
-                        )
-                if not candidates:
-                    break
-                beams = sorted(
-                    candidates,
-                    key=lambda item: item[1] / (len(item[0]) ** length_penalty),
-                    reverse=True,
-                )[:beam_size]
-                if all(prefix[-1] == self.tokenizer.eos_id for prefix, _, _ in beams):
-                    break
-            candidate_rows.append([(prefix, score) for prefix, score, _ in beams])
+            next_token_scores, next_active_caches = self._incremental_next_token_scores(
+                current,
+                position,
+                active_source_rows(memory, active),
+                active_caches,
+                open_nodes=open_nodes[active],
+                pending_operator=pending_operator[active],
+                activity_mask=active_source_rows(activity_mask, active),
+                activity_memory=active_source_rows(activity_memory, active),
+                allowed_activity_mask=active_source_rows(
+                    allowed_activity_mask,
+                    active,
+                    allow_unbatched=True,
+                ),
+                avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+                duplicate_policy=duplicate_policy,
+                used_activity_mask=used_activity[active],
+                completion_policy=completion_policy,
+                remaining_tokens=max_length - position - 1,
+            )
+
+            step_scores = torch.full(
+                (batch_size, beam_size, vocabulary_size),
+                -torch.inf,
+                dtype=scores.dtype,
+                device=device,
+            )
+            step_scores[active] = next_token_scores.search_scores.to(scores.dtype)
+            expanded_scores = scores.unsqueeze(-1) + step_scores
+            expanded_ranks = expanded_scores / float(
+                (position + 2) ** length_penalty
+            )
+
+            carry_scores = scores.masked_fill(~(valid & finished), -torch.inf)
+            carry_ranks = carry_scores / lengths.to(scores.dtype).pow(length_penalty)
+            all_scores = torch.cat(
+                (expanded_scores.flatten(1), carry_scores), dim=1
+            )
+            all_ranks = torch.cat(
+                (expanded_ranks.flatten(1), carry_ranks), dim=1
+            )
+            if beam_size == 1:
+                # Match greedy decoding's deterministic lowest-token tie break.
+                selected = all_ranks.argmax(dim=1, keepdim=True)
+                selected_ranks = all_ranks.gather(1, selected)
+            else:
+                selected_ranks, selected = torch.topk(all_ranks, beam_size, dim=1)
+            selected_valid = torch.isfinite(selected_ranks)
+            selected_scores = all_scores.gather(1, selected)
+            selected_scores = selected_scores.masked_fill(~selected_valid, -torch.inf)
+
+            expansion_count = beam_size * vocabulary_size
+            selected_carry = selected.ge(expansion_count)
+            expansion_parent = selected.div(vocabulary_size, rounding_mode="floor")
+            carry_parent = selected - expansion_count
+            selected_parent = torch.where(
+                selected_carry, carry_parent, expansion_parent
+            )
+            selected_token = selected.remainder(vocabulary_size)
+
+            sequence_index = selected_parent.unsqueeze(-1).expand(
+                -1, -1, max_length
+            )
+            sequences = sequences.gather(1, sequence_index)
+            parent_lengths = lengths.gather(1, selected_parent)
+            selected_expansion = selected_valid & ~selected_carry
+            next_lengths = parent_lengths + selected_expansion.to(torch.long)
+            batch_indices, beam_indices = torch.where(selected_expansion)
+            sequences[
+                batch_indices,
+                beam_indices,
+                next_lengths[selected_expansion] - 1,
+            ] = selected_token[selected_expansion]
+
+            state_index = selected_parent.unsqueeze(-1).expand(
+                -1, -1, self.tokenizer.max_activities
+            )
+            used_activity = used_activity.gather(1, state_index)
+            chosen_activity = selected_token.unsqueeze(-1).eq(
+                self.activity_token_ids.view(1, 1, -1)
+            )
+            used_activity |= chosen_activity & selected_expansion.unsqueeze(-1)
+            open_nodes = open_nodes.gather(1, selected_parent)
+            pending_operator = pending_operator.gather(1, selected_parent)
+            self._advance_incremental_grammar(
+                selected_token,
+                open_nodes,
+                pending_operator,
+                selected_expansion,
+            )
+
+            selected_caches: list[torch.Tensor] = []
+            for next_cache in next_active_caches:
+                full_cache = torch.zeros(
+                    (batch_size, beam_size, *next_cache.shape[1:]),
+                    dtype=next_cache.dtype,
+                    device=device,
+                )
+                full_cache[active] = next_cache
+                cache_index = selected_parent.view(
+                    batch_size,
+                    beam_size,
+                    *([1] * (full_cache.ndim - 2)),
+                ).expand(-1, -1, *full_cache.shape[2:])
+                selected_caches.append(full_cache.gather(1, cache_index))
+            caches = selected_caches
+            scores = selected_scores
+            lengths = next_lengths
+            finished = selected_valid & (
+                selected_carry | selected_token.eq(self.tokenizer.eos_id)
+            )
+
+        candidate_rows: list[list[tuple[list[int], float]]] = []
+        for row in range(batch_size):
+            row_candidates: list[tuple[list[int], float]] = []
+            for beam in range(beam_size):
+                if not torch.isfinite(scores[row, beam]):
+                    continue
+                length = int(lengths[row, beam].item())
+                row_candidates.append(
+                    (
+                        sequences[row, beam, :length].tolist(),
+                        float(scores[row, beam].item()),
+                    )
+                )
+            candidate_rows.append(row_candidates)
         return candidate_rows
 
 

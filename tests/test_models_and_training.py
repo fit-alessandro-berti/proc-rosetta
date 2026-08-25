@@ -50,6 +50,60 @@ from proc_rosetta.tree import ProcessTreeNode
 from types import SimpleNamespace
 
 
+def test_batched_incremental_beam_matches_individual_rows(monkeypatch):
+    torch.manual_seed(17)
+    tree_tokenizer = TreeTokenizer(max_activities=4, max_arity=3)
+    model = ProcRosettaModel(
+        tree_tokenizer,
+        ActivityTokenizer(max_activities=4),
+        latent_dim=8,
+        hidden_dim=16,
+        decoder_layers=1,
+        dropout=0.0,
+        memory_tokens=2,
+    ).eval()
+    latent = torch.randn(3, 8)
+    allowed = torch.tensor(
+        [
+            [True, True, False, False],
+            [False, True, True, False],
+            [True, False, False, True],
+        ]
+    )
+
+    def fail_on_full_prefix(*args, **kwargs):
+        raise AssertionError("beam search must use cached incremental decoding")
+
+    monkeypatch.setattr(model.tree_decoder, "next_token_scores", fail_on_full_prefix)
+    batched = model.tree_decoder.decode_beam_candidates(
+        latent,
+        max_length=12,
+        beam_size=3,
+        allowed_activity_mask=allowed,
+        completion_policy="bounded",
+    )
+    individual = [
+        model.tree_decoder.decode_beam_candidates(
+            latent[row : row + 1],
+            max_length=12,
+            beam_size=3,
+            allowed_activity_mask=allowed[row : row + 1],
+            completion_policy="bounded",
+        )[0]
+        for row in range(latent.shape[0])
+    ]
+
+    assert [[tokens for tokens, _ in rows] for rows in batched] == [
+        [tokens for tokens, _ in rows] for rows in individual
+    ]
+    for batch_rows, individual_rows in zip(batched, individual):
+        assert [score for _, score in batch_rows] == pytest.approx(
+            [score for _, score in individual_rows], abs=1e-5
+        )
+        for tokens, _ in batch_rows:
+            assert tree_tokenizer.eos_id in tokens
+
+
 def test_model_forward_and_loss(monkeypatch):
     synthetic_config = SyntheticConfig(max_depth=2, max_activities=5, traces_per_sample=3)
     tree_tokenizer = TreeTokenizer(max_activities=5, max_arity=3)
