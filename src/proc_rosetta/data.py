@@ -57,8 +57,19 @@ class SyntheticProcessDataset(Dataset[ProcessSample]):
         count: int,
         config: SyntheticConfig | None = None,
         seed: int | None = None,
+        num_workers: int | None = None,
     ) -> None:
-        self.samples = generate_samples(count, config=config, seed=seed)
+        effective_workers = (
+            min(num_workers, count)
+            if num_workers is not None and count > 0
+            else 0
+        )
+        self.samples = generate_samples(
+            count,
+            config=config,
+            seed=seed,
+            num_workers=effective_workers if effective_workers > 1 else None,
+        )
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -619,7 +630,7 @@ def recreate_data_splits(
     config: SyntheticConfig | None = None,
     seed: int = 13,
     show_progress: bool = False,
-    use_multiprocessing: bool = False,
+    use_multiprocessing: bool = True,
 ) -> dict[str, object]:
     data_dir = Path(data_dir)
     counts = counts or SplitCounts()
@@ -656,12 +667,17 @@ def recreate_data_splits(
             unit="triplet",
         ) as progress:
             if config.generator == "isolated":
+                split_workers = (
+                    min(worker_processes, count)
+                    if worker_processes is not None
+                    else 0
+                )
                 samples = generate_samples(
                     count,
                     config=config,
                     seed=seed + SPLIT_NAMES.index(split),
                     progress_update=progress.update,
-                    num_workers=worker_processes,
+                    num_workers=split_workers if split_workers > 1 else None,
                 )
                 samples = [
                     ProcessSample(
@@ -681,6 +697,14 @@ def recreate_data_splits(
             else:
                 from proc_rosetta.families import generate_family_samples
 
+                split_workers = (
+                    min(
+                        worker_processes,
+                        max(1, count // rows_per_family),
+                    )
+                    if worker_processes is not None
+                    else 0
+                )
                 samples = generate_family_samples(
                     count,
                     config,
@@ -688,7 +712,7 @@ def recreate_data_splits(
                     split=split,
                     progress_update=progress.update,
                     excluded_exact_behavior_ids=reserved_exact_behavior_ids,
-                    num_workers=worker_processes,
+                    num_workers=split_workers if split_workers > 1 else None,
                 )
         split_exact_ids = {
             sample.exact_behavior_id

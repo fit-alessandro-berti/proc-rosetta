@@ -5,22 +5,58 @@ import numpy as np
 import torch
 
 from proc_rosetta.benchmarks import (
+    _initialize_benchmark_worker,
     activity_count_features,
     alignment_f1_score,
     discovery_quality_report,
+    deterministic_baseline_embeddings,
     evaluate_inductive_miner_discovery,
     evaluate_proc_rosetta_discovery,
     evaluate_embedding_method,
     fitness_precision_f1_score,
     footprint_fitness_precision,
     format_human_test_report,
+    behavior_matrices,
     levenshtein_distance,
     retrieval_metrics,
     summarize_discovery_quality,
     token_based_replay_fitness_precision,
     trim_tree_token_sequence,
 )
+from proc_rosetta.synthetic import SyntheticConfig, generate_samples
 from proc_rosetta.tokenizers import TreeTokenizer
+
+
+class InlineExecutor:
+    def map(self, function, *iterables, **kwargs):
+        return map(function, *iterables)
+
+
+def test_parallel_cpu_benchmark_paths_match_serial_results():
+    samples = generate_samples(
+        3,
+        config=SyntheticConfig(
+            generator="isolated",
+            max_depth=2,
+            max_activities=4,
+            traces_per_sample=2,
+        ),
+        seed=71,
+    )
+    expected_behavior = behavior_matrices(samples)
+    expected_baselines = deterministic_baseline_embeddings(samples)
+
+    _initialize_benchmark_worker(samples)
+    actual_behavior = behavior_matrices(samples, executor=InlineExecutor())
+    actual_baselines = deterministic_baseline_embeddings(
+        samples,
+        executor=InlineExecutor(),
+    )
+
+    for name in expected_behavior:
+        assert np.allclose(actual_behavior[name], expected_behavior[name])
+    for name in expected_baselines:
+        assert np.allclose(actual_baselines[name], expected_baselines[name])
 
 
 def test_embedding_method_report_contains_behavior_alignment():

@@ -234,6 +234,7 @@ def neural_loss_iter(
     max_batches: int | None = None,
     deterministic: bool = True,
     random_seed: int = 13,
+    num_workers: int | None = None,
 ) -> Iterator[EvaluationUpdate]:
     loader = build_jsonl_dataloader(
         sample_path,
@@ -241,6 +242,8 @@ def neural_loss_iter(
         checkpoint.model.activity_tokenizer,
         batch_size=batch_size,
         shuffle=False,
+        num_workers=num_workers,
+        persistent_workers=True,
     )
     total = min(len(loader), max_batches) if max_batches else len(loader)
     cumulative: dict[str, float] = {}

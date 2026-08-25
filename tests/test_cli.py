@@ -15,7 +15,7 @@ from proc_rosetta.data import (
     multiprocessing_worker_count,
     recreate_data_splits,
 )
-from proc_rosetta.devices import default_device
+from proc_rosetta.devices import default_device, default_training_device
 from proc_rosetta.synthetic import SyntheticConfig
 
 
@@ -48,12 +48,14 @@ def test_default_sample_and_train_values_match_recommended_run():
         "and": 0.1,
         "loop": 0.1,
     }
-    assert not sample_args.multiprocessing
+    assert sample_args.multiprocessing
     assert not sample_args.quiet
     assert train_args.epochs == 100
     assert train_args.batch_size == 128
     assert train_args.latent_dim == 96
-    assert train_args.device == default_device()
+    assert train_args.device == default_training_device()
+    assert train_args.loader_num_workers == multiprocessing_worker_count()
+    assert train_args.loader_pin_memory is False
     assert train_args.hidden_dim == 192
     assert train_args.semantic_latent_mode == "deterministic"
     assert train_args.dropout is None
@@ -69,7 +71,8 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert train_args.structure_regularization_start_epoch == 5
     assert train_args.structure_regularization_ramp_epochs == 5
     assert not train_args.resume
-    assert test_args.device == default_device()
+    assert test_args.device == default_device() == "cpu"
+    assert test_args.num_workers == multiprocessing_worker_count()
     assert not test_args.quiet
     assert test_args.conformance_method == "token_based_replay"
     assert test_args.checkpoint_selection == "best"
@@ -141,7 +144,7 @@ def test_multiprocessing_worker_count_reserves_one_core(monkeypatch, cpu_count, 
     assert multiprocessing_worker_count() == expected
 
 
-def test_sample_multiprocessing_flag_is_forwarded(monkeypatch, capsys):
+def test_sample_multiprocessing_default_and_opt_out_are_forwarded(monkeypatch, capsys):
     calls = {}
 
     def recreate(**kwargs):
@@ -150,10 +153,13 @@ def test_sample_multiprocessing_flag_is_forwarded(monkeypatch, capsys):
 
     monkeypatch.setattr("proc_rosetta.cli.recreate_data_splits", recreate)
 
-    assert main(["sample", "--multiprocessing", "--quiet"]) == 0
+    assert main(["sample", "--quiet"]) == 0
     assert json.loads(capsys.readouterr().out) == {"ok": True}
     assert calls["use_multiprocessing"] is True
     assert calls["show_progress"] is False
+
+    assert main(["sample", "--no-multiprocessing", "--quiet"]) == 0
+    assert calls["use_multiprocessing"] is False
 
 
 def test_checkpoint_selection_resolves_best_and_latest_paths():
@@ -233,6 +239,7 @@ def test_sample_progress_reports_generated_triplets(tmp_path, monkeypatch):
             traces_per_sample=1,
         ),
         show_progress=True,
+        use_multiprocessing=False,
     )
 
     assert sum(updates) == 4
@@ -247,6 +254,7 @@ def test_sample_cli_recreates_data_splits(tmp_path, capsys):
     exit_code = main(
         [
             "sample",
+            "--no-multiprocessing",
             "--data-dir",
             str(data_dir),
             "--train-count",
@@ -289,6 +297,7 @@ def test_strict_sample_coverage_hits_each_motif_and_representation(tmp_path, cap
     assert main(
         [
             "sample",
+            "--no-multiprocessing",
             "--data-dir",
             str(data_dir),
             "--train-families",
@@ -352,6 +361,7 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert main(
         [
             "sample",
+            "--no-multiprocessing",
             "--data-dir",
             str(data_dir),
             "--train-count",
@@ -375,6 +385,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     exit_code = main(
         [
             "train",
+            "--loader-num-workers",
+            "0",
             "--data-dir",
             str(data_dir),
             "--checkpoint",
@@ -454,6 +466,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert main(
         [
             "train",
+            "--loader-num-workers",
+            "0",
             "--data-dir",
             str(data_dir),
             "--checkpoint",
@@ -507,6 +521,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert main(
         [
             "train",
+            "--loader-num-workers",
+            "0",
             "--data-dir",
             str(data_dir),
             "--checkpoint",
@@ -547,6 +563,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert main(
         [
             "test",
+            "--num-workers",
+            "0",
             "--data-dir",
             str(data_dir),
             "--checkpoint",
@@ -593,6 +611,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert main(
         [
             "test",
+            "--num-workers",
+            "0",
             "--data-dir",
             str(data_dir),
             "--checkpoint",

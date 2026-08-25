@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import math
+import multiprocessing as mp
 import sys
 from collections import Counter
+from concurrent.futures import Executor, ProcessPoolExecutor
+from contextlib import nullcontext
 from dataclasses import dataclass
+from itertools import repeat
 from time import perf_counter
+from types import SimpleNamespace
 from typing import Hashable, Iterable, Sequence
 
 import numpy as np
@@ -12,8 +17,13 @@ import pandas as pd
 import torch
 
 from proc_rosetta.behavior import behavioral_distance
-from proc_rosetta.data import ProcessBatchCollator, progress_bar, progress_iterator
-from proc_rosetta.devices import resolve_device
+from proc_rosetta.data import (
+    ProcessBatchCollator,
+    multiprocessing_worker_count,
+    progress_bar,
+    progress_iterator,
+)
+from proc_rosetta.devices import configure_cpu_worker, resolve_device
 from proc_rosetta.pm4py_bridge import (
     petri_graph_to_net,
     simulate_traces,
@@ -27,6 +37,8 @@ from proc_rosetta.training import evaluate_split_from_checkpoint, load_checkpoin
 Trace = Sequence[str]
 FeatureDict = dict[Hashable, float]
 CONFORMANCE_METHODS = ("token_based_replay", "footprints")
+_BENCHMARK_WORKER_SAMPLES: tuple[ProcessSample, ...] = ()
+_BENCHMARK_WORKER_TOKENIZER = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +61,118 @@ class Pm4pyPetriEmbeddingConfig:
         }
 
 
+def _initialize_benchmark_worker(
+    samples: Sequence[ProcessSample],
+    tokenizer=None,
+) -> None:
+    global _BENCHMARK_WORKER_SAMPLES, _BENCHMARK_WORKER_TOKENIZER
+    _BENCHMARK_WORKER_SAMPLES = tuple(samples)
+    _BENCHMARK_WORKER_TOKENIZER = tokenizer
+    configure_cpu_worker()
+
+
+def _benchmark_process_pool(
+    samples: Sequence[ProcessSample],
+    num_workers: int | None,
+    tokenizer=None,
+):
+    requested = multiprocessing_worker_count() if num_workers is None else max(0, num_workers)
+    workers = min(requested, len(samples))
+    if workers <= 1:
+        return nullcontext(None)
+    return ProcessPoolExecutor(
+        max_workers=workers,
+        mp_context=mp.get_context("spawn"),
+        initializer=_initialize_benchmark_worker,
+        initargs=(tuple(samples), tokenizer),
+    )
+
+
+def _decode_quality_worker(
+    task: tuple[int, Sequence[int], int, str],
+) -> dict[str, object]:
+    index, token_ids, behavior_traces_per_sample, completion_policy = task
+    return _evaluate_single_decode_with_tokenizer(
+        _BENCHMARK_WORKER_TOKENIZER,
+        _BENCHMARK_WORKER_SAMPLES[index],
+        token_ids,
+        behavior_traces_per_sample=behavior_traces_per_sample,
+        completion_policy=completion_policy,
+    )
+
+
+def _discovery_quality_worker(
+    task: tuple[str, int, Sequence[int] | None, str],
+) -> tuple[str, dict[str, object]]:
+    kind, index, token_ids, conformance_method = task
+    sample = _BENCHMARK_WORKER_SAMPLES[index]
+    if kind == "proc_rosetta":
+        assert token_ids is not None
+        row = evaluate_proc_rosetta_discovery(
+            SimpleNamespace(tree_tokenizer=_BENCHMARK_WORKER_TOKENIZER),
+            sample,
+            token_ids,
+            conformance_method=conformance_method,
+        )
+    else:
+        row = evaluate_inductive_miner_discovery(
+            sample,
+            conformance_method=conformance_method,
+        )
+    return kind, row
+
+
+def _behavior_distance_row_worker(
+    index: int,
+) -> tuple[int, dict[str, np.ndarray]]:
+    samples = _BENCHMARK_WORKER_SAMPLES
+    values = {
+        "mean_l1": np.empty(len(samples) - index - 1, dtype=float),
+        "variant_l1": np.empty(len(samples) - index - 1, dtype=float),
+        "directly_follows_l1": np.empty(len(samples) - index - 1, dtype=float),
+        "length_l1": np.empty(len(samples) - index - 1, dtype=float),
+    }
+    for offset, right in enumerate(range(index + 1, len(samples))):
+        distance = behavioral_distance(samples[index].traces, samples[right].traces)
+        for key in values:
+            values[key][offset] = float(distance[key])
+    return index, values
+
+
+def _baseline_features_worker(index: int) -> dict[str, FeatureDict]:
+    sample = _BENCHMARK_WORKER_SAMPLES[index]
+    return {
+        "trace_activity_counts": activity_count_features(sample.traces),
+        "trace_variant_distribution": trace_variant_features(sample.traces),
+        "trace_directly_follows": directly_follows_features(sample.traces),
+        "trace_eventually_follows": eventually_follows_features(sample.traces),
+        "pm4py_log_case_features_mean_std": pm4py_log_case_features(sample.traces),
+        "petri_structural_counts": petri_structural_features(sample),
+    }
+
+
+def _pm4py_petri_embedding_worker(
+    index: int,
+    config: Pm4pyPetriEmbeddingConfig,
+) -> np.ndarray:
+    from pm4py.objects.petri_net.utils import embeddings_similarity
+
+    sample = _BENCHMARK_WORKER_SAMPLES[index]
+    bundle = petri_graph_to_net(
+        sample.petri_graph,
+        name=sample.model_variant_id or sample.equivalence_id,
+    )
+    return embeddings_similarity.petri_net_embedding(
+        bundle.net,
+        dimensions=config.dimensions,
+        num_walks=config.num_walks,
+        walk_length=config.walk_length,
+        window=config.window,
+        epochs=config.epochs,
+        seed=config.seed,
+    )
+
+
 def rich_test_report(
     checkpoint_path: str,
     data_dir: str,
@@ -60,6 +184,7 @@ def rich_test_report(
     show_progress: bool = False,
     conformance_method: str = "token_based_replay",
     max_decode_length: int = 512,
+    num_workers: int | None = None,
 ) -> dict[str, object]:
     validate_conformance_method(conformance_method)
     started = perf_counter()
@@ -79,6 +204,7 @@ def rich_test_report(
         batch_size=batch_size,
         device=device_name,
         show_progress=show_progress,
+        num_workers=num_workers,
     )
     test_debug(
         f"[2/{stage_count}] Loading checkpoint and computing neural embeddings",
@@ -92,86 +218,103 @@ def rich_test_report(
         device=device_name,
         show_progress=show_progress,
     )
-    test_debug(
-        f"[3/{stage_count}] Evaluating {8 * len(samples)} matched raw/deployment decodes",
-        enabled=show_progress,
-    )
-    decode_quality = decode_quality_report(
-        model,
+    with _benchmark_process_pool(
         samples,
-        batch_size=batch_size,
-        device=device_name,
-        max_decode_length=max_decode_length,
-        show_progress=show_progress,
-        completion_policy="prefix_only",
-    )
-    deployment_decode_quality = decode_quality_report(
-        model,
-        samples,
-        batch_size=batch_size,
-        device=device_name,
-        max_decode_length=max_decode_length,
-        show_progress=show_progress,
-        completion_policy="bounded",
-    )
-    test_debug(
-        f"[4/{stage_count}] Running {2 * len(samples)} "
-        f"{conformance_method_label(conformance_method)} evaluations "
-        "(fitness + precision each)",
-        enabled=show_progress,
-    )
-    discovery_quality = discovery_quality_report(
-        model,
-        samples,
-        batch_size=batch_size,
-        device=device_name,
-        max_decode_length=max_decode_length,
-        show_progress=show_progress,
-        conformance_method=conformance_method,
-    )
-
-    pair_count = len(samples) * (len(samples) - 1) // 2
-    test_debug(
-        f"[5/{stage_count}] Computing {pair_count} pairwise behavioral distances",
-        enabled=show_progress,
-    )
-    behavior = behavior_matrices(samples, show_progress=show_progress)
-    methods: dict[str, dict[str, object]] = {}
-    method_embeddings: dict[str, np.ndarray] = {}
-    for name, matrix in neural_embeddings.items():
-        method_embeddings[name] = matrix
-        methods[name] = evaluate_embedding_method(matrix, behavior["mean_l1"])
-        methods[name]["kind"] = "learned_proc_rosetta_latent"
-
-    test_debug(
-        f"[6/{stage_count}] Extracting {6 * len(samples)} deterministic baseline feature sets",
-        enabled=show_progress,
-    )
-    baselines = deterministic_baseline_embeddings(samples, show_progress=show_progress)
-    for name, matrix in baselines.items():
-        method_embeddings[name] = matrix
-        methods[name] = evaluate_embedding_method(matrix, behavior["mean_l1"])
-        methods[name]["kind"] = "deterministic_baseline"
-
-    if include_pm4py_petri:
+        num_workers,
+        tokenizer=model.tree_tokenizer,
+    ) as executor:
         test_debug(
-            f"[7/{stage_count}] Computing {len(samples)} PM4Py Petri Node2Vec embeddings",
+            f"[3/{stage_count}] Evaluating {8 * len(samples)} matched raw/deployment decodes",
             enabled=show_progress,
         )
-        pm4py_embeddings, pm4py_report = pm4py_petri_method_report(
+        decode_quality = decode_quality_report(
+            model,
             samples,
-            behavior["mean_l1"],
-            pm4py_petri_config,
+            batch_size=batch_size,
+            device=device_name,
+            max_decode_length=max_decode_length,
             show_progress=show_progress,
+            completion_policy="prefix_only",
+            executor=executor,
         )
-        methods["pm4py_colonna_petri_node2vec"] = pm4py_report
-        if pm4py_embeddings is not None:
-            method_embeddings["pm4py_colonna_petri_node2vec"] = pm4py_embeddings
-    else:
+        deployment_decode_quality = decode_quality_report(
+            model,
+            samples,
+            batch_size=batch_size,
+            device=device_name,
+            max_decode_length=max_decode_length,
+            show_progress=show_progress,
+            completion_policy="bounded",
+            executor=executor,
+        )
         test_debug(
-            f"[7/{stage_count}] Skipping PM4Py Petri Node2Vec embeddings",
+            f"[4/{stage_count}] Running {2 * len(samples)} "
+            f"{conformance_method_label(conformance_method)} evaluations "
+            "(fitness + precision each)",
             enabled=show_progress,
         )
+        discovery_quality = discovery_quality_report(
+            model,
+            samples,
+            batch_size=batch_size,
+            device=device_name,
+            max_decode_length=max_decode_length,
+            show_progress=show_progress,
+            conformance_method=conformance_method,
+            executor=executor,
+        )
+
+        pair_count = len(samples) * (len(samples) - 1) // 2
+        test_debug(
+            f"[5/{stage_count}] Computing {pair_count} pairwise behavioral distances",
+            enabled=show_progress,
+        )
+        behavior = behavior_matrices(
+            samples,
+            show_progress=show_progress,
+            executor=executor,
+        )
+        methods: dict[str, dict[str, object]] = {}
+        method_embeddings: dict[str, np.ndarray] = {}
+        for name, matrix in neural_embeddings.items():
+            method_embeddings[name] = matrix
+            methods[name] = evaluate_embedding_method(matrix, behavior["mean_l1"])
+            methods[name]["kind"] = "learned_proc_rosetta_latent"
+
+        test_debug(
+            f"[6/{stage_count}] Extracting {6 * len(samples)} deterministic baseline feature sets",
+            enabled=show_progress,
+        )
+        baselines = deterministic_baseline_embeddings(
+            samples,
+            show_progress=show_progress,
+            executor=executor,
+        )
+        for name, matrix in baselines.items():
+            method_embeddings[name] = matrix
+            methods[name] = evaluate_embedding_method(matrix, behavior["mean_l1"])
+            methods[name]["kind"] = "deterministic_baseline"
+
+        if include_pm4py_petri:
+            test_debug(
+                f"[7/{stage_count}] Computing {len(samples)} PM4Py Petri Node2Vec embeddings",
+                enabled=show_progress,
+            )
+            pm4py_embeddings, pm4py_report = pm4py_petri_method_report(
+                samples,
+                behavior["mean_l1"],
+                pm4py_petri_config,
+                show_progress=show_progress,
+                executor=executor,
+            )
+            methods["pm4py_colonna_petri_node2vec"] = pm4py_report
+            if pm4py_embeddings is not None:
+                method_embeddings["pm4py_colonna_petri_node2vec"] = pm4py_embeddings
+        else:
+            test_debug(
+                f"[7/{stage_count}] Skipping PM4Py Petri Node2Vec embeddings",
+                enabled=show_progress,
+            )
 
     test_debug(
         f"[8/{stage_count}] Aggregating rankings, retrieval, and equivalence metrics",
@@ -326,6 +469,7 @@ def discovery_quality_report(
     max_decode_length: int = 512,
     show_progress: bool = False,
     conformance_method: str = "token_based_replay",
+    executor: Executor | None = None,
 ) -> dict[str, object]:
     validate_conformance_method(conformance_method)
     model.eval()
@@ -362,35 +506,68 @@ def discovery_quality_report(
                 max_length=max_decode_length,
                 allowed_activity_mask=source_masks.get("trace"),
             )
-            for sample, token_ids in zip(batch_samples, decoded_rows):
-                proc_rosetta_row = evaluate_proc_rosetta_discovery(
-                    model,
-                    sample,
-                    token_ids,
-                    conformance_method=conformance_method,
-                )
-                rows["proc_rosetta_trace_mu"].append(proc_rosetta_row)
-                conformance_successes += int(proc_rosetta_row["conformance_evaluable"])
-                completed_models += 1
-                progress.update()
-                set_progress_postfix(
-                    progress,
-                    method="ProcRosetta",
-                    ok=conformance_successes,
-                    remaining=total_models - completed_models,
+            if executor is None:
+                evaluated_rows = []
+                for sample, token_ids in zip(batch_samples, decoded_rows):
+                    evaluated_rows.extend(
+                        (
+                            (
+                                "proc_rosetta",
+                                evaluate_proc_rosetta_discovery(
+                                    model,
+                                    sample,
+                                    token_ids,
+                                    conformance_method=conformance_method,
+                                ),
+                            ),
+                            (
+                                "inductive_miner",
+                                evaluate_inductive_miner_discovery(
+                                    sample,
+                                    conformance_method=conformance_method,
+                                ),
+                            ),
+                        )
+                    )
+            else:
+                tasks = []
+                for offset, token_ids in enumerate(decoded_rows):
+                    sample_index = start + offset
+                    tasks.extend(
+                        (
+                            (
+                                "proc_rosetta",
+                                sample_index,
+                                token_ids,
+                                conformance_method,
+                            ),
+                            (
+                                "inductive_miner",
+                                sample_index,
+                                None,
+                                conformance_method,
+                            ),
+                        )
+                    )
+                evaluated_rows = executor.map(
+                    _discovery_quality_worker,
+                    tasks,
+                    chunksize=1,
                 )
 
-                inductive_miner_row = evaluate_inductive_miner_discovery(
-                    sample,
-                    conformance_method=conformance_method,
+            for kind, evaluated_row in evaluated_rows:
+                name = (
+                    "proc_rosetta_trace_mu"
+                    if kind == "proc_rosetta"
+                    else "inductive_miner"
                 )
-                rows["inductive_miner"].append(inductive_miner_row)
-                conformance_successes += int(inductive_miner_row["conformance_evaluable"])
+                rows[name].append(evaluated_row)
+                conformance_successes += int(evaluated_row["conformance_evaluable"])
                 completed_models += 1
                 progress.update()
                 set_progress_postfix(
                     progress,
-                    method="Inductive Miner",
+                    method=("ProcRosetta" if kind == "proc_rosetta" else "Inductive Miner"),
                     ok=conformance_successes,
                     remaining=total_models - completed_models,
                 )
@@ -811,6 +988,7 @@ def decode_quality_report(
     behavior_traces_per_sample: int = 128,
     show_progress: bool = False,
     completion_policy: str = "prefix_only",
+    executor: Executor | None = None,
 ) -> dict[str, object]:
     model.eval()
     torch_device = resolve_device(device)
@@ -864,14 +1042,33 @@ def decode_quality_report(
                     allowed_activity_mask=allowed_masks[name],
                     completion_policy=completion_policy,
                 )
-                for sample, token_ids in zip(batch_samples, decoded.detach().cpu().tolist()):
-                    row = evaluate_single_decode(
-                        model,
-                        sample,
-                        token_ids,
-                        behavior_traces_per_sample=behavior_traces_per_sample,
-                        completion_policy=completion_policy,
+                decoded_rows = decoded.detach().cpu().tolist()
+                if executor is None:
+                    evaluated_rows = (
+                        evaluate_single_decode(
+                            model,
+                            sample,
+                            token_ids,
+                            behavior_traces_per_sample=behavior_traces_per_sample,
+                            completion_policy=completion_policy,
+                        )
+                        for sample, token_ids in zip(batch_samples, decoded_rows)
                     )
+                else:
+                    evaluated_rows = executor.map(
+                        _decode_quality_worker,
+                        (
+                            (
+                                start + offset,
+                                token_ids,
+                                behavior_traces_per_sample,
+                                completion_policy,
+                            )
+                            for offset, token_ids in enumerate(decoded_rows)
+                        ),
+                        chunksize=1,
+                    )
+                for row in evaluated_rows:
                     rows[name].append(row)
                     successful_decodes += int(row["behavior_evaluable"])
                     progress.update()
@@ -990,7 +1187,22 @@ def evaluate_single_decode(
     behavior_traces_per_sample: int = 128,
     completion_policy: str = "prefix_only",
 ) -> dict[str, object]:
-    tokenizer = model.tree_tokenizer
+    return _evaluate_single_decode_with_tokenizer(
+        model.tree_tokenizer,
+        sample,
+        token_ids,
+        behavior_traces_per_sample=behavior_traces_per_sample,
+        completion_policy=completion_policy,
+    )
+
+
+def _evaluate_single_decode_with_tokenizer(
+    tokenizer,
+    sample: ProcessSample,
+    token_ids: Sequence[int],
+    behavior_traces_per_sample: int = 128,
+    completion_policy: str = "prefix_only",
+) -> dict[str, object]:
     decoded_tokens = trim_tree_token_sequence(token_ids, tokenizer)
     # Match the collator: targets keep the stored first-seen labels.
     target_tokens = tokenizer.encode_tree(sample.tree, canonicalize=False)
@@ -1205,6 +1417,7 @@ def mean(values: Iterable[object]) -> float:
 def behavior_matrices(
     samples: Sequence[ProcessSample],
     show_progress: bool = False,
+    executor: Executor | None = None,
 ) -> dict[str, np.ndarray]:
     n = len(samples)
     matrices = {
@@ -1219,18 +1432,30 @@ def behavior_matrices(
         desc="Behavior distances",
         unit="pair",
     ) as progress:
-        for i in range(n):
-            for j in range(i + 1, n):
-                distance = behavioral_distance(samples[i].traces, samples[j].traces)
+        if executor is None:
+            for i in range(n):
+                for j in range(i + 1, n):
+                    distance = behavioral_distance(samples[i].traces, samples[j].traces)
+                    for key, matrix in matrices.items():
+                        matrix[i, j] = matrix[j, i] = float(distance[key])
+                    progress.update()
+        else:
+            for i, values in executor.map(
+                _behavior_distance_row_worker,
+                range(max(0, n - 1)),
+                chunksize=1,
+            ):
                 for key, matrix in matrices.items():
-                    matrix[i, j] = matrix[j, i] = float(distance[key])
-                progress.update()
+                    matrix[i, i + 1 :] = values[key]
+                    matrix[i + 1 :, i] = values[key]
+                progress.update(n - i - 1)
     return matrices
 
 
 def deterministic_baseline_embeddings(
     samples: Sequence[ProcessSample],
     show_progress: bool = False,
+    executor: Executor | None = None,
 ) -> dict[str, np.ndarray]:
     extractors = {
         "trace_activity_counts": lambda sample: activity_count_features(sample.traces),
@@ -1247,13 +1472,27 @@ def deterministic_baseline_embeddings(
         desc="Baseline features",
         unit="sample-method",
     ) as progress:
-        for name, extractor in extractors.items():
-            features = []
-            for sample in samples:
-                features.append(extractor(sample))
-                progress.update()
-            baselines[name] = vectorize_feature_dicts(features)
-            set_progress_postfix(progress, method=name)
+        if executor is None:
+            for name, extractor in extractors.items():
+                features = []
+                for sample in samples:
+                    features.append(extractor(sample))
+                    progress.update()
+                baselines[name] = vectorize_feature_dicts(features)
+                set_progress_postfix(progress, method=name)
+        else:
+            feature_rows = {name: [] for name in extractors}
+            for row in executor.map(
+                _baseline_features_worker,
+                range(len(samples)),
+                chunksize=max(1, len(samples) // max(1, multiprocessing_worker_count() * 4)),
+            ):
+                for name, features in row.items():
+                    feature_rows[name].append(features)
+                progress.update(len(extractors))
+            for name, features in feature_rows.items():
+                baselines[name] = vectorize_feature_dicts(features)
+                set_progress_postfix(progress, method=name)
     return baselines
 
 
@@ -1303,6 +1542,7 @@ def pm4py_petri_method_report(
     behavior_distance: np.ndarray,
     config: Pm4pyPetriEmbeddingConfig,
     show_progress: bool = False,
+    executor: Executor | None = None,
 ) -> tuple[np.ndarray | None, dict[str, object]]:
     try:
         from pm4py.objects.petri_net.utils import embeddings_similarity
@@ -1319,29 +1559,45 @@ def pm4py_petri_method_report(
 
     vectors: list[np.ndarray] = []
     try:
-        iterator = progress_iterator(
-            samples,
-            enabled=show_progress,
-            total=len(samples),
-            desc="PM4Py Petri embeddings",
-            unit="net",
-        )
-        for sample in iterator:
-            bundle = petri_graph_to_net(
-                sample.petri_graph,
-                name=sample.model_variant_id or sample.equivalence_id,
+        if executor is None:
+            iterator = progress_iterator(
+                samples,
+                enabled=show_progress,
+                total=len(samples),
+                desc="PM4Py Petri embeddings",
+                unit="net",
             )
-            vectors.append(
-                embeddings_similarity.petri_net_embedding(
-                    bundle.net,
-                    dimensions=config.dimensions,
-                    num_walks=config.num_walks,
-                    walk_length=config.walk_length,
-                    window=config.window,
-                    epochs=config.epochs,
-                    seed=config.seed,
+            for sample in iterator:
+                bundle = petri_graph_to_net(
+                    sample.petri_graph,
+                    name=sample.model_variant_id or sample.equivalence_id,
                 )
+                vectors.append(
+                    embeddings_similarity.petri_net_embedding(
+                        bundle.net,
+                        dimensions=config.dimensions,
+                        num_walks=config.num_walks,
+                        walk_length=config.walk_length,
+                        window=config.window,
+                        epochs=config.epochs,
+                        seed=config.seed,
+                    )
+                )
+        else:
+            iterator = executor.map(
+                _pm4py_petri_embedding_worker,
+                range(len(samples)),
+                repeat(config),
+                chunksize=1,
             )
+            iterator = progress_iterator(
+                iterator,
+                enabled=show_progress,
+                total=len(samples),
+                desc="PM4Py Petri embeddings",
+                unit="net",
+            )
+            vectors.extend(iterator)
     except Exception as exc:
         return (
             None,

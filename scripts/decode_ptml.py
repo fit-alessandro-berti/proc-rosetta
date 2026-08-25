@@ -31,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--device",
         default=default_device(),
-        help="Torch device; defaults to cuda or mps when available, otherwise cpu.",
+        help="Torch device; defaults to cpu (pass cuda or mps explicitly to override).",
     )
     parser.add_argument("--max-decode-length", type=int, default=512)
     add_decode_constraint_arguments(parser)

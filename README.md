@@ -226,9 +226,10 @@ from an older model architecture still require retraining; changing their
 metadata cannot make incompatible tensor shapes valid.
 
 `sample.py` shows per-split `tqdm` progress on stderr while triplets are
-generated. Pass `--quiet` to suppress the progress bars.
-Pass `--multiprocessing` to generate behavior families concurrently with
+generated. Pass `--quiet` to suppress the progress bars. Multiprocessing is
+enabled by default and generates behavior families concurrently with
 `max(1, N - 1)` worker processes, where `N` is the available logical CPU count.
+Pass `--no-multiprocessing` for serial generation.
 
 These are also the command defaults: 4,096 independent training behavior
 families and 512 families in each evaluation split. With two representations
@@ -359,10 +360,16 @@ Useful training controls:
 ./train.py --activity-remap-probability 0.5 --views-per-family 2
 ./train.py --training-stage a  # disables metric objectives for the tiny overfit gate
 ./train.py --no-group-aware-batches
+./train.py --loader-num-workers 0  # opt out of the all-but-one-CPU default
 ```
 
-Training, testing, and external-file scripts default to `cuda` when available,
-then `mps` when available, and otherwise `cpu`. Pass `--device cpu` to force CPU.
+Training defaults to `cuda` when available, then `mps`, and finally `cpu`.
+Testing, UI inference, and external-file scripts default to `cpu`; their
+accelerators remain available as explicit overrides such as `--device cuda`.
+Training data loaders and independent test-time CPU stages use all but one
+logical CPU by default, capped when a phase has fewer independent work units. Pass
+`--loader-num-workers 0` during training or `--num-workers 0` during testing to
+disable worker processes.
 
 The staged run sequence is intentionally gated:
 

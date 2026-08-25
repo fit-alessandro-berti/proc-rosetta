@@ -13,7 +13,7 @@ if str(SRC) not in sys.path:
 
 import streamlit as st
 
-from proc_rosetta.devices import default_device
+from proc_rosetta.devices import available_devices
 from proc_rosetta.inference import LoadedCheckpoint, list_trusted_checkpoints, load_trusted_checkpoint
 from proc_rosetta_ui.app_state import initialize_state, reset_inference_for_checkpoint
 
@@ -86,7 +86,7 @@ def checkpoint_sidebar(*, required: bool = True) -> LoadedCheckpoint | None:
         )
         device = st.selectbox(
             "Inference device",
-            [default_device(), "cpu"] if default_device() != "cpu" else ["cpu"],
+            available_devices(),
             key="checkpoint_device",
         )
         st.session_state["active_checkpoint_path"] = str(selected)
