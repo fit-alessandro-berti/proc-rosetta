@@ -1,89 +1,89 @@
 ProcRosetta Test Report
 =======================
 
-Split: test  |  samples: 1024
+Split: test  |  samples: 2048
 
 Neural test losses
 ------------------
-loss=2.4893  tree=0.7942  trace->tree=0.8009  petri->tree=0.7970  contrastive=0.8092  kl=15.4451
+loss=4.1778  tree=0.8038  trace->tree=1.1212  petri->tree=0.9702  contrastive=1.8038  kl=0.0000
 
 Decode quality
 --------------
 Greedy decodes use the process-tree decoder; Petri ok means the decoded tree converted to a Petri net.
-source latent      ended   valid tree  exact tree  Petri ok  behavior L1  norm edit
------------------  ------  ----------  ----------  --------  -----------  ---------
-ProcRosetta tree   100.0%  100.0%      75.0%       100.0%    0.521        0.164    
-ProcRosetta trace  99.8%   99.8%       75.0%       99.8%     0.511        0.165    
-ProcRosetta Petri  100.0%  100.0%      75.0%       100.0%    0.513        0.163    
-ProcRosetta fused  100.0%  100.0%      75.0%       100.0%    0.514        0.163    
+source latent      ended  valid tree  exact tree  Petri ok  behavior L1  norm edit
+-----------------  -----  ----------  ----------  --------  -----------  ---------
+ProcRosetta tree   24.7%  24.7%       1.9%        24.7%     1.412        0.830    
+ProcRosetta trace  39.2%  39.2%       0.3%        39.2%     1.420        0.792    
+ProcRosetta Petri  38.3%  38.3%       0.6%        38.3%     1.482        0.784    
+ProcRosetta fused  0.0%   0.0%        0.0%        0.0%      0.000        0.960    
 
 Process discovery quality
 -------------------------
 Footprint conformance compares each test log with footprints computed directly on the discovered process trees (not Petri nets).
 method             model ok  footprint ok  fitness  precision  F1   
 -----------------  --------  ------------  -------  ---------  -----
-ProcRosetta trace  99.8%     96.5%         0.866    0.897      0.866
-Inductive Miner    100.0%    100.0%        1.000    0.936      0.958
+ProcRosetta trace  100.0%    55.6%         0.548    0.605      0.529
+Inductive Miner    100.0%    100.0%        1.000    0.769      0.846
 
 Behavioral distance scale
 -------------------------
-Mean pairwise behavior L1 among test logs is 1.2128 (min=0.0000, max=1.9980, pairs=523776).
+Mean pairwise behavior L1 among test logs is 1.7232 (min=0.0000, max=1.9970, pairs=2096128).
 For nearest-neighbor behavior L1 below, lower is better; improvement over random is higher better.
 
 Embedding quality ranking
 -------------------------
 method                   behavior rho  NN behavior  impr. vs random  dim  
 -----------------------  ------------  -----------  ---------------  -----
-directly-follows         0.927         0.000        1.213            624  
-pm4py log features       0.923         0.000        1.213            50   
-eventually-follows       0.922         0.000        1.213            625  
-trace activity counts    0.896         0.000        1.213            25   
-pm4py Petri Node2Vec     0.817         0.632        0.580            256  
-ProcRosetta trace        0.747         0.000        1.213            256  
-ProcRosetta fused        0.683         0.000        1.213            256  
-ProcRosetta Petri        0.671         0.000        1.213            256  
-trace variants           0.656         0.000        1.213            14385
-ProcRosetta tree         0.623         0.000        1.213            256  
-Petri structural counts  0.577         0.000        1.213            9    
+directly-follows         0.609         0.000        1.723            580  
+eventually-follows       0.541         0.000        1.723            650  
+pm4py log features       0.532         0.030        1.693            56   
+trace activity counts    0.457         0.034        1.689            28   
+trace variants           0.292         0.000        1.723            56968
+ProcRosetta trace        0.269         0.000        1.723            96   
+ProcRosetta fused        0.267         0.027        1.697            96   
+ProcRosetta tree         0.247         0.007        1.717            96   
+ProcRosetta Petri        0.244         0.147        1.576            96   
+Petri structural counts  0.204         0.581        1.143            9    
+pm4py Petri Node2Vec     0.108         1.647        0.076            256  
 
 Agreement against ProcRosetta fused encoding
 -------------------------------------------
 Pairwise agreement compares the whole geometry of each method against our fused latent (1.0 means the methods order all test-pair distances the same way).
 method                   pairwise rho  top1 NN overlap  behavior rho delta  NN behavior delta
 -----------------------  ------------  ---------------  ------------------  -----------------
-pm4py Petri Node2Vec     0.539         0.035            +0.134              +0.632           
-ProcRosetta Petri        0.970         0.269            -0.012              +0.000           
-ProcRosetta tree         0.957         0.254            -0.060              +0.000           
-ProcRosetta trace        0.824         0.250            +0.064              +0.000           
-trace variants           0.686         0.255            -0.027              +0.000           
-pm4py log features       0.685         0.254            +0.240              +0.000           
-eventually-follows       0.671         0.256            +0.239              +0.000           
-trace activity counts    0.658         0.251            +0.213              +0.000           
-directly-follows         0.657         0.254            +0.244              +0.000           
-Petri structural counts  0.490         0.257            -0.106              +0.000           
+pm4py Petri Node2Vec     0.010         0.014            -0.159              +1.621           
+ProcRosetta Petri        0.955         0.821            -0.023              +0.121           
+ProcRosetta tree         0.944         0.926            -0.020              -0.020           
+ProcRosetta trace        0.885         0.933            +0.003              -0.027           
+directly-follows         0.317         0.933            +0.342              -0.027           
+eventually-follows       0.260         0.933            +0.274              -0.027           
+pm4py log features       0.231         0.919            +0.265              +0.004           
+trace activity counts    0.152         0.919            +0.190              +0.007           
+Petri structural counts  0.115         0.273            -0.063              +0.554           
+trace variants           0.104         0.933            +0.025              -0.027           
 
-pm4py Petri Node2Vec vs ProcRosetta fused: pairwise geometry rho=0.539, top1 nearest-neighbor overlap=0.035, behavior-rho delta=+0.134, NN-behavior delta=+0.632.
+pm4py Petri Node2Vec vs ProcRosetta fused: pairwise geometry rho=0.010, top1 nearest-neighbor overlap=0.014, behavior-rho delta=-0.159, NN-behavior delta=+1.621.
 
 Behavior-family equivalence
 ---------------------------
 paired behaviors: 512; within-family cosine and retrieval use alternate exact-equivalent representations.
 embedding          within cosine  between cosine  margin  family top1
 -----------------  -------------  --------------  ------  -----------
-ProcRosetta fused  0.999          0.237           0.011   0.250      
-ProcRosetta Petri  0.995          0.243           0.008   0.250      
-ProcRosetta trace  1.000          0.234           0.017   0.746      
-ProcRosetta tree   1.000          0.234           0.013   0.256      
+ProcRosetta fused  0.998          0.752           0.005   1.000      
+ProcRosetta Petri  0.999          0.737           0.006   0.986      
+ProcRosetta trace  0.981          0.741           0.003   1.000      
+ProcRosetta tree   1.000          0.731           0.007   1.000      
 
 ProcRosetta cross-modal retrieval
 ---------------------------------
 query -> target  top1   MRR    mean rank
 ---------------  -----  -----  ---------
-petri -> trace   0.029  0.084  100.416  
-petri -> tree    0.080  0.154  96.655   
-trace -> petri   0.035  0.090  100.762  
-trace -> tree    0.046  0.104  99.457   
-tree -> petri    0.077  0.151  97.215   
-tree -> trace    0.040  0.097  99.926   
+petri -> trace   0.152  0.231  43.576   
+petri -> tree    0.464  0.529  11.618   
+trace -> petri   0.139  0.200  86.754   
+trace -> tree    0.106  0.162  92.910   
+tree -> petri    0.471  0.550  9.934    
+tree -> trace    0.145  0.220  46.920   
 
 Legend
 ------
