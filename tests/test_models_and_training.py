@@ -1,5 +1,6 @@
 import torch
 import pytest
+import random
 from dataclasses import asdict, replace
 from torch.utils.data import DataLoader
 
@@ -30,6 +31,7 @@ from proc_rosetta.training import (
     TrainConfig,
     _different_behavior_permutation,
     _folded_tree_statistics,
+    _seed_collator_worker,
     _summarize_discovery_metrics,
     build_lr_scheduler,
     build_model,
@@ -48,6 +50,32 @@ from proc_rosetta.training import (
 )
 from proc_rosetta.tree import ProcessTreeNode
 from types import SimpleNamespace
+
+
+def test_loader_worker_uses_filesystem_tensor_sharing(monkeypatch):
+    configured = []
+    sharing_strategies = []
+    collator = SimpleNamespace(rng=random.Random(13))
+
+    monkeypatch.setattr(
+        "proc_rosetta.training.configure_cpu_worker",
+        lambda: configured.append(True),
+    )
+    monkeypatch.setattr(
+        torch.multiprocessing,
+        "get_all_sharing_strategies",
+        lambda: {"file_descriptor", "file_system"},
+    )
+    monkeypatch.setattr(
+        torch.multiprocessing,
+        "set_sharing_strategy",
+        sharing_strategies.append,
+    )
+
+    _seed_collator_worker(3, collator)
+
+    assert configured == [True]
+    assert sharing_strategies == ["file_system"]
 
 
 def test_batched_incremental_beam_matches_individual_rows(monkeypatch):

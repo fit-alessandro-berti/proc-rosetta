@@ -26,7 +26,11 @@ from proc_rosetta.data import (
     sample_statistics,
     split_samples_path,
 )
-from proc_rosetta.devices import default_training_device, resolve_device
+from proc_rosetta.devices import (
+    configure_cpu_worker,
+    default_training_device,
+    resolve_device,
+)
 from proc_rosetta.losses import LossWeights, multimodal_tree_loss
 from proc_rosetta.models import LatentDistribution, ProcRosettaModel
 from proc_rosetta.pm4py_bridge import TREE_NORMALIZATION_VERSION
@@ -1304,6 +1308,16 @@ def build_jsonl_dataloader(
 
 
 def _seed_collator_worker(worker_id: int, collator: ProcessBatchCollator) -> None:
+    # A collated process batch contains many independent tensor storages. The
+    # default Linux ``file_descriptor`` strategy transfers one descriptor per
+    # storage through multiprocessing.resource_sharer. With a large worker
+    # count that ancillary-data channel can close while the parent rebuilds a
+    # batch (``received 0 items of ancdata``). Named shared-memory files avoid
+    # descriptor passing and deliberately trade extra /dev/shm usage for
+    # reliable high-worker-count loading.
+    configure_cpu_worker()
+    if "file_system" in torch.multiprocessing.get_all_sharing_strategies():
+        torch.multiprocessing.set_sharing_strategy("file_system")
     collator.rng.seed(torch.initial_seed() + worker_id)
 
 
