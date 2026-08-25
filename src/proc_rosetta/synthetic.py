@@ -18,12 +18,73 @@ from proc_rosetta.tree import NodeKind, ProcessTreeNode
 
 
 DEFAULT_MAX_ACTIVITIES = 30
+CURRICULUM_LEVELS = ("simple", "medium", "complex")
 OPERATOR_KINDS = (
     NodeKind.SEQ,
     NodeKind.XOR,
     NodeKind.AND,
     NodeKind.LOOP,
 )
+
+
+@dataclass(frozen=True)
+class ComplexityProfile:
+    """Structural bounds for one curriculum, deliberately excluding operators."""
+
+    name: str
+    max_depth: int
+    min_tree_depth: int
+    min_tree_size: int
+    max_tree_size: int
+    min_generated_activities: int
+    max_generated_activities: int
+
+
+COMPLEXITY_PROFILES: dict[str, ComplexityProfile] = {
+    "simple": ComplexityProfile("simple", 3, 2, 5, 11, 3, 6),
+    "medium": ComplexityProfile("medium", 5, 3, 12, 19, 5, 14),
+    "complex": ComplexityProfile("complex", 8, 4, 20, 96, 8, 30),
+}
+
+
+def complexity_profile(level: str) -> ComplexityProfile:
+    try:
+        return COMPLEXITY_PROFILES[level]
+    except KeyError as exc:
+        raise ValueError(
+            f"unknown complexity level {level!r}; expected one of "
+            f"{', '.join(CURRICULUM_LEVELS)}"
+        ) from exc
+
+
+def tree_complexity(tree: ProcessTreeNode) -> dict[str, int]:
+    operator_count = 0
+
+    def visit(node: ProcessTreeNode) -> None:
+        nonlocal operator_count
+        if node.kind in OPERATOR_KINDS:
+            operator_count += 1
+        for child in node.children:
+            visit(child)
+
+    visit(tree)
+    return {
+        "tree_size": tree.size(),
+        "tree_depth": tree.max_depth(),
+        "activity_count": len(tree.unique_activity_labels()),
+        "operator_count": operator_count,
+    }
+
+
+def accepts_profile(tree: ProcessTreeNode, profile: ComplexityProfile) -> bool:
+    values = tree_complexity(tree)
+    return (
+        profile.min_tree_size <= values["tree_size"] <= profile.max_tree_size
+        and values["tree_depth"] >= profile.min_tree_depth
+        and profile.min_generated_activities
+        <= values["activity_count"]
+        <= profile.max_generated_activities
+    )
 
 
 def _default_operator_probabilities() -> dict[str, float]:
@@ -84,11 +145,13 @@ class SyntheticConfig:
     root_operator_probabilities: dict[str, float] = field(
         default_factory=_default_root_operator_probabilities
     )
-    motif_context_size: int = 6
     motif_context_min_nodes: int = 4
     motif_context_max_nodes: int = 12
     min_tree_depth: int = 4
     min_tree_size: int = 20
+    max_tree_size: int = 96
+    max_generated_activities: int | None = None
+    complexity_level: str = "complex"
     generator: str = "behavior_families"
     variants_per_behavior: int = 2
     exact_equivalence_only_for_training: bool = True
@@ -130,6 +193,28 @@ class SyntheticConfig:
     )
 
     def __post_init__(self) -> None:
+        implicit_generated_ceiling = self.max_generated_activities is None
+        if implicit_generated_ceiling:
+            object.__setattr__(self, "max_generated_activities", self.max_activities)
+        assert self.max_generated_activities is not None
+        if self.complexity_level not in CURRICULUM_LEVELS:
+            raise ValueError(
+                f"complexity_level must be one of: {', '.join(CURRICULUM_LEVELS)}"
+            )
+        if implicit_generated_ceiling and self.min_activities > self.max_generated_activities:
+            object.__setattr__(self, "min_activities", self.max_generated_activities)
+        if not 1 <= self.min_activities <= self.max_generated_activities:
+            raise ValueError(
+                "min_activities must be positive and no larger than "
+                "max_generated_activities"
+            )
+        if self.max_generated_activities > self.max_activities:
+            raise ValueError(
+                "max_generated_activities cannot exceed the activity vocabulary capacity "
+                "max_activities"
+            )
+        if self.max_tree_size < self.min_tree_size:
+            raise ValueError("max_tree_size cannot be smaller than min_tree_size")
         for field_name in ("operator_probabilities", "root_operator_probabilities"):
             raw = getattr(self, field_name)
             if not isinstance(raw, Mapping):
@@ -148,10 +233,15 @@ class SyntheticConfig:
                     f"enabled in curriculum phase {self.curriculum_phase}"
                 )
 
+    @property
+    def activity_vocab_size(self) -> int:
+        return self.max_activities
+
     def to_dict(self) -> dict[str, object]:
         return {
             "max_depth": self.max_depth,
             "max_activities": self.max_activities,
+            "activity_vocab_size": self.max_activities,
             "min_activities": self.min_activities,
             "max_arity": self.max_arity,
             "traces_per_sample": self.traces_per_sample,
@@ -160,11 +250,13 @@ class SyntheticConfig:
             "leaf_probability": self.leaf_probability,
             "operator_probabilities": dict(self.operator_probabilities),
             "root_operator_probabilities": dict(self.root_operator_probabilities),
-            "motif_context_size": self.motif_context_size,
             "motif_context_min_nodes": self.motif_context_min_nodes,
             "motif_context_max_nodes": self.motif_context_max_nodes,
             "min_tree_depth": self.min_tree_depth,
             "min_tree_size": self.min_tree_size,
+            "max_tree_size": self.max_tree_size,
+            "max_generated_activities": self.max_generated_activities,
+            "complexity_level": self.complexity_level,
             "generator": self.generator,
             "representations": {
                 "variants_per_behavior": self.variants_per_behavior,
@@ -213,7 +305,9 @@ class SyntheticConfig:
         motif_weights = motif_weights if isinstance(motif_weights, dict) else {}
         return SyntheticConfig(
             max_depth=int(data.get("max_depth", 8)),
-            max_activities=int(data.get("max_activities", DEFAULT_MAX_ACTIVITIES)),
+            max_activities=int(
+                data.get("activity_vocab_size", data.get("max_activities", DEFAULT_MAX_ACTIVITIES))
+            ),
             min_activities=int(data.get("min_activities", 8)),
             max_arity=int(data.get("max_arity", 3)),
             traces_per_sample=int(logs.get("traces_per_log", data.get("traces_per_sample", 128))),
@@ -237,11 +331,18 @@ class SyntheticConfig:
                 if isinstance(data.get("root_operator_probabilities"), dict)
                 else _default_root_operator_probabilities()
             ),
-            motif_context_size=int(data.get("motif_context_size", 6)),
             motif_context_min_nodes=int(data.get("motif_context_min_nodes", 4)),
             motif_context_max_nodes=int(data.get("motif_context_max_nodes", 12)),
             min_tree_depth=int(data.get("min_tree_depth", 4)),
             min_tree_size=int(data.get("min_tree_size", 20)),
+            max_tree_size=int(data.get("max_tree_size", 96)),
+            max_generated_activities=int(
+                data.get(
+                    "max_generated_activities",
+                    data.get("activity_vocab_size", data.get("max_activities", DEFAULT_MAX_ACTIVITIES)),
+                )
+            ),
+            complexity_level=str(data.get("complexity_level", "complex")),
             generator=str(data.get("generator", "behavior_families")),
             variants_per_behavior=int(representations.get("variants_per_behavior", 2)),
             exact_equivalence_only_for_training=bool(
@@ -440,6 +541,51 @@ class SyntheticConfig:
         return SyntheticConfig.from_dict(presets[name])
 
 
+def config_for_curriculum(
+    config: SyntheticConfig,
+    level: str,
+) -> SyntheticConfig:
+    """Apply structural bounds without changing global sampling invariants.
+
+    Small compatibility configurations may lower vocabulary capacity or maximum
+    depth.  In that case the published profile is clipped to the feasible
+    topology, while normal production defaults retain the exact profile table.
+    """
+
+    from dataclasses import replace
+
+    profile = complexity_profile(level)
+    max_depth = min(profile.max_depth, max(1, int(config.max_depth)))
+    maximum_leaves = max(2, int(config.max_arity) ** max_depth)
+    maximum_nodes = sum(int(config.max_arity) ** depth for depth in range(max_depth + 1))
+    max_generated = min(
+        profile.max_generated_activities,
+        int(config.max_activities),
+        maximum_leaves,
+    )
+    min_generated = min(profile.min_generated_activities, max_generated)
+    max_tree_size = min(profile.max_tree_size, maximum_nodes)
+    min_tree_size = min(profile.min_tree_size, max_tree_size)
+    if (
+        int(config.max_depth) < profile.max_depth
+        or int(config.max_activities) < profile.max_generated_activities
+    ):
+        min_tree_size = min(
+            min_tree_size,
+            max(5, 2 * min_generated - 1),
+        )
+    return replace(
+        config,
+        complexity_level=level,
+        max_depth=max_depth,
+        min_tree_depth=min(profile.min_tree_depth, max_depth),
+        min_tree_size=min_tree_size,
+        max_tree_size=max_tree_size,
+        min_activities=min_generated,
+        max_generated_activities=max_generated,
+    )
+
+
 @dataclass(frozen=True)
 class ProcessSample:
     tree: ProcessTreeNode
@@ -447,6 +593,9 @@ class ProcessSample:
     petri_graph: PetriGraph
     equivalence_id: str
     exact_behavior_id: str | None = None
+    strong_behavior_id: str | None = None
+    complexity_level: str | None = None
+    complexity_role: str | None = None
     behavior_signature: tuple[float, ...] = ()
     exact_trace_language_id: str | None = None
     partial_order_id: str | None = None
@@ -465,6 +614,9 @@ class ProcessSample:
             "petri_graph": self.petri_graph.to_dict(),
             "equivalence_id": self.equivalence_id,
             "exact_behavior_id": self.exact_behavior_id,
+            "strong_behavior_id": self.strong_behavior_id,
+            "complexity_level": self.complexity_level,
+            "complexity_role": self.complexity_role,
             "behavior_signature": list(self.behavior_signature),
             "exact_trace_language_id": self.exact_trace_language_id,
             "partial_order_id": self.partial_order_id,
@@ -492,6 +644,21 @@ class ProcessSample:
                 None
                 if data.get("exact_behavior_id") is None
                 else str(data["exact_behavior_id"])
+            ),
+            strong_behavior_id=(
+                None
+                if data.get("strong_behavior_id") is None
+                else str(data["strong_behavior_id"])
+            ),
+            complexity_level=(
+                None
+                if data.get("complexity_level") is None
+                else str(data["complexity_level"])
+            ),
+            complexity_role=(
+                None
+                if data.get("complexity_role") is None
+                else str(data["complexity_role"])
             ),
             behavior_signature=tuple(
                 float(value) for value in data.get("behavior_signature", ())
@@ -548,125 +715,149 @@ def decoder_target_trees_for_sample(
     }
 
 
-def generate_process_tree(config: SyntheticConfig, rng: random.Random | None = None) -> ProcessTreeNode:
+def generate_process_tree(
+    config: SyntheticConfig,
+    rng: random.Random | None = None,
+    *,
+    forced_root_operator: NodeKind | None = None,
+) -> ProcessTreeNode:
+    tree, _ = generate_process_tree_with_provenance(
+        config,
+        rng,
+        forced_root_operator=forced_root_operator,
+    )
+    return tree
+
+
+def generate_process_tree_with_provenance(
+    config: SyntheticConfig,
+    rng: random.Random | None = None,
+    *,
+    forced_root_operator: NodeKind | None = None,
+) -> tuple[ProcessTreeNode, dict[str, object]]:
+    """Generate an accepted folded tree from a topology-first sample.
+
+    The root is always an operator.  Activity labels are assigned only after a
+    topology has enough leaves, so satisfying the alphabet floor never injects
+    post-hoc sequence nodes or changes the sampled root.
+    """
+
+    from proc_rosetta.pm4py_bridge import fold_process_tree
+
     rng = rng or random.Random()
-    require_loop = config.curriculum_phase >= 3
-    min_depth = min(
-        max(1, int(config.min_tree_depth)),
-        max(1, int(config.max_depth) + 1),
+    structural_config = config_for_curriculum(config, config.complexity_level)
+    enabled = [NodeKind.SEQ, NodeKind.XOR]
+    if config.curriculum_phase >= 2:
+        enabled.append(NodeKind.AND)
+    if config.curriculum_phase >= 3:
+        enabled.append(NodeKind.LOOP)
+    if forced_root_operator is not None and forced_root_operator not in enabled:
+        raise ValueError(
+            f"forced root {forced_root_operator.value} is not enabled in phase "
+            f"{config.curriculum_phase}"
+        )
+    max_generated = int(
+        structural_config.max_generated_activities or structural_config.max_activities
     )
-    min_size = max(1, int(config.min_tree_size))
-    min_activities = min(
-        max(2, int(getattr(config, "min_activities", 2))),
-        max(2, int(config.max_activities)),
+    profile = ComplexityProfile(
+        name=structural_config.complexity_level,
+        max_depth=int(structural_config.max_depth),
+        min_tree_depth=int(structural_config.min_tree_depth),
+        min_tree_size=int(structural_config.min_tree_size),
+        max_tree_size=int(structural_config.max_tree_size),
+        min_generated_activities=int(structural_config.min_activities),
+        max_generated_activities=max_generated,
     )
 
-    def contains_loop(node: ProcessTreeNode) -> bool:
-        return node.kind is NodeKind.LOOP or any(contains_loop(child) for child in node.children)
-
-    def build_once() -> ProcessTreeNode:
-        activity_count = rng.randint(min_activities, config.max_activities)
-        activity_pool = [f"a{i}" for i in range(activity_count)]
+    def assign_activities(skeleton: ProcessTreeNode) -> ProcessTreeNode:
         next_activity = 0
+        labels: list[str] = []
 
-        def make_leaf() -> ProcessTreeNode:
+        def visit(node: ProcessTreeNode) -> ProcessTreeNode:
             nonlocal next_activity
-            if next_activity >= activity_count or (
-                next_activity > 0 and rng.random() < config.reuse_activity_probability
+            if node.kind is NodeKind.ACTIVITY:
+                if next_activity < profile.min_generated_activities:
+                    label = f"a{next_activity}"
+                    labels.append(label)
+                    next_activity += 1
+                elif (
+                    next_activity < profile.max_generated_activities
+                    and rng.random() >= config.reuse_activity_probability
+                ):
+                    label = f"a{next_activity}"
+                    labels.append(label)
+                    next_activity += 1
+                else:
+                    label = rng.choice(labels)
+                return ProcessTreeNode.activity(label)
+            return ProcessTreeNode(
+                node.kind,
+                children=tuple(visit(child) for child in node.children),
+            )
+
+        return visit(skeleton).canonicalize_activity_labels()
+
+    for _ in range(4000):
+        draws = {
+            "root": None,
+            "non_root": {kind.value: 0 for kind in OPERATOR_KINDS},
+        }
+
+        def make_node(depth: int, *, force_operator: bool = False) -> ProcessTreeNode:
+            if not force_operator and (
+                    depth >= structural_config.max_depth
+                or rng.random() < config.leaf_probability
             ):
-                label = rng.choice(activity_pool[: max(next_activity, 1)])
-            else:
-                label = activity_pool[next_activity]
-                next_activity += 1
-            return ProcessTreeNode.activity(label)
-
-        def make_node(depth: int) -> ProcessTreeNode:
-            if depth >= config.max_depth or rng.random() < config.leaf_probability:
-                return make_leaf()
-
-            operators = [NodeKind.SEQ, NodeKind.XOR]
-            if config.curriculum_phase >= 2:
-                operators.append(NodeKind.AND)
-            if config.curriculum_phase >= 3:
-                operators.append(NodeKind.LOOP)
-
+                return ProcessTreeNode.activity("__leaf__")
             probabilities = (
                 config.root_operator_probabilities
                 if depth == 0
                 else config.operator_probabilities
             )
-            op = rng.choices(
-                operators,
-                weights=[probabilities[kind.value] for kind in operators],
-                k=1,
-            )[0]
-            if op is NodeKind.LOOP:
-                body = make_node(depth + 1)
-                redo = make_node(depth + 1)
-                return ProcessTreeNode.loop(body, redo)
+            operator = (
+                forced_root_operator
+                if depth == 0 and forced_root_operator is not None
+                else rng.choices(
+                    enabled,
+                    weights=[probabilities[kind.value] for kind in enabled],
+                    k=1,
+                )[0]
+            )
+            assert operator is not None
+            if depth == 0:
+                draws["root"] = operator.value
+            else:
+                non_root = draws["non_root"]
+                assert isinstance(non_root, dict)
+                non_root[operator.value] = int(non_root[operator.value]) + 1
+            if operator is NodeKind.LOOP:
+                return ProcessTreeNode.loop(
+                    make_node(depth + 1),
+                    make_node(depth + 1),
+                )
+            arity = rng.randint(2, max(2, int(config.max_arity)))
+            return ProcessTreeNode(
+                operator,
+                children=tuple(make_node(depth + 1) for _ in range(arity)),
+            )
 
-            arity = rng.randint(2, max(2, config.max_arity))
-            children = tuple(make_node(depth + 1) for _ in range(arity))
-            return ProcessTreeNode(op, children=children)
-
-        tree = make_node(0)
-        if len(tree.unique_activity_labels()) < 2:
-            tree = ProcessTreeNode.seq(tree, make_leaf())
-        return tree.canonicalize_activity_labels()
-
-    best_tree: ProcessTreeNode | None = None
-    best_score: tuple[bool, int, int, int] | None = None
-    for _ in range(100):
-        tree = build_once()
-        has_required_loop = (not require_loop) or contains_loop(tree)
-        distinct = len(tree.unique_activity_labels())
-        score = (has_required_loop, min(distinct, min_activities), tree.max_depth(), tree.size())
-        if best_score is None or score > best_score:
-            best_tree = tree
-            best_score = score
-        if (
-            has_required_loop
-            and distinct >= min_activities
-            and tree.max_depth() >= min_depth
-            and tree.size() >= min_size
-        ):
-            return tree
-
-    assert best_tree is not None
-    return _pad_tree_to_min_activities(best_tree, min_activities, rng)
-
-
-def _pad_tree_to_min_activities(
-    tree: ProcessTreeNode,
-    min_activities: int,
-    rng: random.Random,
-) -> ProcessTreeNode:
-    """Guarantee the alphabet floor by weaving unused activities into the tree.
-
-    Retried sampling occasionally falls short of ``min_activities``; rather than
-    rejecting the whole family, extend the best candidate with a short visible
-    sequence of fresh labels so downstream consumers can rely on the floor.
-    """
-
-    used = set(tree.unique_activity_labels())
-    if len(used) >= min_activities:
-        return tree
-    fresh: list[str] = []
-    index = 0
-    while len(used) + len(fresh) < min_activities:
-        label = f"A{index}"
-        index += 1
-        if label in used:
+        skeleton = make_node(0, force_operator=True)
+        leaf_count = len(skeleton.activity_labels())
+        if leaf_count < profile.min_generated_activities:
             continue
-        fresh.append(label)
-    prepend = rng.random() < 0.5
-    for label in fresh:
-        # Fold one label at a time so operator arity stays within tokenizer limits.
-        if prepend:
-            tree = ProcessTreeNode.seq(ProcessTreeNode.activity(label), tree)
-        else:
-            tree = ProcessTreeNode.seq(tree, ProcessTreeNode.activity(label))
-    return tree
+        raw_tree = assign_activities(skeleton)
+        folded_tree = fold_process_tree(raw_tree)
+        if accepts_profile(folded_tree, profile):
+            return folded_tree, {
+                "raw_complexity": tree_complexity(raw_tree),
+                "folded_complexity": tree_complexity(folded_tree),
+                "operator_draws": draws,
+            }
+
+    raise RuntimeError(
+        f"could not generate an accepted {config.complexity_level} tree after 4000 "
+        "topology samples; check structural bounds"
+    )
 
 
 def generate_sample(
@@ -678,7 +869,7 @@ def generate_sample(
 
     config = config or SyntheticConfig()
     rng = rng or random.Random()
-    raw_tree = generate_process_tree(config, rng)
+    raw_tree, generation_provenance = generate_process_tree_with_provenance(config, rng)
     normalized = prepare_tree_for_model(raw_tree, config.max_arity)
     semantic_tree = normalized.semantic_tree
     traces = tuple(
@@ -704,6 +895,8 @@ def generate_sample(
         traces=traces,
         petri_graph=petri.graph,
         equivalence_id=equivalence_id or f"synthetic-{rng.getrandbits(64):016x}",
+        complexity_level=config.complexity_level,
+        complexity_role="ordinary_tree",
         decoder_target_trees=decoder_targets,
         metadata={
             "label_scheme": "first_seen_per_log_view",
@@ -714,6 +907,9 @@ def generate_sample(
                 config.max_arity,
                 canonicalize_activity_labels=False,
             ).to_dict(),
+            "complexity_level": config.complexity_level,
+            "complexity_role": "ordinary_tree",
+            **generation_provenance,
         },
     )
 

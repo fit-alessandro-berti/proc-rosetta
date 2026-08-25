@@ -54,8 +54,8 @@ and duplicate complete-language signatures are rejected.
 
 Motif weights favor ordinary random trees (`ordinary_tree=0.75`, the three
 controlled motifs approximately `0.0833` each) so most training logs carry realistic variant
-diversity and alphabet sizes. `min_activities` (default 8) enforces an
-alphabet floor per behavior, matching real event logs, and every stored
+diversity and alphabet sizes. Ordinary-tree activity floors are profile-specific
+(3, 5, and 8 for simple, medium, and complex), and every stored
 sample is relabeled to `A0, A1, ...` in first-seen trace order — the same
 canonicalization external XES logs receive at inference time — so the trace,
 tree, and Petri labels of a row always agree with the inference-time scheme.
@@ -198,7 +198,7 @@ Start by recreating synthetic training, validation, and test splits:
   --train-families 4096 \
   --validation-families 512 \
   --test-families 512 \
-  --max-activities 30 \
+  --activity-vocab-size 30 \
   --traces-per-sample 128
 ```
 
@@ -206,11 +206,24 @@ This creates:
 
 ```text
 data/
+  curriculum_manifest.json
   metadata.json
-  training/samples.jsonl
-  validation/samples.jsonl
-  test/samples.jsonl
+  simple/{metadata.json,training/samples.jsonl,validation/samples.jsonl,test/samples.jsonl}
+  medium/{metadata.json,training/samples.jsonl,validation/samples.jsonl,test/samples.jsonl}
+  complex/{metadata.json,training/samples.jsonl,validation/samples.jsonl,test/samples.jsonl}
 ```
+
+The three structural curricula use folded-tree targets of size 5–11, 12–19,
+and 20–96 respectively, with increasing depth and generated-activity bounds.
+They share one 30-label tokenizer capacity, the same trace/log settings, 0.55
+leaf probability, 0.15 activity-reuse probability, and maximum arity 3.
+Ordinary families receive deterministic root quotas (70% `SEQ`, 10% each
+`XOR`/`AND`/`LOOP`); non-root draws remain 25% per operator. Controlled motifs
+are retained as separately reported anchor cases.
+
+Paper/configuration tables can be rendered directly from a generated manifest
+with `scripts/render_curriculum_tables.py data/curriculum_manifest.json` (or
+`--format latex`), avoiding manually duplicated profile values.
 
 Generated trees and modality-specific reconstruction targets carry the
 `pm4py-fold-v1` normalization marker. To upgrade an existing split archive
@@ -233,10 +246,12 @@ Pass `--multiprocessing` to generate behavior families concurrently with
 These are also the command defaults: 4,096 independent training behavior
 families and 512 families in each evaluation split. With two representations
 and two fixed log views per family, they produce 16,384/2,048/2,048 flattened
-rows. Under balanced motif weights that gives 1,024 training families and 128
-validation/test families per motif. The larger evaluation splits are
-intentional: they keep per-motif and per-representation estimates meaningful
-for the more heterogeneous family, sampling, and noise strata.
+rows in each curriculum. Under the default weighted quota plan, the training
+split contains 3,056 ordinary families and 347/347/346 controlled-motif
+families; each evaluation split contains 376 ordinary families and 45/46/45
+controlled-motif families. The larger evaluation splits keep per-motif and
+per-representation estimates meaningful for heterogeneous sampling and noise
+strata.
 
 The legacy `--train-count`, `--validation-count`, and `--test-count` flags still
 accept flattened row counts but print a prominent deprecation warning. Family
@@ -287,8 +302,8 @@ structural statistics, and exact/bounded language certificates.
 Log modes include uniform, resampled, long-tail, sparse, incomplete, and noisy;
 noisy logs retain exact edit provenance.
 The default corpus creates two independent clean views (`uniform_variants` and
-`resampled`) and asserts that exact
-behavior signatures are disjoint across train, validation, and test. Training
+`resampled`) and asserts that exact behavior IDs and canonical tree hashes are
+disjoint across all nine curriculum/split combinations. Training
 collation fails on over-length traces instead of silently truncating them.
 
 Train the model:
@@ -305,13 +320,24 @@ Training writes:
 
 ```text
 checkpoints/proc_rosetta.pt       # latest completed epoch
-checkpoints/proc_rosetta.best.pt  # best validation-loss epoch (testing default)
+checkpoints/proc_rosetta.best.pt  # complex-primary, macro-tiebreak selection (testing default)
 checkpoints/proc_rosetta.best_loss.pt
 checkpoints/proc_rosetta.best_trace.pt
 checkpoints/proc_rosetta.best_edit.pt
 checkpoints/proc_rosetta.best_latent.pt
+checkpoints/proc_rosetta.best_simple.pt
+checkpoints/proc_rosetta.best_medium.pt
+checkpoints/proc_rosetta.best_complex.pt
 checkpoints/training_metrics.csv  # per-epoch metrics
 ```
+
+The default 100-epoch structural schedule uses 100% simple batches for epochs
+1–15, 25% simple/75% medium for epochs 16–40, and 10% simple/20% medium/70%
+complex thereafter. Batches are curriculum-homogeneous; defaults use batch
+sizes 128/96/64. Validation is computed independently for every curriculum,
+then macro and worst-case summaries are recorded. Scheduler and patience state
+reset at stage transitions, and early stopping is disabled until the complex
+stage has completed its minimum run.
 
 Every strict objective improvement is checkpointed. Learning-rate scheduling
 and early stopping default to the stable validation `trace_to_tree` loss (or
@@ -392,7 +418,7 @@ positive-only cosine term.
 
 The tokenizer size is fixed by the data metadata stored when `sample.py` runs.
 For logs with many activities, generate data with a sufficiently large
-`--max-activities` and retrain the checkpoint.
+`--activity-vocab-size` and retrain the checkpoint.
 
 ## Evaluating A Checkpoint
 
@@ -400,7 +426,8 @@ Evaluate the held-out synthetic test split:
 
 ```bash
 ./test.py \
-  --data-dir data
+  --data-dir data \
+  --curriculum complex
 ```
 
 Testing resolves `checkpoints/proc_rosetta.pt` to `.best.pt` by default. To
@@ -418,7 +445,7 @@ Token-based replay on Petri nets is the default. To use footprint fitness and
 precision instead, computed directly from the log and discovered process tree:
 
 ```bash
-./test.py --conformance-method footprints
+./test.py --curriculum complex --conformance-method footprints
 ```
 
 Footprint mode does not compute model footprints from converted Petri nets.
@@ -428,6 +455,7 @@ For machine-readable output:
 ```bash
 ./test.py \
   --data-dir data \
+  --curriculum complex \
   --checkpoint checkpoints/proc_rosetta.best.pt \
   --json > report.json
 ```
@@ -446,11 +474,13 @@ The test report includes:
   representation pair;
 - learned embedding quality versus deterministic log and Petri baselines;
 - PM4Py Petri-net Node2Vec/Word2Vec baseline when available.
+- family-level complexity/operator audits, motif/observation/size/loop strata,
+  and family-bootstrap 95% intervals.
 
 The PM4Py Petri embedding baseline can be slow. Disable it when iterating:
 
 ```bash
-./test.py --skip-pm4py-petri-embedding
+./test.py --curriculum complex --skip-pm4py-petri-embedding
 ```
 
 ## Using A Checkpoint On External Files

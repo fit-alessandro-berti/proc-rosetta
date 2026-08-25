@@ -120,34 +120,46 @@ are:
 \toprule
 Split & Rows & Behavior families \\
 \midrule
-Training & 8{,}192 & 4{,}096 \\
-Validation & 1{,}024 & 512 \\
-Test & 1{,}024 & 512 \\
+Training & 16{,}384 & 4{,}096 \\
+Validation & 2{,}048 & 512 \\
+Test & 2{,}048 & 512 \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The important generator settings are:
+These row counts apply separately to each of the simple, medium, and complex
+curricula. Their folded-target profiles are:
+\begin{center}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Curriculum & Max. recursion depth & Target size & Min. target depth & Activities \\
+\midrule
+Simple  & 3 & 5--11  & 2 & 3--6 \\
+Medium  & 5 & 12--19 & 3 & 5--14 \\
+Complex & 8 & 20--96 & 4 & 8--30 \\
+\bottomrule
+\end{tabular}
+\end{center}
+All profiles share the following generator settings:
 \begin{itemize}
-  \item maximum ordinary-process-tree recursion depth: 8;
-  \item minimum ordinary-process-tree depth/size targets: depth 4 and 20 nodes;
-  \item minimum distinct activities per ordinary process tree: 8;
   \item maximum activity labels: 30;
   \item maximum operator arity: 3;
   \item traces per generated event-log view: 128;
   \item activity-label reuse probability: 0.15;
   \item early leaf probability during process-tree recursion: 0.55;
-  \item representation rows per behavior family: 2;
-  \item event-log views per behavior family: 1;
-  \item controlled-motif context suffix: 6 fresh activities;
-  \item family-type weights: 0.55 for ordinary process trees and 0.15 for
+  \item Petri representations per behavior family: 2;
+  \item event-log views per behavior family: 2;
+  \item controlled-motif context: randomized binary structure bounded to 4--12 nodes;
+  \item family-type weights: 0.75 for ordinary process trees and $1/12$ for
         each of the three controlled motifs;
   \item strict minimum motif coverage: 8 families per motif in training and
         4 per motif in validation and test;
   \item enabled process-tree operators: \texttt{SEQ}, \texttt{XOR},
         \texttt{AND}, and two-child \texttt{LOOP}.
 \end{itemize}
-The \texttt{LOOP} operator is generated in the ordinary-process-tree family. The
+The \texttt{LOOP} operator is eligible in the ordinary-process-tree family but
+is not required in every tree. The
 generated and decoded loop form is the two-child form
 $\operatorname{LOOP}(T_{\mathit{body}},T_{\mathit{redo}})$; the tokenizer mask
 therefore emits \texttt{ARITY\_2} after a \texttt{LOOP} token. Because a loop
@@ -186,10 +198,10 @@ weighted quota allocator produces:
 \toprule
 Family type & Training families & Validation families & Test families \\
 \midrule
-Ordinary process tree & 2{,}243 & 277 & 277 \\
-Duplicate label vs. silent routing & 618 & 78 & 78 \\
-Concurrency vs. explicit interleaving & 618 & 79 & 79 \\
-Non-free-choice M pattern & 617 & 78 & 78 \\
+Ordinary process tree & 3{,}056 & 376 & 376 \\
+Duplicate label vs. silent routing & 347 & 45 & 45 \\
+Concurrency vs. explicit interleaving & 347 & 46 & 46 \\
+Non-free-choice M pattern & 346 & 45 & 45 \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -198,13 +210,13 @@ Non-free-choice M pattern & 617 & 78 & 78 \\
 \label{app:choose-family-type}
 
 For each split, the generator first computes how many behavior families are
-needed. Because the current configuration stores two rows per behavior family,
-8{,}192 training rows become 4{,}096 training families. The same calculation
-turns 1{,}024 validation rows and 1{,}024 test rows into 512 families each.
+needed. Because the current configuration stores four rows per behavior family,
+16{,}384 training rows become 4{,}096 training families. The same calculation
+turns 2{,}048 validation rows and 2{,}048 test rows into 512 families each.
 
-The ordinary-process-tree family has weight 0.55; the duplicate-label/silent-
+The ordinary-process-tree family has weight 0.75; the duplicate-label/silent-
 routing, concurrency/interleaving, and non-free-choice families have weight
-0.15 each. The generator first reserves the strict per-type minimum and then
+$1/12$ each. The generator first reserves the strict per-type minimum and then
 allocates the remaining families proportionally by the largest-remainder
 method. It shuffles the resulting deterministic quota plan using a seed
 derived from the global seed, the split name, and the phrase
@@ -232,9 +244,9 @@ The canonical process tree is the target representation used by the decoder.
 There are two cases.
 
 \paragraph{Ordinary-process-tree families.}
-For ordinary-process-tree families, the generator samples a random process tree. It
-first samples a pool of 8 to 30 activity labels, then recursively builds the process tree:
+For ordinary-process-tree families, the generator first samples an unlabeled topology:
 \begin{enumerate}
+  \item The root is forced to be an operator selected by the family's quota plan.
   \item If the maximum depth has been reached, it creates an activity leaf.
   \item Otherwise, with probability 0.55 it also stops early and creates an
         activity leaf.
@@ -245,22 +257,20 @@ first samples a pool of 8 to 30 activity labels, then recursively builds the pro
   \item For \texttt{LOOP}, it recursively generates exactly two children: the
         body and the redo branch.
 \end{enumerate}
-Activity labels are introduced as \texttt{a0}, \texttt{a1}, and so on. With
-probability 0.15 the generator reuses an earlier label instead of introducing a
-new one. During construction, labels are normalized to \texttt{A0},
+The topology is rejected if it cannot hold the profile's activity floor.
+Activity labels are then introduced as \texttt{a0}, \texttt{a1}, and so on:
+the first required leaves are distinct, and subsequent leaves reuse an earlier
+label with probability 0.15. Labels are normalized to \texttt{A0},
 \texttt{A1}, and so on in depth-first tree order. Children of \texttt{XOR} and
 \texttt{AND} nodes are sorted by a canonical structural key, so equivalent
 child permutations do not become different targets. The final stored labels
 are assigned later from the event-log view (Section~\ref{app:flatten-rows}).
 
-The sampler makes up to 100 attempts and keeps the first process tree that
-contains a loop, has at least eight distinct activities, reaches the configured
-minimum depth, and has at least 20 nodes. Candidate scoring prioritizes loop
-presence, then progress toward the eight-activity floor, depth, and size. If no
-candidate meets every selection target, the best candidate is returned after
-fresh activities are added sequentially until it has at least eight distinct
-labels. The alphabet floor is therefore a hard postcondition; loop presence,
-depth, and size remain selection targets rather than hard postconditions.
+After label assignment the tree is folded and accepted only when the final
+decoder target satisfies its curriculum's size, depth, and activity bounds.
+No loop is required and no post-generation sequence padding is used. An
+exhausted attempt budget is an error rather than permission to emit an
+out-of-profile target.
 
 Figure~\ref{fig:app-tree-sampler} separates the recursive construction rule
 from the candidate-selection rule.
@@ -277,23 +287,23 @@ from the candidate-selection rule.
   flow/.style={-{Latex[length=2mm]}, thick, draw=black!65}
 ]
   \node[box, fill=black!4] (labels) at (0,0)
-    {Sample activity-label pool};
+    {Plan root operator};
   \node[box, fill=teal!8, text width=40mm] (construct) at (3.4,0)
     {Build recursively\\[-1pt]
      depth limit or early stop $\Rightarrow$ activity;\\
      otherwise choose an operator and children};
   \node[box, fill=teal!8, text width=30mm] (canonicalize) at (7.2,0)
-    {Canonicalize labels and commutative children};
+    {Assign activities after topology};
   \node[box, fill=blue!6, text width=27mm] (score) at (10.3,0)
-    {Score loop, alphabet size, depth, and size};
+    {Fold and measure final target};
   \node[decision, fill=orange!10] (targets) at (10.3,-2.3)
-    {targets met?};
+    {profile met?};
   \node[box, fill=green!9] (accept) at (13.3,-2.3)
     {Accept process tree};
   \node[box, fill=orange!8, text width=31mm] (retry) at (7.0,-2.3)
-    {Keep best candidate and retry};
+    {Reject candidate and retry};
   \node[box, fill=black!4, text width=30mm] (fallback) at (3.4,-2.3)
-    {After 100 attempts:\\pad best to 8 activities};
+    {Attempt budget exhausted:\\raise an error};
 
   \draw[flow] (labels) -- (construct);
   \draw[flow] (construct) -- (canonicalize);
@@ -303,17 +313,15 @@ from the candidate-selection rule.
   \draw[flow] (targets) -- node[above, font=\scriptsize] {no} (retry);
   \draw[flow] (retry) to[out=90,in=-90] node[below left, font=\scriptsize]
     {next attempt} (construct.south);
-  \draw[flow] (retry) -- node[above, font=\scriptsize] {attempt limit}
+  \draw[flow] (retry) -- node[above, font=\scriptsize] {attempt budget}
     (fallback);
 \end{tikzpicture}%
 }
-\caption{Ordinary-process-tree sampling. Loop presence, eight distinct
-activities, depth, and size guide selection. The final fallback pads the
-highest-scoring candidate when necessary, making only the alphabet floor a
-hard postcondition.}
-\Description{A two-row flowchart showing recursive process-tree construction,
-canonicalization, candidate scoring including alphabet size, target checking,
-acceptance, retry, and the attempt-limit padding fallback.}
+\caption{Topology-first ordinary-process-tree sampling. Acceptance is checked
+on the final folded decoder target and never injects padding operators.}
+\Description{A two-row flowchart showing a planned root, recursive topology
+construction, activity assignment, folding, profile checking, acceptance,
+retry, and an explicit attempt-budget error.}
 \label{fig:app-tree-sampler}
 \end{figure}
 
@@ -330,12 +338,11 @@ The other three family types use small hand-defined canonical process trees:
 \end{itemize}
 These process trees are intentionally small because their purpose is to isolate one
 specific representation issue at a time. To avoid making every controlled case
-too bare, the generator appends up to six fresh activity labels as a shared
-sequential suffix. The suffix is added as nested binary sequence nodes, so the
-configured maximum arity remains 3. For example, if a motif already uses
-\texttt{A0}, \texttt{A1}, and \texttt{A2}, the suffix can add \texttt{A3}
-through \texttt{A8}. The same suffix is added to both Petri-net variants in the
-family.
+too bare, the generator inserts each motif into a randomized binary structural
+context bounded to 4--12 nodes. Context operators are selected from
+\texttt{SEQ}, \texttt{XOR}, and \texttt{AND}; these semantically designed anchor
+cases are excluded from the ordinary-tree operator-probability audit. The same
+context is compiled around both Petri-net variants in the family.
 
 \subsection{Step 3: Build Two Petri-Net Variants}
 \label{app:build-petri-variants}
@@ -359,7 +366,7 @@ Figures~\ref{fig:app-ordinary-renaming}--\ref{fig:app-m-pattern} use standard
 Petri-net notation: circles are places, a dot marks the initial token, a double
 circle marks the final place, labeled rectangles are visible transitions, and
 gray $\tau$ rectangles are silent transitions. The figures show the core motif;
-the identical sequential context suffix is omitted.
+the shared randomized structural context is omitted.
 
 \tikzset{
   appPNPlace/.style={circle, draw=black!70, minimum size=5.5mm,
@@ -651,10 +658,10 @@ and A2 consume one each, creating a non-free-choice M-pattern.}
 \label{fig:app-m-pattern}
 \end{figure}
 
-For every controlled family, the generator then appends each context activity
-to both final markings in the same order, creating a new final place after each
-activity. This shared suffix lengthens all complete traces equally and does not
-alter the structural contrast illustrated above.
+For every controlled family, the generator compiles the same randomized binary
+structural context around both Petri variants. This preserves the intended
+visible-language relationship without pretending that anchor-context operators
+were drawn by the ordinary-tree probability sampler.
 
 \subsection{Step 4: Check Behavioral Equivalence}
 \label{app:equivalence-check}
@@ -706,18 +713,17 @@ visible language returned by the completed checker. For ordinary loop
 families, PM4Py performs $\max(256,4n)$ process-tree playouts for requested event-log
 size $n$; the generator then deduplicates and sorts the observations. Thus the
 current $n=128$ run draws 512 playout traces before deduplication. It creates
-one event-log view per family and stores 128 traces in that view.
+two event-log views per family and stores 128 traces in each view.
 
-The current configuration lists \texttt{uniform\_variants} followed by
-\texttt{resampled}. Because it requests only one event-log view, that view uses the
-first mode. In \texttt{uniform\_variants}, the generator cycles through the
+The current configuration uses \texttt{uniform\_variants} followed by
+\texttt{resampled}, one for each of the two views. In \texttt{uniform\_variants}, the generator cycles through the
 trace pool until it has 128 traces, then shuffles them with a deterministic
 seed. If a behavior has only two variants, both recur; if the pool has more
 than 128 variants, only its first 128 sorted entries are used before shuffling.
 
 The generator also supports sparse, long-tail, incomplete, resampled, and noisy
-modes for other experiments. The persisted split uses one clean
-\texttt{uniform\_variants} view per family; all stored trace-edit lists are
+modes for other experiments. The default split uses two clean views per family;
+all stored trace-edit lists are
 empty.
 
 Family construction, quota order, and event-log-view shuffling use stable seeds;
@@ -732,8 +738,9 @@ loop event-log contents used in the study.
 \label{app:flatten-rows}
 
 The final step turns each behavior family into rows. With the current
-configuration, each family has one generated event-log view and two Petri-net
-variants, so it becomes exactly two rows:
+configuration, each family has two generated event-log views and two Petri-net
+variants, so it becomes exactly four rows (the Cartesian product of views and
+variants). For either log view, the two representation rows are:
 \[
 \begin{aligned}
   &(\text{process tree}, \text{same event-log view},
@@ -788,29 +795,35 @@ explicit.
   \draw[flow] (gzero) -- (rowzero);
   \draw[flow] (gone) -- (rowone);
 \end{tikzpicture}
-\caption{Flattening one behavior family into two training rows after applying
-the event-log view's first-seen activity map. The process tree, event-log view,
+\caption{Flattening one behavior-family log view into two representation rows after applying
+the view's first-seen activity map. Two log views make four family rows in total. The process tree, event-log view,
 and equivalence identifier are duplicated; only the Petri-net graph changes.}
 \Description{Shared process-tree, event-log, and equivalence fields branch to
 two Petri-net variants, which produce two corresponding training rows.}
 \label{fig:app-flatten-family}
 \end{figure}
 
-Both rows have the same equivalence identifier $e$. The process tree and trace
-list are identical in the two rows. The Petri-net graph is different.
+Both representation rows have the same equivalence identifier $e$. The process
+tree and trace list are identical within a log view; the Petri-net graph differs.
 
 Rows are written to:
 \begin{itemize}
-  \item \texttt{data/training/samples.jsonl};
-  \item \texttt{data/validation/samples.jsonl};
-  \item \texttt{data/test/samples.jsonl}.
+  \item \texttt{data/simple/\{training,validation,test\}/samples.jsonl};
+  \item \texttt{data/medium/\{training,validation,test\}/samples.jsonl};
+  \item \texttt{data/complex/\{training,validation,test\}/samples.jsonl}.
 \end{itemize}
-The generator also writes \texttt{data/metadata.json}, which records the seed,
-the full synthetic configuration, split sizes, motif counts, representation
-counts, average process-tree and trace statistics, and maximum Petri-net graph sizes.
-For each split it records both planned and actual motif quotas, per-motif
-representation-slot counts, any strict-coverage deficits, and whether the
-minimum-coverage check passed. During generation, \texttt{sample.py} reports
+The generator also writes \texttt{data/curriculum\_manifest.json}, which records the seed,
+the shared configuration and invariants, all three profiles, and per-level split
+metadata. Family-level statistics include mean, standard deviation, median,
+10th and 90th percentiles, and maxima for tree, activity, operator, Petri-net,
+and trace measures, together with loop/nested-loop prevalence. For each split
+the metadata also records planned and actual motif quotas, representation-slot
+coverage, raw operator draws and post-fold operator counts, strict-coverage
+deficits, and the coverage result. Exact behavior identifiers and canonical-tree
+hashes are checked for disjointness across all nine curriculum/split combinations.
+The tables can be rendered from the manifest with
+\texttt{scripts/render\_curriculum\_tables.py}, avoiding a second handwritten
+source of profile values. During generation, \texttt{sample.py} reports
 completed flattened rows with a per-split progress bar on standard error;
 \texttt{--quiet} disables this display without changing the generated data.
 
@@ -825,8 +838,9 @@ At training time, each row is converted into tensors:
   \item the Petri net becomes node-type indices, transition-label ids, marking
         features, and two adjacency matrices.
 \end{itemize}
-The batch collator also creates a positive-pair mask from the equivalence
-identifiers. If two rows have the same equivalence identifier, they are treated
+The batch collator also creates a positive-pair mask from strong behavior
+identifiers. Exactly enumerated families use their exact behavior identifier;
+isomorphic loop families use their equivalence identifier. If two rows have the same strong identifier, they are treated
 as matching views of the same visible-trace equivalence family. Training batches
 can also apply a consistent random renaming of activity labels within a family.
 This preserves the behavior while reducing dependence on the literal label

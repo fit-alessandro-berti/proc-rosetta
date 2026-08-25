@@ -35,12 +35,15 @@ from proc_rosetta.training import (
     build_model,
     build_optimizer,
     checkpoint_selection_key,
+    curriculum_batch_plan,
+    final_curriculum_checkpoint_key,
     epoch_snapshot_directory,
     loss_weights_from_checkpoint,
     loss_weights_from_config,
     replay_scheduler_history,
     save_epoch_snapshot,
     stage_acceptance_report,
+    structural_curriculum_for_epoch,
     train_synthetic,
     train_from_data_dir,
     train_config_from_checkpoint,
@@ -48,6 +51,50 @@ from proc_rosetta.training import (
 )
 from proc_rosetta.tree import ProcessTreeNode
 from types import SimpleNamespace
+
+
+def test_structural_curriculum_schedule_retains_replay_and_is_deterministic():
+    assert structural_curriculum_for_epoch(1, 100)["weights"] == {
+        "simple": 1.0,
+        "medium": 0.0,
+        "complex": 0.0,
+    }
+    assert structural_curriculum_for_epoch(50, 100)["weights"] == {
+        "simple": 0.10,
+        "medium": 0.20,
+        "complex": 0.70,
+    }
+    first = curriculum_batch_plan(
+        {"simple": 0.10, "medium": 0.20, "complex": 0.70},
+        10,
+        seed=13,
+        epoch=50,
+    )
+    assert first == curriculum_batch_plan(
+        {"simple": 0.10, "medium": 0.20, "complex": 0.70},
+        10,
+        seed=13,
+        epoch=50,
+    )
+    assert {level: first.count(level) for level in set(first)} == {
+        "simple": 1,
+        "medium": 2,
+        "complex": 7,
+    }
+    assert structural_curriculum_for_epoch(
+        20,
+        200,
+        minimum_stage="medium",
+    )["name"] == "medium"
+    assert structural_curriculum_for_epoch(
+        50,
+        200,
+        minimum_stage="complex",
+    )["weights"] == {
+        "simple": 0.10,
+        "medium": 0.20,
+        "complex": 0.70,
+    }
 
 
 def test_batched_incremental_beam_matches_individual_rows(monkeypatch):
@@ -808,6 +855,27 @@ def test_checkpoint_selection_is_strictly_lexicographic():
         "behavior_distance_spearman": 0.40,
     }
     assert checkpoint_selection_key(legacy_metrics) == (0.75, 0.80, 0.60, 0.40)
+
+
+def test_final_curriculum_checkpoint_uses_complex_then_macro():
+    complex_metrics = {
+        "checkpoint_selection_primary_exact": 0.80,
+        "checkpoint_selection_edit_score": 0.70,
+        "checkpoint_selection_recall_at_1": 0.60,
+        "checkpoint_selection_spearman": 0.50,
+    }
+    macro_metrics = {
+        "checkpoint_selection_primary_exact": 0.75,
+        "checkpoint_selection_edit_score": 0.65,
+        "checkpoint_selection_recall_at_1": 0.55,
+        "checkpoint_selection_spearman": 0.45,
+    }
+    better_macro = {**macro_metrics, "checkpoint_selection_primary_exact": 0.76}
+    worse_complex = {**complex_metrics, "checkpoint_selection_primary_exact": 0.79}
+
+    baseline = final_curriculum_checkpoint_key(complex_metrics, macro_metrics)
+    assert final_curriculum_checkpoint_key(complex_metrics, better_macro) > baseline
+    assert final_curriculum_checkpoint_key(worse_complex, better_macro) < baseline
 
 
 def test_lr_scheduler_tracks_validation_loss_instead_of_discovery_score():

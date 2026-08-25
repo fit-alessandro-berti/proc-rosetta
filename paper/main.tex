@@ -194,14 +194,14 @@ This section presents the paired training data, the encoders, the grammar-masked
 
 ProcRosetta is trained on synthetic \emph{paired triples} whose correspondence is fixed by the generator (Figure~\ref{fig:triple}): each sample $x_i = (T_i, L_i, G_i, e_i)$ belongs to one behavior family $e_i$ with a canonical process tree $T_i$.\footnote{Data-generation supplement: \url{https://github.com/fit-alessandro-berti/proc-rosetta/blob/main/data_generation.pdf}.}
 \begin{itemize}
-  \item ordinary process trees are sampled from $\{\operatorname{SEQ}, \operatorname{XOR}, \operatorname{AND}, \operatorname{LOOP}\}$ process trees (maximum recursion depth $8$, arity $2$ to $3$ for non-loop operators, two-child loops, $8$--$30$ distinct activities, early-leaf probability $0.55$, reuse probability $0.15$) and structurally canonicalized (Section~\ref{sec:preliminaries});
-  \item ordinary process trees receive weight $0.55$, while duplicate-label/silent-routing, concurrency/interleaving, and non-free-choice motifs receive weight $0.15$ each; the three controlled motifs are embedded in a shared sequential context of six fresh activities;
-  \item each behavior is stored in two rows with the same process-tree target and the same visible traces, but with different Petri net graphs; the second graph may simply rename nodes or use different internal routing while preserving the same behavior;
+  \item ordinary process trees are sampled under simple, medium, and complex folded-target profiles (sizes $5$--$11$, $12$--$19$, and $20$--$96$); all profiles share the same operator probabilities, arity, early-leaf probability $0.55$, and reuse probability $0.15$;
+  \item ordinary process trees receive weight $0.75$, while duplicate-label/silent-routing, concurrency/interleaving, and non-free-choice motifs receive weight $1/12$ each; controlled motifs are embedded in randomized binary structural contexts of 4--12 nodes and audited separately as anchors;
+  \item each behavior has two Petri-net variants and two event-log views, producing four aligned rows; an alternate graph may simply rename nodes or use different internal routing while preserving the same behavior;
   \item $L_i$ is a $128$-trace event-log view sampled from the family's visible behavior, and $G_i$ is the typed-graph representation of the corresponding Petri net variant; before storage, first-seen labels derived from $L_i$ are applied consistently to $T_i$, $L_i$, and $G_i$.
 \end{itemize}
-The generator uses a fixed random seed and produces three disjoint family-wise splits: $8{,}192$ training, $1{,}024$ validation, and $1{,}024$ test rows, corresponding to $4{,}096$, $512$, and $512$ behavior families (Table~\ref{tab:dataset}). Loops are enabled in the ordinary process-tree family. Since loop languages are generally unbounded, ordinary loop families use process tree playout to construct the finite observed trace pool, while their alternate Petri net representation is certified by isomorphic renaming. The controlled duplicate-label, concurrency, and non-free-choice families remain checked by bounded complete visible-language enumeration. The aggregate statistics and empirical results below use these regenerated splits and the corresponding epoch-36 checkpoint.\footnote{The data used to train and test the model, together with the latest checkpoint, are available at \url{https://github.com/fit-alessandro-berti/proc-rosetta/tree/main/dist_data}.}
+The generator uses a fixed random seed and produces training, validation, and test splits independently for all three structural curricula: $16{,}384$, $2{,}048$, and $2{,}048$ rows per curriculum, corresponding to $4{,}096$, $512$, and $512$ behavior families (Table~\ref{tab:dataset}). Ordinary roots use deterministic 70/10/10/10 quotas for \textsc{seq}/\textsc{xor}/\textsc{and}/\textsc{loop}; non-root draws remain uniform. Loops are eligible rather than required. Exact behavior identifiers and canonical-tree hashes are disjoint across all nine curriculum/split combinations.\footnote{The data used to train and test the model, together with the latest checkpoint, are available at \url{https://github.com/fit-alessandro-berti/proc-rosetta/tree/main/dist_data}.}
 
-Each behavior family contributes two rows with identical process tree and event-log views; only the Petri net graph may differ. Thus, the $1{,}024$-row test split contains $512$ family identifiers, and every row has a behaviorally equivalent companion in row-level neighborhood and retrieval analyses. Family-wise splitting prevents the two rows of one generated family from crossing splits, but it does not enforce visible-language uniqueness across independently generated families. Ordinary loop families use isomorphic node renaming for the alternate Petri view, whereas non-isomorphic routing variations occur in the controlled families; within-family Petri agreement therefore reflects identifier invariance throughout and invariance to alternative routing only for a subset.
+Each behavior family contributes four rows (two log views times two Petri variants). Thus, each $2{,}048$-row curriculum-specific test split contains $512$ family identifiers. Ordinary loop families use isomorphic node renaming for the alternate Petri view and receive a strong behavior identifier; exact families use their exact visible-language identifier.
 
 \begin{table}
 \caption{Weighted, loop-enabled synthetic splits (fixed seed). Motif allocation lists ordinary / duplicate--silent / concurrency--interleaving / non-free-choice families.}
@@ -211,9 +211,9 @@ Each behavior family contributes two rows with identical process tree and event-
 \toprule
 Split & Rows & Families & \makecell[l]{Motif family\\allocation} & \makecell[r]{Max recursion\\depth} & \makecell[r]{Traces per\\row} & \makecell[r]{Petri variants\\per family} \\
 \midrule
-Training   & 8{,}192 & 4{,}096 & 2{,}243 / 618 / 618 / 617 & 8 & 128 & 2 \\
-Validation & 1{,}024 & 512     & 277 / 78 / 79 / 78       & 8 & 128 & 2 \\
-Test       & 1{,}024 & 512     & 277 / 78 / 79 / 78       & 8 & 128 & 2 \\
+Training   & 16{,}384 & 4{,}096 & 3{,}056 / 347 / 347 / 346 & 8 & 128 & 2 \\
+Validation & 2{,}048  & 512     & 376 / 45 / 46 / 45        & 8 & 128 & 2 \\
+Test       & 2{,}048  & 512     & 376 / 45 / 46 / 45        & 8 & 128 & 2 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -282,7 +282,7 @@ An interactive Streamlit tool\footnote{Available at \url{https://rosetta-pm.app}
 \section{Assessment}
 \label{sec:assessment}
 
-The assessment follows the three research questions, covering training behavior, decode quality (RQ2), process discovery quality against the Inductive Miner (RQ3), embedding quality against baselines (RQ1, RQ3), and cross-modal retrieval (RQ1). All results are computed on the held-out test split of $1{,}024$ triples ($512$ behavior families), used neither for optimization nor for model selection, with the final epoch-36 checkpoint and deterministic latent means.
+The assessment follows the three research questions, covering training behavior, decode quality (RQ2), process discovery quality against the Inductive Miner (RQ3), embedding quality against baselines (RQ1, RQ3), and cross-modal retrieval (RQ1). The current protocol evaluates each curriculum separately on its held-out $2{,}048$-row test split ($512$ behavior families), used neither for optimization nor for model selection, with deterministic latent means. Numerical tables retained below document the earlier single-split checkpoint and must be regenerated with an explicit \texttt{--curriculum} before being compared with the structural-curriculum runs.
 
 \subsection{Training Behavior}
 \label{sec:trainingbehavior}
@@ -310,7 +310,7 @@ Trainable parameters & 443{,}849 & Early stopping & patience 4 of max.\ 100 epoc
 \bottomrule
 \end{tabular}}
 \captionsetup{hypcap=false}
-\captionof{table}{Model and training configuration.}
+\captionof{table}{Legacy single-split model and training configuration. The current structural-curriculum run uses curriculum-homogeneous batches, separate 128/96/64 batch sizes, per-curriculum validation, and stage-aware stopping.}
 \label{tab:hyper}
 \end{minipage}\hfill
 \begin{minipage}[t]{0.50\textwidth}
@@ -318,8 +318,8 @@ Trainable parameters & 443{,}849 & Early stopping & patience 4 of max.\ 100 epoc
 \centering
 \includegraphics[width=\linewidth]{figures/training_curves.pdf}
 \captionsetup{hypcap=false}
-\captionof{figure}{Training behavior. (a)~Training and validation loss; the dashed line marks learning-rate halving, the dotted line the best checkpoint (epoch 35), and the cross the tested final checkpoint (epoch 36). (b)~Principal validation-loss components.}
-\Description{Two line charts over 36 epochs. Training and validation losses generally decrease, with the lowest validation loss at epoch 35 and the reported final checkpoint at epoch 36. The principal validation loss components also decrease over training.}
+\captionof{figure}{Legacy single-split training behavior. (a)~Training and validation loss; the dashed line marks learning-rate halving, the dotted line the best checkpoint (epoch 35), and the cross the tested final checkpoint (epoch 36). (b)~Principal validation-loss components. Current structural-curriculum curves must be regenerated from the three-level run.}
+\Description{Legacy two-panel line charts over 36 epochs. These curves predate the structural-curriculum training schedule and are retained only as historical single-split results.}
 \label{fig:training}
 \end{minipage}
 \end{center}
@@ -335,7 +335,7 @@ Table~\ref{tab:decode} evaluates greedy decoding from all four latent sources. E
 \centering
 \begin{minipage}[t]{0.58\textwidth}
 \centering
-\caption{Greedy decoding on 1{,}024 test rows. \emph{Norm.\ edit}: length-normalized token edit distance. Behavioral $L_1$ compares each source log with 128 stochastic PM4Py playout traces. Rates and edit means use all rows; behavioral $L_1$ uses evaluable rows. A parseable nonterminated sequence may still be exact. Lower is better.}
+\caption{Legacy single-split greedy-decoding results. Current reports evaluate one 2{,}048-row curriculum at a time. \emph{Norm.\ edit}: length-normalized token edit distance. Lower is better.}
 \label{tab:decode}
 \scriptsize
 \resizebox{\linewidth}{!}{%
@@ -352,7 +352,7 @@ $\mu_{\mathit{fused}}$ (mean of the three) & 100\% & 100\% & 75.0\% & \textbf{0.
 \end{minipage}\hfill
 \begin{minipage}[t]{0.39\textwidth}
 \centering
-\caption{Discovery on 1{,}024 test logs. ``Model'' is process-tree return rate; other metrics use evaluable rows (96.5\% / 100\%).}
+\caption{Legacy single-split discovery results. Current reports evaluate one 2{,}048-row curriculum at a time.}
 \label{tab:discovery}
 \scriptsize
 \resizebox{\linewidth}{!}{%
@@ -491,7 +491,7 @@ Petri structural counts & $\circ$ Petri-net features & 9 & 0.577 & \textbf{0.000
 
 Table~\ref{tab:embedding} ranks the four learned ProcRosetta representations against six deterministic baselines and the learned PetriNet2Vec baseline~\cite{Colonna2024}. Three observations stand out. First, deterministic event-log abstractions are strongest globally on this structured synthetic test set: directly-follows, PM4Py case features, eventually-follows, and activity counts reach $\rho = 0.896$ to $0.927$. The directly-follows and trace-variant baselines still deserve a caveat: the behavioral distance is \emph{defined} as an average that includes their $L_1$ abstractions, so they partially measure the evaluation target by construction and should be read as skyline references rather than as competing methods.
 
-Second, ProcRosetta's learned event-log embedding is the strongest ProcRosetta view at $\rho = 0.747$, below the deterministic event-log features but above the fused, Petri-net, and process-tree views and the high-dimensional trace-variant baseline. Its zero nearest-neighbor behavioral distance should be interpreted in light of the paired-row construction. For event-log- and process-tree-based representations, the companion row is encoded from an identical input; for Petri net representations, the result indicates whether the alternate Petri-net view is placed nearby. The metric therefore characterizes same-family locality rather than discrimination among $1{,}024$ distinct behaviors.
+Second, ProcRosetta's learned event-log embedding is the strongest ProcRosetta view in the legacy table. Its zero nearest-neighbor behavioral distance should be interpreted in light of the family-row construction: the metric characterizes same-family locality rather than discrimination among distinct behaviors. Current reports use strong behavior identifiers and family-bootstrap intervals.
 
 Third, the Petri net comparison exposes a global versus local trade-off. ProcRosetta more often places the paired same-family Petri variant nearest, whereas PetriNet2Vec more accurately preserves the global ordering of pairwise behavioral distances ($\rho = 0.817$ versus $0.671$; NN behavior $0.632$ versus $0.000$).
 
@@ -584,7 +584,7 @@ Petri structural counts             & 0.490 & 0.257 & $-0.106$ & $+0.000$ \\
 \end{minipage}\hfill
 \begin{minipage}[t]{0.35\textwidth}
 \centering
-\caption{Retrieval among 1{,}024 test candidates. Companion rows receive no credit; ties follow descending \texttt{argsort}. Chance: top-1 $=0.1\%$, mean rank $\approx512$.}
+\caption{Legacy exact-row retrieval. Current curriculum reports give credit to candidates sharing a strong behavior identifier.}
 \label{tab:retrieval}
 \scriptsize
 \resizebox{\linewidth}{!}{%
@@ -610,18 +610,18 @@ The modality-specific embeddings are strongly compatible with their arithmetic-m
 
 
 
-Table~\ref{tab:retrieval} directly tests cross-modal alignment by retrieving the matching row among 1{,}024 candidates in all six directions. Top-1 accuracy is 2.9 to 8.0\% (chance: 0.1\%) and mean rank 96.7 to 100.8 (random expectation: 512); these exact-row scores are deliberately strict, as each query has one indexed target although its alternate row is behaviorally equivalent. Separately, the nearest row is from the same family in 25.0\% of fused, 25.0\% of Petri-net, 74.6\% of event-log, and 25.6\% of process-tree embeddings (within-family cosine: 0.995 to 1.000). Thus instance-level alignment is above chance but leaves substantial retrieval headroom.
+Table~\ref{tab:retrieval} documents the legacy exact-row retrieval calculation. The current evaluator instead gives credit to any candidate with the same strong behavior identifier, so alternate exact representations and isomorphic loop representations are not treated as negatives. Retrieval is calculated independently within each requested curriculum before cross-curriculum summaries are formed.
 
 \subsection{Reproducibility and Implementation}
 \label{sec:repository}
 
-The public PyTorch/PM4Py~\cite{Berti2023PM4Py} implementation at \url{https://github.com/fit-alessandro-berti/proc-rosetta} reproduces the study end-to-end: \texttt{sample.py} regenerates Table~\ref{tab:dataset}'s seeded splits, \texttt{train.py} trains Table~\ref{tab:hyper}'s model and writes Figure~\ref{fig:training}'s metrics, and \texttt{test.py} produces Tables~\ref{tab:decode} through~\ref{tab:retrieval}. Utilities also embed external \texttt{.xes}, \texttt{.pnml}, and \texttt{.ptml} artifacts and decode event logs or Petri nets into process trees with automatic canonicalization and label restoration.
+The public PyTorch/PM4Py~\cite{Berti2023PM4Py} implementation at \url{https://github.com/fit-alessandro-berti/proc-rosetta} reproduces the current protocol end-to-end: \texttt{sample.py} generates the three seeded structural curricula and their manifest, \texttt{train.py} performs cumulative curriculum training, and \texttt{test.py --curriculum \{simple,medium,complex\}} evaluates exactly one held-out level. The numerical legacy tables and curves retained in this manuscript must be regenerated before they can be presented as structural-curriculum results. Utilities also embed external \texttt{.xes}, \texttt{.pnml}, and \texttt{.ptml} artifacts and decode event logs or Petri nets into process trees with automatic canonicalization and label restoration.
 
 \section{Discussion}
 \label{sec:discussion}
 
 \paragraph{Threats to validity.}
-Three threats qualify these findings. \emph{(i) Synthetic data.} Training and evaluation use synthetic behavior families that lack the noise and complexity of real event logs, limiting conclusions to in-distribution artifacts; family-wise splitting keeps paired rows together but does not prevent visible-language overlap between independently generated families, which may inflate exact-match rates. \emph{(ii) Metric circularity.} The behavioral distance shares two of its three components with the directly-follows and trace-variant baselines, favoring their scores; Table~\ref{tab:embedding} therefore also reports the less affected nearest-neighbor quality. \emph{(iii) Single configuration.} Results cover one seeded, full-objective configuration; variation across seeds and hyperparameters and the contributions of individual objectives remain unmeasured.
+Three threats qualify these findings. \emph{(i) Synthetic data.} Training and evaluation use synthetic behavior families that lack the noise and complexity of real event logs, limiting conclusions to in-distribution artifacts. Exact visible-language identifiers and canonical-tree hashes are disjoint across curricula and splits, but bounded sampled languages may still conceal behavioral overlap without an exact certificate. \emph{(ii) Metric circularity.} The behavioral distance shares two of its three components with the directly-follows and trace-variant baselines, favoring their scores; Table~\ref{tab:embedding} therefore also reports the less affected nearest-neighbor quality. \emph{(iii) Single configuration.} Results cover one seeded, full-objective configuration; variation across seeds and hyperparameters and the contributions of individual objectives remain unmeasured.
 
 \paragraph{Scope of the model class.}
 The target process trees cover sequence, choice, concurrency, and two-child loops. Even for non-block or non-free-choice Petri net inputs, the decoder emits block-structured process trees, which are less expressive than partially ordered formalisms such as POWL~\cite{Kourani2026}. Any target language with a prefix grammar, canonical form, and deterministic Petri-net conversion could replace the decoder.

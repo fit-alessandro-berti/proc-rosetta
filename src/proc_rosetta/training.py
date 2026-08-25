@@ -7,6 +7,7 @@ from dataclasses import asdict
 from dataclasses import dataclass
 from pathlib import Path
 import random
+import math
 import shutil
 import sys
 from time import perf_counter
@@ -28,7 +29,7 @@ from proc_rosetta.devices import default_device, resolve_device
 from proc_rosetta.losses import LossWeights, multimodal_tree_loss
 from proc_rosetta.models import LatentDistribution, ProcRosettaModel
 from proc_rosetta.pm4py_bridge import TREE_NORMALIZATION_VERSION
-from proc_rosetta.synthetic import SyntheticConfig
+from proc_rosetta.synthetic import CURRICULUM_LEVELS, SyntheticConfig
 from proc_rosetta.tokenizers import ActivityTokenizer, TreeTokenizer
 
 
@@ -42,12 +43,129 @@ RESUME_POLICY_OVERRIDE_FIELDS = frozenset(
     }
 )
 
+DEFAULT_CURRICULUM_STAGES = (
+    {
+        "name": "simple",
+        "start_fraction": 0.00,
+        "end_fraction": 0.15,
+        "weights": {"simple": 1.0},
+    },
+    {
+        "name": "medium",
+        "start_fraction": 0.15,
+        "end_fraction": 0.40,
+        "weights": {"simple": 0.25, "medium": 0.75},
+    },
+    {
+        "name": "complex",
+        "start_fraction": 0.40,
+        "end_fraction": 1.00,
+        "weights": {"simple": 0.10, "medium": 0.20, "complex": 0.70},
+    },
+)
+
+
+def structural_curriculum_for_epoch(
+    epoch: int,
+    total_epochs: int,
+    *,
+    minimum_stage: str | None = None,
+) -> dict[str, object]:
+    if epoch < 1 or total_epochs < 1 or epoch > total_epochs:
+        raise ValueError("epoch must be within 1..total_epochs")
+    fraction = (epoch - 1) / total_epochs
+    selected = DEFAULT_CURRICULUM_STAGES[-1]
+    for stage in DEFAULT_CURRICULUM_STAGES:
+        if float(stage["start_fraction"]) <= fraction < float(stage["end_fraction"]):
+            selected = stage
+            break
+    if minimum_stage is not None:
+        stage_order = {
+            str(stage["name"]): index
+            for index, stage in enumerate(DEFAULT_CURRICULUM_STAGES)
+        }
+        if minimum_stage not in stage_order:
+            raise ValueError(f"unknown minimum structural stage {minimum_stage!r}")
+        if stage_order[str(selected["name"])] < stage_order[minimum_stage]:
+            selected = DEFAULT_CURRICULUM_STAGES[stage_order[minimum_stage]]
+    return {
+        "name": str(selected["name"]),
+        "weights": {
+            level: float(dict(selected["weights"]).get(level, 0.0))
+            for level in CURRICULUM_LEVELS
+        },
+    }
+
+
+def curriculum_batch_plan(
+    weights: dict[str, float],
+    batch_count: int,
+    *,
+    seed: int,
+    epoch: int,
+) -> list[str]:
+    if batch_count < 1:
+        return []
+    total = sum(max(0.0, float(weights.get(level, 0.0))) for level in CURRICULUM_LEVELS)
+    if total <= 0.0:
+        raise ValueError("curriculum sampling weights must contain a positive value")
+    raw = {
+        level: batch_count * max(0.0, float(weights.get(level, 0.0))) / total
+        for level in CURRICULUM_LEVELS
+    }
+    counts = {level: int(value) for level, value in raw.items()}
+    leftovers = batch_count - sum(counts.values())
+    order = sorted(CURRICULUM_LEVELS, key=lambda level: (-(raw[level] % 1), level))
+    for level in order[:leftovers]:
+        counts[level] += 1
+    plan = [level for level in CURRICULUM_LEVELS for _ in range(counts[level])]
+    random.Random(seed + epoch).shuffle(plan)
+    return plan
+
+
+class CurriculumMixtureLoader:
+    """Deterministically interleave whole homogeneous batches across loaders."""
+
+    def __init__(
+        self,
+        loaders: dict[str, DataLoader],
+        weights: dict[str, float],
+        *,
+        seed: int,
+        epoch: int,
+    ) -> None:
+        self.loaders = loaders
+        active = [level for level, weight in weights.items() if weight > 0.0]
+        self.batch_count = max((len(loaders[level]) for level in active), default=0)
+        self.plan = curriculum_batch_plan(
+            weights,
+            self.batch_count,
+            seed=seed,
+            epoch=epoch,
+        )
+
+    def __len__(self) -> int:
+        return len(self.plan)
+
+    def __iter__(self):
+        iterators = {level: iter(loader) for level, loader in self.loaders.items()}
+        for level in self.plan:
+            try:
+                yield next(iterators[level])
+            except StopIteration:
+                iterators[level] = iter(self.loaders[level])
+                yield next(iterators[level])
+
 
 @dataclass(frozen=True)
 class TrainConfig:
     samples: int = 128
     epochs: int = 100
     batch_size: int = 128
+    simple_batch_size: int | None = None
+    medium_batch_size: int | None = None
+    complex_batch_size: int | None = None
+    min_complex_stage_epochs: int = 5
     learning_rate: float = 3e-4
     latent_dim: int = 96
     hidden_dim: int = 192
@@ -265,16 +383,32 @@ def train_epoch(
     show_progress: bool = False,
     train_config: TrainConfig | None = None,
     ema: ModelEMA | None = None,
-) -> dict[str, float]:
+    collect_curriculum_metrics: bool = False,
+) -> dict[str, object]:
     model.train()
     totals: dict[str, float | torch.Tensor] = {}
     batches = 0
+    totals_by_curriculum: dict[str, dict[str, torch.Tensor]] = defaultdict(dict)
+    batches_by_curriculum: dict[str, int] = defaultdict(int)
     iterator = progress_dataloader(
         dataloader,
         desc=f"Epoch {epoch} training" if epoch is not None else "Training",
         enabled=show_progress,
     )
     for batch in iterator:
+        batch_level: str | None = None
+        if collect_curriculum_metrics:
+            levels = {
+                str(level)
+                for level in batch.get("complexity_levels", [])
+                if level is not None
+            }
+            if len(levels) != 1:
+                raise ValueError(
+                    "structural curriculum batches must be homogeneous; received "
+                    f"{sorted(levels)}"
+                )
+            batch_level = next(iter(levels))
         batch = move_batch_to_device(batch, device)
         optimizer.zero_grad(set_to_none=True)
         outputs = model(
@@ -332,10 +466,17 @@ def train_epoch(
 
         for name, value in losses.items():
             totals[name] = totals.get(name, 0.0) + value.detach()
+            if batch_level is not None:
+                level_totals = totals_by_curriculum[batch_level]
+                level_totals[name] = level_totals.get(
+                    name, torch.zeros_like(value.detach())
+                ) + value.detach()
+        if batch_level is not None:
+            batches_by_curriculum[batch_level] += 1
         batches += 1
         if show_progress and hasattr(iterator, "set_postfix"):
             iterator.set_postfix(loss=f"{float(losses['loss'].detach().cpu()):.4f}")
-    return {
+    result: dict[str, object] = {
         name: (
             float(value.detach().cpu())
             if isinstance(value, torch.Tensor) and "gradient_" in name
@@ -347,6 +488,15 @@ def train_epoch(
         )
         for name, value in totals.items()
     }
+    if collect_curriculum_metrics:
+        result["by_curriculum"] = {
+            level: {
+                name: float(value.detach().cpu()) / max(batches_by_curriculum[level], 1)
+                for name, value in values.items()
+            }
+            for level, values in totals_by_curriculum.items()
+        }
+    return result
 
 
 def gradient_norm_diagnostics(
@@ -531,7 +681,10 @@ def evaluate_epoch(
             zero_decoded: torch.Tensor | None = None
             if source_ablation:
                 permutation = _different_behavior_permutation(
-                    batch.get("exact_behavior_ids", []),
+                    batch.get(
+                        "strong_behavior_ids",
+                        batch.get("exact_behavior_ids", []),
+                    ),
                     trace_distribution.mu.shape[0],
                     device,
                 )
@@ -739,7 +892,12 @@ def evaluate_epoch(
                 )
             for name, distribution in dists.items():
                 embedding_rows[name].append(distribution.mu.detach().cpu())
-            batch_exact_ids = list(batch.get("exact_behavior_ids", []))
+            batch_exact_ids = list(
+                batch.get(
+                    "strong_behavior_ids",
+                    batch.get("exact_behavior_ids", []),
+                )
+            )
             batch_partial_ids = list(batch.get("partial_order_ids", []))
             batch_positive_mask = batch.get("positive_mask")
             batch_candidate_mask = batch.get("contrastive_candidate_mask")
@@ -1170,6 +1328,18 @@ def checkpoint_selection_key(metrics: dict[str, float]) -> tuple[float, ...]:
     )
 
 
+def final_curriculum_checkpoint_key(
+    complex_metrics: dict[str, float],
+    macro_metrics: dict[str, float],
+) -> tuple[float, ...]:
+    """Complex validation is primary; the unweighted macro is the tie-breaker."""
+
+    return (
+        *checkpoint_selection_key(complex_metrics),
+        *checkpoint_selection_key(macro_metrics),
+    )
+
+
 def _effective_rank_tensor(matrix: torch.Tensor) -> torch.Tensor:
     if matrix.shape[0] < 2:
         return matrix.new_tensor(0.0)
@@ -1336,7 +1506,10 @@ class BehaviorFamilyBatchSampler(Sampler[list[int]]):
         self.epoch = 0
         grouped: dict[tuple[str, ...], list[int]] = defaultdict(list)
         for index, sample in enumerate(samples):
-            exact_behavior_id = getattr(sample, "exact_behavior_id", None)
+            exact_behavior_id = (
+                getattr(sample, "strong_behavior_id", None)
+                or getattr(sample, "exact_behavior_id", None)
+            )
             partial_order_id = getattr(sample, "partial_order_id", None)
             if exact_behavior_id is not None and partial_order_id is not None:
                 key = ("strong", str(exact_behavior_id), str(partial_order_id))
@@ -1584,6 +1757,36 @@ def scheduler_monitor_value(
     raise ValueError(f"unsupported scheduler monitor: {monitor}")
 
 
+def macro_average_metrics(
+    metrics_by_curriculum: dict[str, dict[str, float]],
+) -> dict[str, float]:
+    names = set.intersection(
+        *(set(metrics) for metrics in metrics_by_curriculum.values())
+    ) if metrics_by_curriculum else set()
+    return {
+        name: float(np.mean([metrics[name] for metrics in metrics_by_curriculum.values()]))
+        for name in sorted(names)
+        if all(isinstance(metrics[name], (int, float)) for metrics in metrics_by_curriculum.values())
+    }
+
+
+def worst_case_metrics(
+    metrics_by_curriculum: dict[str, dict[str, float]],
+) -> dict[str, float]:
+    macro = macro_average_metrics(metrics_by_curriculum)
+    result: dict[str, float] = {}
+    for name in macro:
+        values = [float(metrics[name]) for metrics in metrics_by_curriculum.values()]
+        lower_is_better = (
+            "loss" in name
+            or "edit" in name
+            or name.endswith("_to_tree")
+            or name.endswith("_reconstruction")
+        )
+        result[name] = max(values) if lower_is_better else min(values)
+    return result
+
+
 def train_synthetic(
     train_config: TrainConfig | None = None,
     synthetic_config: SyntheticConfig | None = None,
@@ -1638,6 +1841,7 @@ def train_from_data_dir(
     device = resolve_device(train_config.device)
     debug(f"Loading metadata from {Path(data_dir) / 'metadata.json'}", enabled=show_progress)
     metadata = load_data_metadata(data_dir)
+    curriculum_mode = metadata.get("schema") == "proc-rosetta.structural-curriculum.v1"
     if int(metadata.get("version", 0)) < 5:
         raise ValueError(
             "data uses a legacy schema without semantic folding and per-modality "
@@ -1645,6 +1849,12 @@ def train_from_data_dir(
         )
     if not bool(metadata.get("exact_behavior_signatures_disjoint", False)):
         raise ValueError("data metadata does not certify signature-disjoint splits")
+    if curriculum_mode and not bool(
+        metadata.get("exact_behaviors_disjoint_across_all_curricula_and_splits", False)
+    ):
+        raise ValueError(
+            "curriculum manifest does not certify behavior-disjoint curricula and splits"
+        )
     synthetic_config = SyntheticConfig.from_dict(metadata.get("synthetic_config", {}))
     debug(
         "Training configuration: "
@@ -1688,39 +1898,96 @@ def train_from_data_dir(
             )
     else:
         model = build_model(train_config, synthetic_config, device)
-    debug("Loading training split", enabled=show_progress)
-    train_loader = build_jsonl_dataloader(
-        split_samples_path(data_dir, "training"),
-        model.tree_tokenizer,
-        model.activity_tokenizer,
-        batch_size=train_config.batch_size,
-        shuffle=True,
-        show_progress=show_progress,
-        group_aware=train_config.group_aware_batches,
-        views_per_family=train_config.views_per_family,
-        seed=train_config.seed,
-        activity_remap_probability=train_config.activity_remap_probability,
-        num_workers=train_config.loader_num_workers,
-        pin_memory=train_config.loader_pin_memory,
-        persistent_workers=train_config.loader_persistent_workers,
-        prefetch_factor=train_config.loader_prefetch_factor,
-    )
-    debug("Loading validation split", enabled=show_progress)
-    validation_loader = build_jsonl_dataloader(
-        split_samples_path(data_dir, "validation"),
-        model.tree_tokenizer,
-        model.activity_tokenizer,
-        batch_size=train_config.batch_size,
-        shuffle=False,
-        show_progress=show_progress,
-        num_workers=train_config.loader_num_workers,
-        pin_memory=train_config.loader_pin_memory,
-        persistent_workers=train_config.loader_persistent_workers,
-        prefetch_factor=train_config.loader_prefetch_factor,
-    )
+    if curriculum_mode:
+        batch_sizes = {
+            "simple": train_config.simple_batch_size or train_config.batch_size,
+            "medium": train_config.medium_batch_size
+            or max(1, round(train_config.batch_size * 0.75)),
+            "complex": train_config.complex_batch_size
+            or max(1, round(train_config.batch_size * 0.50)),
+        }
+        debug("Loading structural-curriculum training splits", enabled=show_progress)
+        train_loaders = {
+            level: build_jsonl_dataloader(
+                split_samples_path(data_dir, "training", level),
+                model.tree_tokenizer,
+                model.activity_tokenizer,
+                batch_size=batch_sizes[level],
+                shuffle=True,
+                show_progress=show_progress,
+                group_aware=train_config.group_aware_batches,
+                views_per_family=train_config.views_per_family,
+                seed=train_config.seed,
+                activity_remap_probability=train_config.activity_remap_probability,
+                num_workers=train_config.loader_num_workers,
+                pin_memory=train_config.loader_pin_memory,
+                persistent_workers=train_config.loader_persistent_workers,
+                prefetch_factor=train_config.loader_prefetch_factor,
+            )
+            for level in CURRICULUM_LEVELS
+        }
+        debug("Loading structural-curriculum validation splits", enabled=show_progress)
+        validation_loaders = {
+            level: build_jsonl_dataloader(
+                split_samples_path(data_dir, "validation", level),
+                model.tree_tokenizer,
+                model.activity_tokenizer,
+                batch_size=batch_sizes[level],
+                shuffle=False,
+                show_progress=show_progress,
+                num_workers=train_config.loader_num_workers,
+                pin_memory=train_config.loader_pin_memory,
+                persistent_workers=train_config.loader_persistent_workers,
+                prefetch_factor=train_config.loader_prefetch_factor,
+            )
+            for level in CURRICULUM_LEVELS
+        }
+        initial_curriculum = structural_curriculum_for_epoch(1, train_config.epochs)
+        train_loader = CurriculumMixtureLoader(
+            train_loaders,
+            dict(initial_curriculum["weights"]),
+            seed=train_config.seed,
+            epoch=1,
+        )
+        validation_loader = validation_loaders["simple"]
+    else:
+        debug("Loading training split", enabled=show_progress)
+        train_loader = build_jsonl_dataloader(
+            split_samples_path(data_dir, "training"),
+            model.tree_tokenizer,
+            model.activity_tokenizer,
+            batch_size=train_config.batch_size,
+            shuffle=True,
+            show_progress=show_progress,
+            group_aware=train_config.group_aware_batches,
+            views_per_family=train_config.views_per_family,
+            seed=train_config.seed,
+            activity_remap_probability=train_config.activity_remap_probability,
+            num_workers=train_config.loader_num_workers,
+            pin_memory=train_config.loader_pin_memory,
+            persistent_workers=train_config.loader_persistent_workers,
+            prefetch_factor=train_config.loader_prefetch_factor,
+        )
+        debug("Loading validation split", enabled=show_progress)
+        validation_loader = build_jsonl_dataloader(
+            split_samples_path(data_dir, "validation"),
+            model.tree_tokenizer,
+            model.activity_tokenizer,
+            batch_size=train_config.batch_size,
+            shuffle=False,
+            show_progress=show_progress,
+            num_workers=train_config.loader_num_workers,
+            pin_memory=train_config.loader_pin_memory,
+            persistent_workers=train_config.loader_persistent_workers,
+            prefetch_factor=train_config.loader_prefetch_factor,
+        )
     stage_training_loader = (
         build_jsonl_dataloader(
-            split_samples_path(data_dir, "training"),
+            split_samples_path(
+                data_dir,
+                "training",
+                "simple" if curriculum_mode else None,
+            ),
             model.tree_tokenizer,
             model.activity_tokenizer,
             batch_size=train_config.batch_size,
@@ -1734,8 +2001,23 @@ def train_from_data_dir(
         if train_config.training_stage == "a"
         else None
     )
-    debug_split("training", train_loader.dataset.samples, len(train_loader), enabled=show_progress)
-    debug_split("validation", validation_loader.dataset.samples, len(validation_loader), enabled=show_progress)
+    if curriculum_mode:
+        for level in CURRICULUM_LEVELS:
+            debug_split(
+                f"training/{level}",
+                train_loaders[level].dataset.samples,
+                len(train_loaders[level]),
+                enabled=show_progress,
+            )
+            debug_split(
+                f"validation/{level}",
+                validation_loaders[level].dataset.samples,
+                len(validation_loaders[level]),
+                enabled=show_progress,
+            )
+    else:
+        debug_split("training", train_loader.dataset.samples, len(train_loader), enabled=show_progress)
+        debug_split("validation", validation_loader.dataset.samples, len(validation_loader), enabled=show_progress)
     optimizer = build_optimizer(model, train_config)
     scheduler = build_lr_scheduler(optimizer, train_config)
     ema = ModelEMA(train_config.ema_decay) if train_config.use_ema else None
@@ -1824,12 +2106,93 @@ def train_from_data_dir(
         name: best_checkpoint_for(checkpoint_path, name)
         for name in ("loss", "trace", "edit", "latent")
     }
+    structural_checkpoint_paths = {
+        level: best_checkpoint_for(checkpoint_path, level)
+        for level in CURRICULUM_LEVELS
+    }
+    best_structural_stage_metrics = {level: float("inf") for level in CURRICULUM_LEVELS}
+    best_final_curriculum_key = (float("-inf"),) * 8
+    for history_row in history:
+        level = str(history_row.get("structural_curriculum_stage", ""))
+        metric = history_row.get("early_stopping_metric")
+        if level in best_structural_stage_metrics and isinstance(metric, (int, float)):
+            best_structural_stage_metrics[level] = min(
+                best_structural_stage_metrics[level], float(metric)
+            )
+        stored_final_key = history_row.get("final_checkpoint_selection_key")
+        if (
+            level == "complex"
+            and isinstance(stored_final_key, (list, tuple))
+            and len(stored_final_key) == 8
+        ):
+            best_final_curriculum_key = max(
+                best_final_curriculum_key,
+                tuple(float(value) for value in stored_final_key),
+            )
     best_objectives = best_objectives_from_history(history)
     metrics_csv_path = Path(metrics_csv_path)
     write_metrics_csv(metrics_csv_path, history)
     debug(f"Per-epoch metrics CSV: {metrics_csv_path}", enabled=show_progress)
+    previous_structural_stage_value = (
+        history[-1].get("structural_curriculum_stage")
+        if curriculum_mode and history
+        else None
+    )
+    previous_structural_stage = (
+        str(previous_structural_stage_value)
+        if previous_structural_stage_value in CURRICULUM_LEVELS
+        else None
+    )
+    prior_complex_epochs = [
+        int(row["epoch"])
+        for row in history
+        if row.get("structural_curriculum_stage") == "complex"
+        and isinstance(row.get("epoch"), (int, float))
+    ]
+    complex_stage_start_epoch = (
+        min(prior_complex_epochs)
+        if prior_complex_epochs
+        else max(1, math.ceil(0.40 * train_config.epochs) + 1)
+    )
     for epoch in range(start_epoch, train_config.epochs + 1):
         epoch_start = perf_counter()
+        curriculum_state = (
+            structural_curriculum_for_epoch(
+                epoch,
+                train_config.epochs,
+                minimum_stage=previous_structural_stage,
+            )
+            if curriculum_mode
+            else {"name": "legacy", "weights": {}}
+        )
+        structural_stage = str(curriculum_state["name"])
+        stage_transition = (
+            curriculum_mode
+            and previous_structural_stage is not None
+            and structural_stage != previous_structural_stage
+        )
+        if curriculum_mode:
+            train_loader = CurriculumMixtureLoader(
+                train_loaders,
+                dict(curriculum_state["weights"]),
+                seed=train_config.seed,
+                epoch=epoch,
+            )
+        if stage_transition:
+            scheduler = build_lr_scheduler(optimizer, train_config)
+            epochs_without_improvement = 0
+            best_early_stopping_metric = float("inf")
+            if structural_stage == "complex":
+                best_validation_loss = float("inf")
+                best_validation_score = float("-inf")
+                best_validation_key = (float("-inf"),) * 4
+                best_objectives = best_objectives_from_history([])
+                best_final_curriculum_key = (float("-inf"),) * 8
+            debug(
+                f"Structural curriculum transition to {structural_stage}; reset "
+                "scheduler plateau and early-stopping patience state.",
+                enabled=show_progress,
+            )
         debug(f"Starting epoch {epoch}/{train_config.epochs}", enabled=show_progress)
         epoch_weights = loss_weights_from_config(train_config, epoch=epoch)
         training_metrics = train_epoch(
@@ -1842,34 +2205,78 @@ def train_from_data_dir(
             show_progress=show_progress,
             train_config=train_config,
             ema=ema,
+            collect_curriculum_metrics=curriculum_mode,
+        )
+        training_by_curriculum = (
+            dict(training_metrics.pop("by_curriculum", {}))
+            if curriculum_mode
+            else {}
         )
         debug(
             f"Epoch {epoch} training complete: {format_metrics(training_metrics)}",
             enabled=show_progress,
         )
-        ordinary_validation_metrics = evaluate_epoch(
-            model,
-            validation_loader,
-            device,
-            weights=evaluation_weights,
-            epoch=epoch,
-            show_progress=show_progress,
-            compute_discovery_metrics=True,
-        )
-        ema_validation_metrics: dict[str, float] | None = None
-        validation_weights = "ordinary"
-        if ema is not None and ema.initialized:
-            with ema.average_parameters(model):
-                ema_validation_metrics = evaluate_epoch(
+        if curriculum_mode:
+            ordinary_validation_by_curriculum = {
+                level: evaluate_epoch(
                     model,
-                    validation_loader,
+                    validation_loaders[level],
                     device,
                     weights=evaluation_weights,
                     epoch=epoch,
                     show_progress=show_progress,
-                    progress_desc=f"Epoch {epoch} EMA validation",
+                    progress_desc=f"Epoch {epoch} {level} validation",
                     compute_discovery_metrics=True,
                 )
+                for level in CURRICULUM_LEVELS
+            }
+            ordinary_validation_metrics = ordinary_validation_by_curriculum[
+                structural_stage
+            ]
+        else:
+            ordinary_validation_by_curriculum = {}
+            ordinary_validation_metrics = evaluate_epoch(
+                model,
+                validation_loader,
+                device,
+                weights=evaluation_weights,
+                epoch=epoch,
+                show_progress=show_progress,
+                compute_discovery_metrics=True,
+            )
+        ema_validation_metrics: dict[str, float] | None = None
+        validation_weights = "ordinary"
+        if ema is not None and ema.initialized:
+            with ema.average_parameters(model):
+                if curriculum_mode:
+                    ema_validation_by_curriculum = {
+                        level: evaluate_epoch(
+                            model,
+                            validation_loaders[level],
+                            device,
+                            weights=evaluation_weights,
+                            epoch=epoch,
+                            show_progress=show_progress,
+                            progress_desc=f"Epoch {epoch} EMA {level} validation",
+                            compute_discovery_metrics=True,
+                        )
+                        for level in CURRICULUM_LEVELS
+                    }
+                    ema_validation_metrics = ema_validation_by_curriculum[
+                        structural_stage
+                    ]
+                else:
+                    ema_validation_by_curriculum = {}
+                    ema_validation_metrics = evaluate_epoch(
+                        model,
+                        validation_loader,
+                        device,
+                        weights=evaluation_weights,
+                        epoch=epoch,
+                        show_progress=show_progress,
+                        progress_desc=f"Epoch {epoch} EMA validation",
+                        compute_discovery_metrics=True,
+                    )
             ordinary_monitor = scheduler_monitor_value(
                 ordinary_validation_metrics,
                 train_config.scheduler_monitor,
@@ -1884,7 +2291,20 @@ def train_from_data_dir(
             else:
                 validation_metrics = ordinary_validation_metrics
         else:
+            ema_validation_by_curriculum = {}
             validation_metrics = ordinary_validation_metrics
+        if curriculum_mode:
+            validation_by_curriculum = (
+                ema_validation_by_curriculum
+                if validation_weights == "ema"
+                else ordinary_validation_by_curriculum
+            )
+            validation_macro = macro_average_metrics(validation_by_curriculum)
+            validation_worst_case = worst_case_metrics(validation_by_curriculum)
+        else:
+            validation_by_curriculum = {}
+            validation_macro = {}
+            validation_worst_case = {}
         run_stage_gate = (
             stage_training_loader is not None
             and (
@@ -1929,6 +2349,26 @@ def train_from_data_dir(
             validation_metrics,
             train_config.scheduler_monitor,
         )
+        structural_stage_improved = (
+            curriculum_mode
+            and monitor_value < best_structural_stage_metrics[structural_stage]
+        )
+        if structural_stage_improved:
+            best_structural_stage_metrics[structural_stage] = monitor_value
+        curriculum_regression_from_stage_best = (
+            {
+                level: scheduler_monitor_value(
+                    validation_by_curriculum[level],
+                    train_config.scheduler_monitor,
+                )
+                - best_structural_stage_metrics[level]
+                for level in ("simple", "medium")
+                if curriculum_mode
+                and math.isfinite(best_structural_stage_metrics[level])
+            }
+            if curriculum_mode
+            else {}
+        )
         scheduler.step(monitor_value)
         new_lr = optimizer.param_groups[0]["lr"]
         if new_lr < current_lr:
@@ -1970,6 +2410,18 @@ def train_from_data_dir(
                     "weights": objective_candidate_weights[name],
                 }
         improved = objective_improvements["loss"]
+        final_checkpoint_selection_key: tuple[float, ...] | None = None
+        final_checkpoint_improved = improved
+        if curriculum_mode and structural_stage == "complex":
+            final_checkpoint_selection_key = final_curriculum_checkpoint_key(
+                validation_by_curriculum["complex"],
+                validation_macro,
+            )
+            final_checkpoint_improved = (
+                final_checkpoint_selection_key > best_final_curriculum_key
+            )
+            if final_checkpoint_improved:
+                best_final_curriculum_key = final_checkpoint_selection_key
         if improved:
             best_validation_loss = float(objective_values["loss"])
         if validation_key > best_validation_key:
@@ -1997,6 +2449,16 @@ def train_from_data_dir(
         row: dict[str, object] = {
             "epoch": epoch,
             "training": training_metrics,
+            "structural_curriculum_stage": structural_stage,
+            "curriculum_sampling_weights": dict(curriculum_state["weights"]),
+            "training_by_curriculum": training_by_curriculum,
+            "validation_by_curriculum": validation_by_curriculum,
+            "validation_macro": validation_macro,
+            "validation_worst_case": validation_worst_case,
+            "structural_stage_transition": stage_transition,
+            "curriculum_regression_from_stage_best": (
+                curriculum_regression_from_stage_best
+            ),
             "validation": validation_metrics,
             "validation_ordinary": ordinary_validation_metrics,
             "validation_ema": ema_validation_metrics,
@@ -2013,10 +2475,15 @@ def train_from_data_dir(
             "best_validation_loss": best_validation_loss,
             "best_validation_score": best_validation_score,
             "best_validation_key": list(best_validation_key),
+            "final_checkpoint_selection_key": (
+                None
+                if final_checkpoint_selection_key is None
+                else list(final_checkpoint_selection_key)
+            ),
             "best_objectives": {
                 name: dict(details) for name, details in best_objectives.items()
             },
-            "is_best": improved,
+            "is_best": final_checkpoint_improved,
             "epochs_without_improvement": epochs_without_improvement,
             "stage_acceptance": acceptance,
             "loss_weights": asdict(epoch_weights),
@@ -2029,6 +2496,7 @@ def train_from_data_dir(
                 for name, values in resume_policy_overrides.items()
             }
         history.append(row)
+        previous_structural_stage = structural_stage
         save_checkpoint(
             checkpoint_path=checkpoint_path,
             model=model,
@@ -2047,6 +2515,32 @@ def train_from_data_dir(
             device=device,
             ema=ema,
         )
+        if structural_stage_improved:
+            stage_weight_context = (
+                ema.average_parameters(model)
+                if validation_weights == "ema" and ema is not None
+                else nullcontext()
+            )
+            with stage_weight_context:
+                save_checkpoint(
+                    checkpoint_path=structural_checkpoint_paths[structural_stage],
+                    model=model,
+                    train_config=train_config,
+                    synthetic_config=synthetic_config,
+                    history=history,
+                    epoch=epoch,
+                    best_validation_loss=best_validation_loss,
+                    best_validation_score=best_validation_score,
+                    best_validation_key=best_validation_key,
+                    best_objectives=best_objectives,
+                    is_best=True,
+                    checkpoint_objective=f"structural_{structural_stage}",
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    train_loader=train_loader,
+                    device=device,
+                    ema=ema,
+                )
         for objective, objective_improved in objective_improvements.items():
             if not objective_improved:
                 continue
@@ -2075,7 +2569,9 @@ def train_from_data_dir(
                     device=device,
                     ema=ema,
                 )
-                if objective == "loss":
+                if objective == "loss" and not (
+                    curriculum_mode and structural_stage == "complex"
+                ):
                     save_checkpoint(
                         checkpoint_path=best_checkpoint_path,
                         model=model,
@@ -2095,6 +2591,36 @@ def train_from_data_dir(
                         device=device,
                         ema=ema,
                     )
+        if (
+            curriculum_mode
+            and structural_stage == "complex"
+            and final_checkpoint_improved
+        ):
+            final_weight_context = (
+                ema.average_parameters(model)
+                if validation_weights == "ema" and ema is not None
+                else nullcontext()
+            )
+            with final_weight_context:
+                save_checkpoint(
+                    checkpoint_path=best_checkpoint_path,
+                    model=model,
+                    train_config=train_config,
+                    synthetic_config=synthetic_config,
+                    history=history,
+                    epoch=epoch,
+                    best_validation_loss=best_validation_loss,
+                    best_validation_score=best_validation_score,
+                    best_validation_key=best_validation_key,
+                    best_objectives=best_objectives,
+                    is_best=True,
+                    checkpoint_objective="complex_primary_macro_tiebreak",
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    train_loader=train_loader,
+                    device=device,
+                    ema=ema,
+                )
         append_metrics_csv(metrics_csv_path, row)
         epoch_checkpoint_path, epoch_metrics_path = save_epoch_snapshot(
             checkpoint_path=checkpoint_path,
@@ -2106,7 +2632,9 @@ def train_from_data_dir(
             f"Epoch {epoch} checkpoint saved to {checkpoint_path}; "
             f"epoch snapshot: {epoch_checkpoint_path.parent}; "
             f"metrics: {epoch_metrics_path.name}; "
-            f"best checkpoint: {best_checkpoint_path if improved else 'unchanged'} ({elapsed:.1f}s)",
+            f"best checkpoint: "
+            f"{best_checkpoint_path if final_checkpoint_improved else 'unchanged'} "
+            f"({elapsed:.1f}s)",
             enabled=show_progress,
         )
         if train_config.training_stage == "a" and bool(acceptance["passed"]):
@@ -2118,6 +2646,14 @@ def train_from_data_dir(
         if (
             train_config.early_stopping_patience > 0
             and epochs_without_improvement >= train_config.early_stopping_patience
+            and (
+                not curriculum_mode
+                or (
+                    structural_stage == "complex"
+                    and epoch - complex_stage_start_epoch + 1
+                    >= train_config.min_complex_stage_epochs
+                )
+            )
         ):
             debug(
                 f"Early stopping after {epoch} epochs; validation loss did not improve by at least "
@@ -2129,7 +2665,7 @@ def train_from_data_dir(
     if train_config.restore_best_weights and best_checkpoint_path.exists():
         restore_model_weights(model, best_checkpoint_path, device)
         debug(
-            f"Restored best validation-loss weights from {best_checkpoint_path} before return.",
+            f"Restored selected comparison weights from {best_checkpoint_path} before return.",
             enabled=show_progress,
         )
     return model, history
@@ -2218,16 +2754,43 @@ def evaluate_split_from_checkpoint(
     batch_size: int = 16,
     device: str | None = None,
     show_progress: bool = False,
+    curriculum: str | None = None,
 ) -> dict[str, float]:
+    dataset = JsonlProcessDataset(
+        split_samples_path(data_dir, split, curriculum),
+        show_progress=show_progress,
+    )
+    return evaluate_samples_from_checkpoint(
+        checkpoint_path=checkpoint_path,
+        samples=dataset.samples,
+        batch_size=batch_size,
+        device=device,
+        show_progress=show_progress,
+        progress_desc=f"{split.title()} loss",
+    )
+
+
+def evaluate_samples_from_checkpoint(
+    checkpoint_path: str | Path,
+    samples,
+    batch_size: int = 16,
+    device: str | None = None,
+    show_progress: bool = False,
+    progress_desc: str = "Selected samples loss",
+) -> dict[str, float]:
+    """Evaluate the exact in-memory rows selected by the caller."""
+
     torch_device = resolve_device(device)
     model, checkpoint = load_checkpoint(checkpoint_path, torch_device)
     checkpoint_train_config = train_config_from_checkpoint(checkpoint, torch_device)
-    loader = build_jsonl_dataloader(
-        split_samples_path(data_dir, split),
-        model.tree_tokenizer,
-        model.activity_tokenizer,
+    loader = DataLoader(
+        list(samples),
         batch_size=batch_size,
         shuffle=False,
+        collate_fn=ProcessBatchCollator(
+            model.tree_tokenizer,
+            model.activity_tokenizer,
+        ),
     )
     return evaluate_epoch(
         model,
@@ -2235,7 +2798,7 @@ def evaluate_split_from_checkpoint(
         torch_device,
         weights=loss_weights_from_checkpoint(checkpoint, checkpoint_train_config),
         show_progress=show_progress,
-        progress_desc=f"{split.title()} loss",
+        progress_desc=progress_desc,
         compute_discovery_metrics=True,
     )
 
@@ -2588,6 +3151,14 @@ def save_checkpoint(
         "semantic_latent_stochastic": train_config.semantic_latent_mode != "deterministic",
         "is_best": is_best,
         "checkpoint_objective": checkpoint_objective,
+        "structural_curriculum_state": (
+            {
+                "stage": history[-1].get("structural_curriculum_stage"),
+                "sampling_weights": history[-1].get("curriculum_sampling_weights", {}),
+            }
+            if history
+            else None
+        ),
         "ema_state_dict": (
             None if ema is None or not ema.initialized else ema.state_dict()
         ),
@@ -2698,7 +3269,14 @@ def restore_rng_state(state: dict[str, object], device: torch.device) -> bool:
     return same_device_type and python_state is not None and isinstance(cpu_state, torch.Tensor)
 
 
-def capture_training_loader_state(train_loader: DataLoader) -> dict[str, object]:
+def capture_training_loader_state(train_loader) -> dict[str, object]:
+    if isinstance(train_loader, CurriculumMixtureLoader):
+        return {
+            "curriculum_loaders": {
+                level: capture_training_loader_state(loader)
+                for level, loader in train_loader.loaders.items()
+            }
+        }
     state: dict[str, object] = {}
     batch_sampler = getattr(train_loader, "batch_sampler", None)
     if hasattr(batch_sampler, "epoch"):
@@ -2710,8 +3288,21 @@ def capture_training_loader_state(train_loader: DataLoader) -> dict[str, object]
 
 
 def restore_training_loader_state(
-    train_loader: DataLoader, state: dict[str, object], completed_epoch: int
+    train_loader, state: dict[str, object], completed_epoch: int
 ) -> bool:
+    if isinstance(train_loader, CurriculumMixtureLoader):
+        stored = state.get("curriculum_loaders", {})
+        if not isinstance(stored, dict):
+            return False
+        return all(
+            isinstance(stored.get(level), dict)
+            and restore_training_loader_state(
+                loader,
+                stored[level],
+                completed_epoch,
+            )
+            for level, loader in train_loader.loaders.items()
+        )
     restored = True
     batch_sampler = getattr(train_loader, "batch_sampler", None)
     if hasattr(batch_sampler, "epoch"):

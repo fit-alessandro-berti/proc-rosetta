@@ -158,6 +158,12 @@ class BehaviorFamily:
 
 
 @dataclass(frozen=True)
+class FamilyGenerationPlan:
+    motif: str
+    forced_root_operator: NodeKind | None = None
+
+
+@dataclass(frozen=True)
 class _RuntimeVariant:
     representation_kind: str
     net: Any
@@ -249,12 +255,62 @@ def motif_quota_plan(
     return plan, quotas, minimum, meets_minimum
 
 
+def allocate_operator_quotas(
+    count: int,
+    probabilities: dict[str, float],
+) -> dict[str, int]:
+    """Largest-remainder allocation used for auditable root frequencies."""
+
+    raw = {kind.value: count * float(probabilities[kind.value]) for kind in _operator_kinds()}
+    quotas = {name: int(value) for name, value in raw.items()}
+    remaining = count - sum(quotas.values())
+    order = sorted(raw, key=lambda name: (-(raw[name] - quotas[name]), name))
+    for name in order[:remaining]:
+        quotas[name] += 1
+    return quotas
+
+
+def family_generation_plan(
+    family_count: int,
+    config: Any,
+    seed: int,
+    split: str,
+) -> tuple[list[FamilyGenerationPlan], dict[str, int]]:
+    motif_plan, _, _, _ = motif_quota_plan(family_count, config, seed, split)
+    ordinary_count = sum(motif == "ordinary_tree" for motif in motif_plan)
+    if int(getattr(config, "curriculum_phase", 3)) < 3:
+        return [FamilyGenerationPlan(motif=motif) for motif in motif_plan], {}
+    root_quotas = allocate_operator_quotas(
+        ordinary_count,
+        dict(getattr(config, "root_operator_probabilities")),
+    )
+    roots = [
+        NodeKind(name)
+        for name in (kind.value for kind in _operator_kinds())
+        for _ in range(root_quotas[name])
+    ]
+    random.Random(stable_seed(seed, split, "root-quota-plan")).shuffle(roots)
+    root_iterator = iter(roots)
+    return [
+        FamilyGenerationPlan(
+            motif=motif,
+            forced_root_operator=(next(root_iterator) if motif == "ordinary_tree" else None),
+        )
+        for motif in motif_plan
+    ], root_quotas
+
+
+def _operator_kinds() -> tuple[NodeKind, ...]:
+    return (NodeKind.SEQ, NodeKind.XOR, NodeKind.AND, NodeKind.LOOP)
+
+
 def generate_behavior_family(
     config: Any,
     family_index: int,
     seed: int,
     split: str = "training",
     motif: str | None = None,
+    forced_root_operator: NodeKind | None = None,
 ) -> BehaviorFamily:
     family_seed = stable_seed(seed, split, family_index, "family")
     seed_bundle = {
@@ -265,6 +321,12 @@ def generate_behavior_family(
         "noise": stable_seed(family_seed, "noise"),
     }
     rng = random.Random(seed_bundle["model"])
+    configured_operator_probabilities = dict(
+        getattr(config, "operator_probabilities")
+    )
+    configured_root_operator_probabilities = dict(
+        getattr(config, "root_operator_probabilities")
+    )
     if motif is None:
         motif = _weighted_choice(rng, _motif_weights(config))
     elif motif not in MOTIF_KINDS:
@@ -278,7 +340,14 @@ def generate_behavior_family(
     elif motif == "m_nonfreechoice":
         tree, runtime_variants = _m_nonfreechoice_family(behavior_id)
     else:
-        tree, runtime_variants = _ordinary_tree_family(config, rng, behavior_id)
+        tree, runtime_variants, generation_provenance = _ordinary_tree_family(
+            config,
+            rng,
+            behavior_id,
+            forced_root_operator=forced_root_operator,
+        )
+    if motif != "ordinary_tree":
+        generation_provenance = {}
     ordinary_loop_tree = motif == "ordinary_tree" and _tree_contains_kind(
         tree, NodeKind.LOOP
     )
@@ -295,6 +364,20 @@ def generate_behavior_family(
             max_nodes=int(getattr(config, "motif_context_max_nodes", 12)),
         )
     tree = fold_process_tree(tree)
+    from proc_rosetta.synthetic import tree_complexity
+
+    complexity_level = str(getattr(config, "complexity_level", "complex"))
+    complexity_role = "ordinary_tree" if motif == "ordinary_tree" else "anchor_motif"
+    folded_complexity = tree_complexity(tree)
+    if motif != "ordinary_tree":
+        generation_provenance = {
+            "raw_complexity": folded_complexity,
+            "folded_complexity": folded_complexity,
+            "operator_draws": {"root": None, "non_root": {}},
+        }
+    canonical_tree_hash = sha256(
+        repr(tree.canonicalize_activity_labels().canonical_key()).encode("utf-8")
+    ).hexdigest()
     family_label_mapping = tree.activity_label_mapping()
     tree = tree.relabel(family_label_mapping)
     runtime_variants = tuple(
@@ -437,6 +520,14 @@ def generate_behavior_family(
                 "structural_context": context_metadata,
                 "trace_pool_source": "process_tree_playout",
                 "playout_trace_count": playout_count,
+                "complexity_level": complexity_level,
+                "complexity_role": complexity_role,
+                "canonical_tree_hash": canonical_tree_hash,
+                "expected_operator_probabilities": configured_operator_probabilities,
+                "expected_root_operator_probabilities": (
+                    configured_root_operator_probabilities
+                ),
+                **generation_provenance,
             },
         )
 
@@ -537,6 +628,14 @@ def generate_behavior_family(
                 False if motif == "concurrent_vs_interleaved" else None
             ),
             "structural_context": context_metadata,
+            "complexity_level": complexity_level,
+            "complexity_role": complexity_role,
+            "canonical_tree_hash": canonical_tree_hash,
+            "expected_operator_probabilities": configured_operator_probabilities,
+            "expected_root_operator_probabilities": (
+                configured_root_operator_probabilities
+            ),
+            **generation_provenance,
         },
     )
 
@@ -616,6 +715,13 @@ def flatten_behavior_family(
     )
 
     rows: list[ProcessSample] = []
+    strong_behavior_id = (
+        family.exact_behavior_id
+        if family.exact_behavior_id is not None
+        else family.behavior_id
+        if family.equivalence_certificate.status == "isomorphic"
+        else None
+    )
     for log_view in family.log_views:
         # Relabel every modality of this view with the labels an external log
         # would receive: A0, A1, ... in first-seen trace order.
@@ -632,7 +738,7 @@ def flatten_behavior_family(
                 view_traces,
                 view_graph,
             )
-            if family.exact_behavior_id is None:
+            if strong_behavior_id is None:
                 partial_order_id = None
                 partial_order_kind = None
             elif variant.partial_order_equivalent is False:
@@ -642,7 +748,7 @@ def flatten_behavior_family(
                 partial_order_id = f"{family.exact_behavior_id}:partial-order:concurrent"
                 partial_order_kind = "concurrent"
             else:
-                partial_order_id = f"{family.exact_behavior_id}:partial-order:shared"
+                partial_order_id = f"{strong_behavior_id}:partial-order:shared"
                 partial_order_kind = None
             row_signature = behavior_signature_with_partial_order(
                 family.behavior_signature,
@@ -655,6 +761,13 @@ def flatten_behavior_family(
                     petri_graph=view_graph,
                     equivalence_id=family.behavior_id,
                     exact_behavior_id=family.exact_behavior_id,
+                    strong_behavior_id=strong_behavior_id,
+                    complexity_level=str(
+                        family.metadata.get("complexity_level", "complex")
+                    ),
+                    complexity_role=str(
+                        family.metadata.get("complexity_role", "ordinary_tree")
+                    ),
                     behavior_signature=row_signature,
                     exact_trace_language_id=family.exact_trace_language_id,
                     partial_order_id=partial_order_id,
@@ -684,6 +797,7 @@ def flatten_behavior_family(
                         "structural_statistics": variant.structural_statistics,
                         "equivalence_certificate": family.equivalence_certificate.to_dict(),
                         "exact_behavior_id": family.exact_behavior_id,
+                        "strong_behavior_id": strong_behavior_id,
                         "exact_trace_language_id": family.exact_trace_language_id,
                         "partial_order_id": partial_order_id,
                         "structural_motif_id": str(
@@ -702,6 +816,7 @@ def generate_family_samples(
     split: str,
     progress_update: Callable[[int], None] | None = None,
     excluded_exact_behavior_ids: set[str] | None = None,
+    excluded_canonical_tree_hashes: set[str] | None = None,
     num_workers: int | None = None,
 ) -> list[Any]:
     if count < 0:
@@ -720,31 +835,38 @@ def generate_family_samples(
                 "or class_coverage mode 'best_effort'"
             )
     family_count = (count + rows_per_family - 1) // rows_per_family
-    motif_plan, _, _, _ = motif_quota_plan(family_count, config, seed, split)
+    generation_plan, _ = family_generation_plan(family_count, config, seed, split)
     if num_workers is not None:
         return _generate_family_samples_parallel(
             count=count,
             config=config,
             seed=seed,
             split=split,
-            motif_plan=motif_plan,
+            generation_plan=generation_plan,
             rows_per_family=rows_per_family,
             num_workers=num_workers,
             progress_update=progress_update,
             excluded_exact_behavior_ids=excluded_exact_behavior_ids,
+            excluded_canonical_tree_hashes=excluded_canonical_tree_hashes,
         )
     rows: list[Any] = []
     seen_exact_behavior_ids = set(excluded_exact_behavior_ids or ())
+    seen_tree_hashes = set(excluded_canonical_tree_hashes or ())
     family_index = 0
     attempts = 0
     max_attempts = max(100, count * 20)
-    for planned_motif in motif_plan:
+    for planned in generation_plan:
         accepted = False
         while not accepted and attempts < max_attempts:
             attempts += 1
             try:
                 family = generate_behavior_family(
-                    config, family_index, seed, split=split, motif=planned_motif
+                    config,
+                    family_index,
+                    seed,
+                    split=split,
+                    motif=planned.motif,
+                    forced_root_operator=planned.forced_root_operator,
                 )
             except (RuntimeError, ValueError):
                 family_index += 1
@@ -753,13 +875,16 @@ def generate_family_samples(
             if (
                 split == "training"
                 and bool(getattr(config, "exact_equivalence_only_for_training", True))
-                and family.equivalence_certificate.status != "exact"
+                and family.equivalence_certificate.status not in {"exact", "isomorphic"}
             ):
                 continue
             if (
                 family.exact_behavior_id is not None
                 and family.exact_behavior_id in seen_exact_behavior_ids
             ):
+                continue
+            tree_hash = str(family.metadata.get("canonical_tree_hash", ""))
+            if tree_hash and tree_hash in seen_tree_hashes:
                 continue
             family_rows = flatten_behavior_family(
                 family,
@@ -771,6 +896,10 @@ def generate_family_samples(
                 seen_exact_behavior_ids.add(family.exact_behavior_id)
                 if excluded_exact_behavior_ids is not None:
                     excluded_exact_behavior_ids.add(family.exact_behavior_id)
+            if tree_hash:
+                seen_tree_hashes.add(tree_hash)
+                if excluded_canonical_tree_hashes is not None:
+                    excluded_canonical_tree_hashes.add(tree_hash)
             if progress_update is not None:
                 progress_update(len(accepted_rows))
             accepted = True
@@ -787,18 +916,20 @@ def _generate_family_samples_parallel(
     config: Any,
     seed: int,
     split: str,
-    motif_plan: Sequence[str],
+    generation_plan: Sequence[FamilyGenerationPlan],
     rows_per_family: int,
     num_workers: int,
     progress_update: Callable[[int], None] | None,
     excluded_exact_behavior_ids: set[str] | None,
+    excluded_canonical_tree_hashes: set[str] | None,
 ) -> list[Any]:
     if num_workers < 1:
         raise ValueError("num_workers must be positive")
 
     seen_exact_behavior_ids = set(excluded_exact_behavior_ids or ())
-    accepted_rows: list[list[Any] | None] = [None] * len(motif_plan)
-    unresolved = list(range(len(motif_plan)))
+    seen_tree_hashes = set(excluded_canonical_tree_hashes or ())
+    accepted_rows: list[list[Any] | None] = [None] * len(generation_plan)
+    unresolved = list(range(len(generation_plan)))
     next_family_index = 0
     attempts = 0
     max_attempts = max(100, count * 20)
@@ -814,7 +945,7 @@ def _generate_family_samples_parallel(
                 family_indices,
                 repeat(seed),
                 repeat(split),
-                (motif_plan[slot] for slot in slots),
+                (generation_plan[slot] for slot in slots),
             )
             attempts += batch_size
             next_family_index += batch_size
@@ -827,8 +958,12 @@ def _generate_family_samples_parallel(
                 if (
                     split == "training"
                     and bool(getattr(config, "exact_equivalence_only_for_training", True))
-                    and family.equivalence_certificate.status != "exact"
+                    and family.equivalence_certificate.status not in {"exact", "isomorphic"}
                 ):
+                    retry_slots.append(slot)
+                    continue
+                tree_hash = str(family.metadata.get("canonical_tree_hash", ""))
+                if tree_hash and tree_hash in seen_tree_hashes:
                     retry_slots.append(slot)
                     continue
                 if (
@@ -849,6 +984,10 @@ def _generate_family_samples_parallel(
                     seen_exact_behavior_ids.add(family.exact_behavior_id)
                     if excluded_exact_behavior_ids is not None:
                         excluded_exact_behavior_ids.add(family.exact_behavior_id)
+                if tree_hash:
+                    seen_tree_hashes.add(tree_hash)
+                    if excluded_canonical_tree_hashes is not None:
+                        excluded_canonical_tree_hashes.add(tree_hash)
                 if progress_update is not None:
                     progress_update(len(rows_for_slot))
             unresolved = retry_slots
@@ -864,7 +1003,7 @@ def _generate_behavior_family_candidate(
     family_index: int,
     seed: int,
     split: str,
-    motif: str,
+    plan: FamilyGenerationPlan,
 ) -> BehaviorFamily | None:
     try:
         return generate_behavior_family(
@@ -872,7 +1011,8 @@ def _generate_behavior_family_candidate(
             family_index,
             seed,
             split=split,
-            motif=motif,
+            motif=plan.motif,
+            forced_root_operator=plan.forced_root_operator,
         )
     except (RuntimeError, ValueError):
         return None
@@ -1265,17 +1405,21 @@ def _compose_runtime_variants(
     return net, Marking({source: 1}), Marking({sink: 1})
 
 
-def _ordinary_tree_family(config: Any, rng: random.Random, behavior_id: str):
+def _ordinary_tree_family(
+    config: Any,
+    rng: random.Random,
+    behavior_id: str,
+    *,
+    forced_root_operator: NodeKind | None = None,
+):
     # Local import avoids coupling the neutral family structures to the legacy API.
-    from proc_rosetta.synthetic import generate_process_tree
+    from proc_rosetta.synthetic import generate_process_tree_with_provenance
 
-    generation_config = config
-    if bool(getattr(config, "exact_equivalence_only_for_training", False)):
-        generation_config = replace(
-            config,
-            curriculum_phase=min(int(getattr(config, "curriculum_phase", 3)), 2),
-        )
-    tree = generate_process_tree(generation_config, rng)
+    tree, provenance = generate_process_tree_with_provenance(
+        config,
+        rng,
+        forced_root_operator=forced_root_operator,
+    )
     bundle = tree_to_petri_net(tree)
     renamed = _clone_isomorphic(
         bundle.net, bundle.initial_marking, bundle.final_marking, f"{behavior_id}-renamed"
@@ -1295,7 +1439,7 @@ def _ordinary_tree_family(config: Any, rng: random.Random, behavior_id: str):
             renamed[2],
             ("process_tree_to_petri", "isomorphic_renaming"),
         ),
-    )
+    ), provenance
 
 
 def _relabel_runtime_variant(

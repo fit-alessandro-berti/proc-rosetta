@@ -5,17 +5,21 @@ import json
 import os
 import random
 import shutil
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Sequence
 
 import torch
+import numpy as np
 from torch.utils.data import Dataset
 
 from proc_rosetta.pm4py_bridge import PetriGraph
 from proc_rosetta.synthetic import (
+    CURRICULUM_LEVELS,
+    COMPLEXITY_PROFILES,
     ProcessSample,
     SyntheticConfig,
+    config_for_curriculum,
     decoder_target_trees_for_sample,
     generate_samples,
 )
@@ -24,6 +28,7 @@ from proc_rosetta.tokenizers import ActivityTokenizer, TreeTokenizer
 SPLIT_NAMES = ("training", "validation", "test")
 SAMPLES_FILENAME = "samples.jsonl"
 METADATA_FILENAME = "metadata.json"
+CURRICULUM_MANIFEST_FILENAME = "curriculum_manifest.json"
 
 
 @dataclass(frozen=True)
@@ -116,9 +121,12 @@ class ProcessBatchCollator:
     def __call__(self, samples: Sequence[ProcessSample]) -> dict[str, Any]:
         equivalence_ids = [sample.equivalence_id for sample in samples]
         exact_behavior_ids = [sample.exact_behavior_id for sample in samples]
+        strong_behavior_ids = [
+            sample.strong_behavior_id or sample.exact_behavior_id for sample in samples
+        ]
         partial_order_ids = [sample.partial_order_id for sample in samples]
         signatures = self._behavior_signatures(samples)
-        exact_ids = self._categorical_ids(exact_behavior_ids)
+        exact_ids = self._categorical_ids(strong_behavior_ids)
         partial_ids = self._categorical_ids(partial_order_ids)
         exact_valid = exact_ids.ge(0)
         partial_valid = partial_ids.ge(0)
@@ -147,6 +155,8 @@ class ProcessBatchCollator:
             "petri": self._petri_graphs([sample.petri_graph for sample in samples]),
             "equivalence_ids": equivalence_ids,
             "exact_behavior_ids": exact_behavior_ids,
+            "strong_behavior_ids": strong_behavior_ids,
+            "complexity_levels": [sample.complexity_level for sample in samples],
             "exact_trace_language_ids": [
                 sample.exact_trace_language_id for sample in samples
             ],
@@ -443,10 +453,20 @@ class ProcessBatchCollator:
         }
 
 
-def split_samples_path(data_dir: str | Path, split: str) -> Path:
+def split_samples_path(
+    data_dir: str | Path,
+    split: str,
+    curriculum: str | None = None,
+) -> Path:
     if split not in SPLIT_NAMES:
         raise ValueError(f"unknown split {split!r}; expected one of {', '.join(SPLIT_NAMES)}")
-    return Path(data_dir) / split / SAMPLES_FILENAME
+    if curriculum is not None and curriculum not in CURRICULUM_LEVELS:
+        raise ValueError(
+            f"unknown curriculum {curriculum!r}; expected one of "
+            f"{', '.join(CURRICULUM_LEVELS)}"
+        )
+    root = Path(data_dir) if curriculum is None else Path(data_dir) / curriculum
+    return root / split / SAMPLES_FILENAME
 
 
 def write_samples_jsonl(path: str | Path, samples: Sequence[ProcessSample]) -> None:
@@ -551,7 +571,238 @@ def sample_statistics(samples: Sequence[ProcessSample]) -> dict[str, Any]:
             for motif, counts in sorted(motif_representation_slot_counts.items())
         },
     }
+    representatives = list(_family_representatives(samples).values())
+    representation_representatives = list(
+        _family_representation_representatives(samples).values()
+    )
+    log_view_representatives = list(_family_log_view_representatives(samples).values())
+    family_view_trace_lengths = [
+        len(trace)
+        for sample in log_view_representatives
+        for trace in sample.traces
+    ]
+    result["family_count"] = len(representatives)
+    result["statistics_units"] = {
+        "tree_activity_operator_and_loop": "behavior_family",
+        "petri_graph": "behavior_family_representation_variant",
+        "trace": "behavior_family_log_view",
+    }
+    result["complexity_level_counts"] = dict(
+        sorted(
+            _counts(
+                str(sample.complexity_level or sample.metadata.get("complexity_level", "unknown"))
+                for sample in representatives
+            ).items()
+        )
+    )
+    result["complexity_distributions"] = {
+        "tree_size": distribution_statistics(sample.tree.size() for sample in representatives),
+        "tree_depth": distribution_statistics(
+            sample.tree.max_depth() for sample in representatives
+        ),
+        "activity_count": distribution_statistics(
+            len(sample.tree.unique_activity_labels()) for sample in representatives
+        ),
+        "operator_count": distribution_statistics(
+            _operator_count(sample.tree) for sample in representatives
+        ),
+        "petri_node_count": distribution_statistics(
+            sample.petri_graph.num_nodes for sample in representation_representatives
+        ),
+        "petri_edge_count": distribution_statistics(
+            sample.petri_graph.num_edges for sample in representation_representatives
+        ),
+        "trace_length": distribution_statistics(family_view_trace_lengths),
+    }
+    result["loop_family_prevalence"] = _mean(
+        int(_tree_contains_loop(sample.tree)) for sample in representatives
+    )
+    result["nested_loop_prevalence"] = _mean(
+        int(_tree_contains_nested_loop(sample.tree)) for sample in representatives
+    )
+    result["operator_probability_audit"] = operator_probability_audit(representatives)
     return result
+
+
+def _family_representatives(
+    samples: Sequence[ProcessSample],
+) -> dict[str, ProcessSample]:
+    return {
+        sample.equivalence_id: sample
+        for sample in reversed(samples)
+    }
+
+
+def _family_representation_representatives(
+    samples: Sequence[ProcessSample],
+) -> dict[tuple[str, str], ProcessSample]:
+    return {
+        (
+            sample.equivalence_id,
+            str(
+                sample.model_variant_id
+                or sample.metadata.get("representation_slot")
+                or sample.representation_kind
+            ),
+        ): sample
+        for sample in reversed(samples)
+    }
+
+
+def _family_log_view_representatives(
+    samples: Sequence[ProcessSample],
+) -> dict[tuple[str, str], ProcessSample]:
+    return {
+        (
+            sample.equivalence_id,
+            str(sample.log_view_id or sample.metadata.get("sampling_mode") or "default"),
+        ): sample
+        for sample in reversed(samples)
+    }
+
+
+def distribution_statistics(values: Sequence[float] | Any) -> dict[str, float | int]:
+    numeric = np.asarray([float(value) for value in values], dtype=float)
+    if numeric.size == 0:
+        return {
+            "count": 0,
+            "mean": 0.0,
+            "standard_deviation": 0.0,
+            "median": 0.0,
+            "p10": 0.0,
+            "p90": 0.0,
+            "maximum": 0.0,
+        }
+    return {
+        "count": int(numeric.size),
+        "mean": float(numeric.mean()),
+        "standard_deviation": float(numeric.std()),
+        "median": float(np.median(numeric)),
+        "p10": float(np.quantile(numeric, 0.10)),
+        "p90": float(np.quantile(numeric, 0.90)),
+        "maximum": float(numeric.max()),
+    }
+
+
+def operator_probability_audit(
+    family_samples: Sequence[ProcessSample],
+) -> dict[str, object]:
+    operator_names = ("seq", "xor", "and", "loop")
+    expected_root = {"seq": 0.7, "xor": 0.1, "and": 0.1, "loop": 0.1}
+    expected_non_root = {name: 0.25 for name in operator_names}
+    ordinary_samples = [
+        sample
+        for sample in family_samples
+        if str(sample.complexity_role or sample.metadata.get("complexity_role", ""))
+        == "ordinary_tree"
+    ]
+    if ordinary_samples:
+        metadata = ordinary_samples[0].metadata
+        configured_root = metadata.get("expected_root_operator_probabilities")
+        configured_non_root = metadata.get("expected_operator_probabilities")
+        if isinstance(configured_root, dict):
+            expected_root = {
+                name: float(configured_root.get(name, 0.0))
+                for name in operator_names
+            }
+        if isinstance(configured_non_root, dict):
+            expected_non_root = {
+                name: float(configured_non_root.get(name, 0.0))
+                for name in operator_names
+            }
+    root_counts = {name: 0 for name in expected_root}
+    non_root_counts = {name: 0 for name in expected_root}
+    folded_root_counts = {name: 0 for name in expected_root}
+    folded_non_root_counts = {name: 0 for name in expected_root}
+    ordinary_count = 0
+    for sample in family_samples:
+        role = str(sample.complexity_role or sample.metadata.get("complexity_role", ""))
+        if role != "ordinary_tree":
+            continue
+        ordinary_count += 1
+        draws = sample.metadata.get("operator_draws", {})
+        if isinstance(draws, dict):
+            root = draws.get("root")
+            if root in root_counts:
+                root_counts[str(root)] += 1
+            non_root = draws.get("non_root", {})
+            if isinstance(non_root, dict):
+                for name in non_root_counts:
+                    non_root_counts[name] += int(non_root.get(name, 0))
+        _count_tree_operators(
+            sample.tree,
+            root_counts=folded_root_counts,
+            non_root_counts=folded_non_root_counts,
+        )
+
+    def probabilities(counts: dict[str, int]) -> dict[str, float]:
+        total = sum(counts.values())
+        return {
+            name: (count / total if total else 0.0) for name, count in counts.items()
+        }
+
+    observed_root = probabilities(root_counts)
+    observed_non_root = probabilities(non_root_counts)
+    deviations = [
+        abs(observed_root[name] - expected_root[name]) for name in expected_root
+    ] + [
+        abs(observed_non_root[name] - expected_non_root[name])
+        for name in expected_non_root
+        if sum(non_root_counts.values())
+    ]
+    return {
+        "scope": "ordinary_tree_families",
+        "ordinary_family_count": ordinary_count,
+        "expected_root_operator_probabilities": expected_root,
+        "observed_root_operator_counts": root_counts,
+        "observed_root_operator_probabilities": observed_root,
+        "expected_non_root_operator_probabilities": expected_non_root,
+        "observed_non_root_operator_counts": non_root_counts,
+        "observed_non_root_operator_probabilities": observed_non_root,
+        "folded_root_operator_counts": folded_root_counts,
+        "folded_non_root_operator_counts": folded_non_root_counts,
+        "maximum_absolute_probability_deviation": max(deviations, default=0.0),
+    }
+
+
+def _operator_count(tree: Any) -> int:
+    return int(not tree.is_leaf) + sum(_operator_count(child) for child in tree.children)
+
+
+def _tree_contains_loop(tree: Any) -> bool:
+    from proc_rosetta.tree import NodeKind
+
+    return tree.kind is NodeKind.LOOP or any(_tree_contains_loop(child) for child in tree.children)
+
+
+def _tree_contains_nested_loop(tree: Any, inside_loop: bool = False) -> bool:
+    from proc_rosetta.tree import NodeKind
+
+    is_loop = tree.kind is NodeKind.LOOP
+    if is_loop and inside_loop:
+        return True
+    return any(
+        _tree_contains_nested_loop(child, inside_loop or is_loop)
+        for child in tree.children
+    )
+
+
+def _count_tree_operators(
+    tree: Any,
+    *,
+    root_counts: dict[str, int],
+    non_root_counts: dict[str, int],
+) -> None:
+    if tree.is_leaf:
+        return
+    if tree.kind.value in root_counts:
+        root_counts[tree.kind.value] += 1
+    stack = list(tree.children)
+    while stack:
+        node = stack.pop()
+        if not node.is_leaf and node.kind.value in non_root_counts:
+            non_root_counts[node.kind.value] += 1
+        stack.extend(node.children)
 
 
 def class_coverage_report(
@@ -621,6 +872,132 @@ def recreate_data_splits(
     show_progress: bool = False,
     use_multiprocessing: bool = False,
 ) -> dict[str, object]:
+    """Recreate either legacy isolated data or all structural curricula."""
+
+    config = config or SyntheticConfig()
+    counts = counts or SplitCounts()
+    if config.generator == "isolated":
+        return _recreate_single_data_splits(
+            data_dir=data_dir,
+            counts=counts,
+            config=config,
+            seed=seed,
+            show_progress=show_progress,
+            use_multiprocessing=use_multiprocessing,
+        )
+
+    # Validate every quota before replacing an existing dataset.
+    from proc_rosetta.families import family_generation_plan
+
+    rows_per_family = config.variants_per_behavior * config.log_views_per_behavior
+    curriculum_configs = {
+        level: config_for_curriculum(config, level) for level in CURRICULUM_LEVELS
+    }
+    for level, level_config in curriculum_configs.items():
+        for split, count in counts.items():
+            if level_config.class_coverage_mode == "strict" and count % rows_per_family:
+                raise ValueError(
+                    f"strict class coverage requires the {split} sample count ({count}) "
+                    f"to be divisible by rows_per_family ({rows_per_family})"
+                )
+            family_generation_plan(
+                (count + rows_per_family - 1) // rows_per_family,
+                level_config,
+                seed,
+                split,
+            )
+
+    root = Path(data_dir)
+    if root.exists():
+        shutil.rmtree(root)
+    root.mkdir(parents=True)
+    reserved_exact_ids: set[str] = set()
+    reserved_tree_hashes: set[str] = set()
+    curricula: dict[str, object] = {}
+    for level in CURRICULUM_LEVELS:
+        level_config = curriculum_configs[level]
+        level_metadata = _recreate_single_data_splits(
+            data_dir=root / level,
+            counts=counts,
+            config=level_config,
+            seed=seed,
+            show_progress=show_progress,
+            use_multiprocessing=use_multiprocessing,
+            reserved_exact_behavior_ids=reserved_exact_ids,
+            reserved_canonical_tree_hashes=reserved_tree_hashes,
+        )
+        level_metadata.update(
+            version=6,
+            schema="proc-rosetta.structural-curriculum-level.v1",
+            complexity_level=level,
+        )
+        with (root / level / METADATA_FILENAME).open("w", encoding="utf-8") as handle:
+            json.dump(level_metadata, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        curricula[level] = {
+            "profile": {
+                "name": level,
+                "max_depth": level_config.max_depth,
+                "min_tree_depth": level_config.min_tree_depth,
+                "min_tree_size": level_config.min_tree_size,
+                "max_tree_size": level_config.max_tree_size,
+                "min_generated_activities": level_config.min_activities,
+                "max_generated_activities": level_config.max_generated_activities,
+            },
+            "recommended_profile": asdict(COMPLEXITY_PROFILES[level]),
+            "metadata": str(Path(level) / METADATA_FILENAME),
+            "splits": level_metadata["splits"],
+            "exact_behavior_signature_counts": level_metadata[
+                "exact_behavior_signature_counts"
+            ],
+        }
+
+    # Keep read-only legacy split aliases pointing at complex data so older
+    # scripts fail neither silently nor ambiguously; all new code passes a level.
+    for split in SPLIT_NAMES:
+        source = split_samples_path(root, split, "complex")
+        target = split_samples_path(root, split)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+    complex_metadata = load_data_metadata(root / "complex")
+    manifest: dict[str, object] = {
+        "version": 6,
+        "schema": "proc-rosetta.structural-curriculum.v1",
+        "sample_format": "jsonl/process-sample.v5",
+        "tree_normalization_version": "pm4py-fold-v1",
+        "seed": seed,
+        "activity_vocab_size": config.max_activities,
+        "operator_probabilities": dict(config.operator_probabilities),
+        "root_operator_probabilities": dict(config.root_operator_probabilities),
+        "leaf_probability": config.leaf_probability,
+        "reuse_activity_probability": config.reuse_activity_probability,
+        "max_arity": config.max_arity,
+        "curricula": curricula,
+        "exact_behaviors_disjoint_across_all_curricula_and_splits": True,
+        "canonical_tree_hashes_disjoint_across_all_curricula_and_splits": True,
+        # Compatibility fields describe the complex alias only.
+        "synthetic_config": complex_metadata["synthetic_config"],
+        "splits": complex_metadata["splits"],
+        "exact_behavior_signatures_disjoint": True,
+    }
+    for filename in (CURRICULUM_MANIFEST_FILENAME, METADATA_FILENAME):
+        with (root / filename).open("w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+    return manifest
+
+
+def _recreate_single_data_splits(
+    data_dir: str | Path,
+    counts: SplitCounts | None = None,
+    config: SyntheticConfig | None = None,
+    seed: int = 13,
+    show_progress: bool = False,
+    use_multiprocessing: bool = False,
+    reserved_exact_behavior_ids: set[str] | None = None,
+    reserved_canonical_tree_hashes: set[str] | None = None,
+) -> dict[str, object]:
     data_dir = Path(data_dir)
     counts = counts or SplitCounts()
     config = config or SyntheticConfig()
@@ -646,7 +1023,10 @@ def recreate_data_splits(
 
     split_metadata: dict[str, object] = {}
     exact_signatures_by_split: dict[str, set[str]] = {}
-    reserved_exact_behavior_ids: set[str] = set()
+    if reserved_exact_behavior_ids is None:
+        reserved_exact_behavior_ids = set()
+    if reserved_canonical_tree_hashes is None:
+        reserved_canonical_tree_hashes = set()
     worker_processes = multiprocessing_worker_count() if use_multiprocessing else None
     for split, count in counts.items():
         with progress_bar(
@@ -688,6 +1068,7 @@ def recreate_data_splits(
                     split=split,
                     progress_update=progress.update,
                     excluded_exact_behavior_ids=reserved_exact_behavior_ids,
+                    excluded_canonical_tree_hashes=reserved_canonical_tree_hashes,
                     num_workers=worker_processes,
                 )
         split_exact_ids = {

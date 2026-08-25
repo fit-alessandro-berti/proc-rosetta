@@ -24,7 +24,7 @@ def test_default_sample_and_train_values_match_recommended_run():
 
     sample_args = parser.parse_args(["sample"])
     train_args = parser.parse_args(["train"])
-    test_args = parser.parse_args(["test"])
+    test_args = parser.parse_args(["test", "--curriculum", "simple"])
     split_counts = split_counts_from_args(sample_args)
 
     assert split_counts.training == 16384
@@ -73,6 +73,11 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert not test_args.quiet
     assert test_args.conformance_method == "token_based_replay"
     assert test_args.checkpoint_selection == "best"
+
+
+def test_test_cli_requires_curriculum():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["test"])
 
 
 def test_train_cli_maps_structure_regularization_configuration(monkeypatch):
@@ -189,7 +194,7 @@ def test_test_quiet_disables_progress_output(monkeypatch, capsys):
     monkeypatch.setattr("proc_rosetta.cli.read_samples_jsonl", read_samples)
     monkeypatch.setattr("proc_rosetta.cli.rich_test_report", report)
 
-    assert main(["test", "--quiet", "--json"]) == 0
+    assert main(["test", "--curriculum", "simple", "--quiet", "--json"]) == 0
 
     captured = capsys.readouterr()
     assert json.loads(captured.out) == {"split": "test"}
@@ -274,6 +279,13 @@ def test_sample_cli_recreates_data_splits(tmp_path, capsys):
     assert (data_dir / "training" / "samples.jsonl").exists()
     assert (data_dir / "validation" / "samples.jsonl").exists()
     assert (data_dir / "test" / "samples.jsonl").exists()
+    assert (data_dir / "curriculum_manifest.json").exists()
+    for level in ("simple", "medium", "complex"):
+        assert (data_dir / level / "training" / "samples.jsonl").exists()
+        assert (data_dir / level / "validation" / "samples.jsonl").exists()
+        assert (data_dir / level / "test" / "samples.jsonl").exists()
+    assert set(metadata["curricula"]) == {"simple", "medium", "complex"}
+    assert metadata["exact_behaviors_disjoint_across_all_curricula_and_splits"]
     assert metadata["splits"]["training"]["statistics"]["count"] == 2
     assert metadata["exact_behavior_signatures_disjoint"] is True
     assert metadata["synthetic_config"]["logs"]["log_views_per_behavior"] == 2
@@ -396,7 +408,7 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert exit_code == 0
     assert "[train] Starting epoch 1/1" in captured.err
     assert "unique behavior families" in captured.err
-    assert "Restored best validation-loss weights" in captured.err
+    assert "Restored selected comparison weights" in captured.err
     row = json.loads(captured.out.strip().splitlines()[-1])
     assert row["epoch"] == 1
     assert row["training"]["loss"] > 0
@@ -547,6 +559,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert main(
         [
             "test",
+            "--curriculum",
+            "complex",
             "--data-dir",
             str(data_dir),
             "--checkpoint",
@@ -593,6 +607,8 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert main(
         [
             "test",
+            "--curriculum",
+            "complex",
             "--data-dir",
             str(data_dir),
             "--checkpoint",

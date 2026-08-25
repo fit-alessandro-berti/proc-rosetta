@@ -117,6 +117,8 @@ def test_train_script_runs_without_install_bootstrap():
         [
             sys.executable,
             str(ROOT / "test.py"),
+            "--curriculum",
+            "complex",
             "--data-dir",
             str(data_dir),
             "--checkpoint",

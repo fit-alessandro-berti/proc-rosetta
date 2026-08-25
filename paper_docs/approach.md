@@ -76,26 +76,26 @@ The process tree is the decoder target and canonical behavior description. The d
 
 | Parameter | Default | Meaning |
 |---|---:|---|
-| `max_depth` | 8 | Maximum recursion depth for generated trees. |
-| `max_activities` | 30 | Maximum number of distinct activity labels before canonicalization. |
+| `activity_vocab_size` | 30 | Shared tokenizer/model capacity for every curriculum. |
+| `max_generated_activities` | 6 / 14 / 30 | Curriculum-specific generated alphabet ceiling. |
 | `max_arity` | 3 | Maximum arity for non-loop operators. |
 | `traces_per_sample` | 128 | Number of traces stored in each generated log view. |
 | `curriculum_phase` | 3 | Operator set used during generation. Phase 3 enables `SEQ`, `XOR`, `AND`, and `LOOP`. |
 | `reuse_activity_probability` | 0.15 | Probability of reusing an activity label instead of introducing a new one. |
-| `leaf_probability` | 0.65 | Probability of stopping recursion early and generating a leaf. |
+| `leaf_probability` | 0.55 | Probability of stopping recursion early and generating a leaf. |
 | `operator_probabilities` | 0.25 each | Probabilities used when selecting a non-root operator, renormalized over operators enabled by the curriculum phase. |
 | `root_operator_probabilities` | SEQ 0.70; XOR/AND/LOOP 0.10 each | Separate probabilities used when selecting the root operator. |
 | `generator` | `behavior_families` | Generate grouped exact-equivalent behavior rows rather than isolated triples. |
 | `variants_per_behavior` | 2 | Number of representation rows per behavior family. |
-| `motif_context_size` | 4 | Shared sequence context wrapped around controlled equivalence motifs. |
+| `complexity_level` | simple / medium / complex | Structural profile; independent of operator phase and objective stage. |
 
-The current generated split uses `curriculum_phase = 3`, so ordinary-tree families include `LOOP` nodes. The generated loop form is the two-child form `LOOP(body, redo)`. Since loop languages can be unbounded, ordinary loop families use process-tree playout for the finite observed trace pool and certify their alternate Petri representation by isomorphic renaming.
+The current generated split uses `curriculum_phase = 3`, so `LOOP` is eligible but never required. Ordinary-tree roots are allocated by exact quotas (70% `SEQ`, 10% each `XOR`, `AND`, and `LOOP`); non-root draws remain 25% per operator in every structural curriculum. Generated loops use the two-child form `LOOP(body, redo)`. Isomorphic loop representations receive a strong behavior identifier even though their unbounded language is not fully enumerated.
 
-The ordinary-tree motif and legacy isolated generator first sample the number of activities uniformly from the range `[2, max_activities]`, then recursively construct a process tree. At each recursive call, the generator either creates a leaf or creates an operator node:
+The ordinary-tree motif and legacy isolated generator first sample a topology, forcing the root to be an operator. They reject topologies that cannot hold the profile activity floor, assign the first required leaves distinct labels, and apply the 0.15 reuse probability thereafter. Acceptance checks the final folded decoder target:
 
 ```text
-make_node(depth)
-├── if depth >= max_depth: create activity leaf
+make_node(depth, force_operator=False)
+├── if not force_operator and depth >= max_depth: create activity leaf
 ├── else if random() < leaf_probability: create activity leaf
 └── else:
     ├── choose operator from enabled set
@@ -109,9 +109,11 @@ make_node(depth)
         └── generate redo child
 ```
 
-Activity leaves are initially named `a0`, `a1`, etc. After the tree is generated, activity labels are canonicalized to `A0`, `A1`, ... in order of first occurrence. This makes the synthetic data approximately invariant to arbitrary activity-name choices. If the generated tree contains fewer than two unique activity labels, the code attempts to make the sample less trivial by wrapping the tree in a sequential composition with an additional generated activity leaf. Because the leaf sampler itself can reuse an existing activity label, this is best understood as a heuristic rather than a strict duplicate-label guarantee.
+Activity leaves are initially named `a0`, `a1`, etc. After the tree is generated, activity labels are canonicalized to `A0`, `A1`, ... in order of first occurrence. No post-generation sequence padding is used, so activity floors cannot change the sampled root or inject extra operators.
 
-Under the default `behavior_families` generator, each behavior is written as two rows with the same canonical tree target and the same visible traces, but with different Petri-net graphs. Some pairs differ only by node names; others use different internal routing or interleaving while accepting the same visible traces. The two rows share the same `equivalence_id`.
+The folded structural profiles are: simple, recursion depth 3, target size 5–11, minimum depth 2, 3–6 activities; medium, depth 5, size 12–19, minimum depth 3, 5–14 activities; and complex, depth 8, size 20–96, minimum depth 4, 8–30 activities. Controlled motifs remain fixed anchor cases and are reported separately from ordinary-tree probability audits.
+
+Under the default `behavior_families` generator, each behavior is written as four rows: two event-log views crossed with two Petri-net variants. Rows share the canonical tree and `equivalence_id`; representation pairs within one log view share visible traces. Some Petri pairs differ only by node names; others use different internal routing or interleaving while accepting the same visible traces.
 
 Two structural canonicalizations are important:
 
@@ -171,26 +173,23 @@ The root script `sample.py` recreates a local dataset with three held-out splits
 
 ```text
 data/
-├── metadata.json
-├── training/
-│   └── samples.jsonl
-├── validation/
-│   └── samples.jsonl
-└── test/
-    └── samples.jsonl
+├── curriculum_manifest.json
+├── simple/{metadata.json,training/,validation/,test/}
+├── medium/{metadata.json,training/,validation/,test/}
+└── complex/{metadata.json,training/,validation/,test/}
 ```
 
-The default split sizes are flattened rows. With the default two rows per behavior family, they correspond to half as many behavior families:
+The default split sizes are flattened rows. With four rows per behavior family, they correspond to one quarter as many behavior families:
 
 | Split | Default rows | Default families | Role |
 |---|---:|---:|---|
-| `training` | 8192 | 4096 | Used to update neural-network weights. Shuffled during training. |
-| `validation` | 1024 | 512 | Used after each epoch for model selection, learning-rate scheduling, and early stopping. Not shuffled. |
-| `test` | 1024 | 512 | Used only after training/checkpoint selection for final evaluation. Not used for optimization or early stopping. |
+| `training` | 16384 | 4096 | Generated independently for every curriculum. |
+| `validation` | 2048 | 512 | Evaluated separately for every curriculum. |
+| `test` | 2048 | 512 | Selected explicitly with `test.py --curriculum`. |
 
-The split generator removes any existing `data/` directory and then generates fresh samples for all three splits. A single seeded Python random-number generator controls the process-tree sampler and behavior-family construction; the default seed is 13. Consecutive rows are alternate representations of one behavior, and a behavior family never crosses split boundaries. The strict class-coverage mode enforces deterministic motif quotas. The code does not explicitly deduplicate visible languages across splits, so near-duplicate behaviors can still occur.
+The split generator removes any existing `data/` directory and generates all nine curriculum/split combinations. Exact behavior IDs are globally disjoint; canonical-tree hashes provide a conservative second leakage check for bounded and isomorphic families. Consecutive rows remain alternate representations/log views of one behavior. The strict class-coverage mode enforces deterministic motif quotas.
 
-The `metadata.json` file records the random seed, the synthetic generation configuration, the relative path of each split file, and descriptive statistics for each split. These statistics include sample count, average tree size, average tree depth, average trace count, average trace length, maximum Petri-node count, and maximum Petri-edge count.
+The root manifest records global invariants and all three profiles. Per-level metadata records family and row counts, distribution quantiles, loop/nested-loop prevalence, Petri/trace sizes, motif and representation coverage, plus raw-draw and folded-operator probability audits.
 
 ### 2.6 Batch construction and tensorization
 
@@ -588,13 +587,9 @@ flowchart TB
 
 ### 4.1 What an epoch is
 
-An epoch is one complete pass over the training split. With the default configuration, one epoch processes 8192 training rows in shuffled mini-batches of size 32. Because the final batch is not dropped, the default number of training mini-batches per epoch is:
+An epoch follows a deterministic curriculum plan seeded by `seed + epoch` and interleaves whole, curriculum-homogeneous batches. Epochs 1–15 use 100% simple data; epochs 16–40 use 25% simple and 75% medium; epochs 41–100 use 10% simple, 20% medium, and 70% complex. Stage boundaries are fractions of the requested total epoch count. Default batch sizes are 128, 96, and 64, reducing padding and memory pressure for larger trees and Petri nets.
 
-```math
-\lceil 8192 / 32 \rceil = 256.
-```
-
-After this training pass, the model is evaluated once on the full validation split. Validation uses the same loss function but does not update model parameters.
+After the training pass, the model is evaluated independently on all three validation curricula. Metrics are calculated within each curriculum before unweighted macro and worst-case summaries are formed; rows are never pooled to compute retrieval or geometry metrics.
 
 ### 4.2 What is provided at each training step
 
@@ -649,7 +644,7 @@ The default optimizer is AdamW with:
 
 ### 4.4 Validation step
 
-After each epoch, validation is performed over the entire validation split:
+After each epoch, validation is performed over all three validation splits:
 
 ```text
 1. Switch model to evaluation mode.
@@ -657,8 +652,10 @@ After each epoch, validation is performed over the entire validation split:
    └── no gradients are recorded
 2. Use deterministic latent vectors z = mu.
 3. Compute the same loss components as during training.
-4. Average validation metrics across validation mini-batches.
-5. Use validation loss for learning-rate scheduling, best-checkpoint selection, and early stopping.
+4. Average validation metrics within each curriculum, then record macro and worst-case summaries.
+5. Reset scheduler plateau and patience state at structural-stage transitions.
+6. Disable early stopping until the complex stage has run for its configured minimum.
+7. Select final checkpoints primarily on complex validation and record simple/medium regressions from their stage bests.
 ```
 
 The validation data are not shuffled. The validation split is never used in `optimizer.step()`.
@@ -836,7 +833,10 @@ Training saves two checkpoint types:
 
 ```text
 checkpoints/proc_rosetta.pt       latest completed epoch
-checkpoints/proc_rosetta.best.pt  best validation-loss epoch
+checkpoints/proc_rosetta.best.pt  comparison checkpoint selected on complex validation
+checkpoints/proc_rosetta.best_simple.pt
+checkpoints/proc_rosetta.best_medium.pt
+checkpoints/proc_rosetta.best_complex.pt
 ```
 
 The exact file names depend on the `--checkpoint` argument. If the checkpoint path is:
@@ -851,7 +851,13 @@ then the best checkpoint path is:
 checkpoints/model.best.pt
 ```
 
-The latest checkpoint is written after every completed epoch. The best checkpoint is written only when the current validation loss improves over the previous best validation loss by at least `min_delta`, default `0.001`.
+The latest checkpoint is written after every completed epoch. During the final
+structural stage, the comparison checkpoint uses complex-curriculum validation
+as its lexicographic primary criterion and the unweighted three-curriculum macro
+as a tie-breaker. The per-stage checkpoints are diagnostics; all three test
+curricula are compared with the single `best.pt` model. Separate objective
+checkpoints (loss, trace exactness, edit distance, and latent quality) are also
+retained.
 
 ### 6.2 Checkpoint contents
 
@@ -866,6 +872,10 @@ checkpoint
 ├── synthetic_config
 ├── history
 ├── best_validation_loss
+├── structural_curriculum_state
+├── optimizer_state_dict / scheduler_state_dict
+├── training_loader_state / rng_state
+├── ema_state_dict
 └── is_best
 ```
 
@@ -903,27 +913,36 @@ A large positive validation-training loss gap is a warning sign of overfitting.
 
 ### 6.4 Learning-rate scheduling
 
-The training loop uses `ReduceLROnPlateau` on validation loss. The defaults are:
+The training loop uses `ReduceLROnPlateau` on the current structural stage's
+validation metric. The default monitor is trace-to-tree loss and can be changed
+to reconstruction-composite or total loss. The defaults are:
 
 | Scheduler parameter | Default |
 |---|---:|
-| monitored metric | validation loss |
+| monitored metric | trace-to-tree validation loss |
 | mode | minimize |
-| patience | 2 epochs |
+| patience | 1 epoch |
 | reduction factor | 0.5 |
 | minimum learning rate | `1e-5` |
 
-If validation loss plateaus, the learning rate is multiplied by 0.5 until the minimum learning rate is reached.
+If the monitored loss plateaus, the learning rate is multiplied by 0.5 until
+the minimum learning rate is reached. Scheduler plateau state resets on the
+simple-to-medium and medium-to-complex transitions; optimizer and EMA weights
+do not reset.
 
 ### 6.5 Early stopping
 
-Early stopping also monitors validation loss. A validation improvement is accepted only if:
+Early stopping uses the same monitor. A validation improvement is accepted only if:
 
 ```math
-validation\_loss < best\_validation\_loss - min\_delta.
+monitor < best\_monitor - min\_delta.
 ```
 
-The default `min_delta` is `0.001`. If no such improvement occurs for `early_stopping_patience = 4` consecutive epochs, training stops. The latest and best checkpoints have already been saved before the stopping check is applied.
+The default `min_delta` is `0.005` and patience is 6 epochs. Patience state
+resets at structural-stage transitions. Early stopping is disabled throughout
+the simple and medium stages and cannot fire until at least 5 complex-stage
+epochs have completed. The latest and selected checkpoints have already been
+saved before the stopping check is applied.
 
 ---
 
@@ -1038,9 +1057,10 @@ Draw an epoch timeline:
 ```text
 shuffle training split
 -> mini-batch updates
--> validation pass
+-> separate simple / medium / complex validation passes
+-> within-curriculum metrics, macro, and worst-case summaries
 -> scheduler step
--> update best validation loss
+-> update stage diagnostic and complex-primary comparison criteria
 -> save latest checkpoint
 -> maybe save best checkpoint
 -> append CSV row
@@ -1053,7 +1073,7 @@ This figure makes clear that the test split is outside the training loop.
 
 ## 10. Concise methods-style summary
 
-Synthetic paired process-mining samples are generated as behavior families. Each family has a canonical process tree target, sampled event-log traces, and two Petri-net representations, including controlled exact-equivalent alternatives. The resulting process tree, event log, Petri graph, and behavior-family identifier are serialized as aligned triples and split family-wise into training, validation, and test files. The default split sizes are 8192, 1024, and 1024 rows.
+Synthetic paired process-mining samples are generated as behavior families under simple, medium, and complex folded-tree profiles. Each family has a canonical process tree target, two sampled event-log views, and two Petri-net representations, including controlled exact-equivalent alternatives. The resulting process tree, event log, Petri graph, explicit complexity label, provenance, and behavior-family identifiers are serialized as aligned rows. Each curriculum contains 16,384 training, 2,048 validation, and 2,048 test rows; exact behavior IDs and canonical-tree hashes are disjoint across all nine combinations.
 
 The model contains three modality-specific encoders: a GRU tree encoder, a hierarchical GRU-plus-attention trace encoder, and a message-passing Petri graph encoder. Each encoder outputs a diagonal Gaussian latent distribution in a shared latent space. A shared GRU decoder, initialized from a sampled or deterministic latent vector, predicts prefix-encoded process-tree tokens under a hand-coded grammar mask.
 

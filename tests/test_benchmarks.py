@@ -2,6 +2,7 @@ import sys
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import torch
 
 from proc_rosetta.benchmarks import (
@@ -16,11 +17,26 @@ from proc_rosetta.benchmarks import (
     format_human_test_report,
     levenshtein_distance,
     retrieval_metrics,
+    rich_test_report,
     summarize_discovery_quality,
     token_based_replay_fitness_precision,
     trim_tree_token_sequence,
 )
 from proc_rosetta.tokenizers import TreeTokenizer
+
+
+def test_report_rejects_mixed_curriculum_samples():
+    samples = [
+        SimpleNamespace(complexity_level="simple"),
+        SimpleNamespace(complexity_level="medium"),
+    ]
+    with pytest.raises(ValueError, match="other than 'simple'"):
+        rich_test_report(
+            checkpoint_path="unused.pt",
+            data_dir="unused",
+            samples=samples,
+            curriculum="simple",
+        )
 
 
 def test_embedding_method_report_contains_behavior_alignment():

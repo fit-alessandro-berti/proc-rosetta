@@ -15,7 +15,11 @@ from proc_rosetta.benchmarks import (
 from proc_rosetta.data import SplitCounts, recreate_data_splits
 from proc_rosetta.data import read_samples_jsonl, split_samples_path
 from proc_rosetta.devices import default_device
-from proc_rosetta.synthetic import DEFAULT_MAX_ACTIVITIES, SyntheticConfig
+from proc_rosetta.synthetic import (
+    CURRICULUM_LEVELS,
+    DEFAULT_MAX_ACTIVITIES,
+    SyntheticConfig,
+)
 from proc_rosetta.training import (
     TrainConfig,
     best_checkpoint_for,
@@ -53,7 +57,14 @@ def build_parser() -> argparse.ArgumentParser:
     sample.add_argument("--test-families", type=int, default=None)
     sample.add_argument("--seed", type=int, default=13)
     sample.add_argument("--max-depth", type=int, default=8)
-    sample.add_argument("--max-activities", type=int, default=DEFAULT_MAX_ACTIVITIES)
+    sample.add_argument(
+        "--activity-vocab-size",
+        "--max-activities",
+        dest="max_activities",
+        type=int,
+        default=DEFAULT_MAX_ACTIVITIES,
+        help="Global tokenizer/model activity capacity shared by all curricula.",
+    )
     sample.add_argument("--min-activities", type=int, default=8)
     sample.add_argument("--leaf-probability", type=float, default=0.55)
     sample.add_argument(
@@ -156,6 +167,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train.add_argument("--epochs", type=int, default=100)
     train.add_argument("--batch-size", type=int, default=128)
+    train.add_argument("--simple-batch-size", type=int, default=None)
+    train.add_argument("--medium-batch-size", type=int, default=None)
+    train.add_argument("--complex-batch-size", type=int, default=None)
+    train.add_argument("--min-complex-stage-epochs", type=int, default=5)
     train.add_argument("--learning-rate", type=float, default=3e-4)
     train.add_argument("--latent-dim", type=int, default=96)
     train.add_argument("--hidden-dim", type=int, default=192)
@@ -282,7 +297,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--restore-best-weights",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Restore the best validation-loss checkpoint before returning (default: enabled).",
+        help="Restore the selected comparison checkpoint before returning (default: enabled).",
     )
     train.add_argument(
         "--use-ema",
@@ -306,12 +321,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     test = subparsers.add_parser("test", help="load a checkpoint and evaluate the persisted test split")
     test.add_argument("--data-dir", default="data")
+    test.add_argument(
+        "--curriculum",
+        required=True,
+        choices=CURRICULUM_LEVELS,
+        help="Evaluate exactly one structural curriculum.",
+    )
     test.add_argument("--checkpoint", default="checkpoints/proc_rosetta.pt")
     test.add_argument(
         "--checkpoint-selection",
         choices=["best", "latest"],
         default="best",
-        help="Evaluate the best validation-loss checkpoint by default, or the latest epoch.",
+        help="Evaluate the selected comparison checkpoint by default, or the latest epoch.",
     )
     test.add_argument("--batch-size", type=int, default=16)
     test.add_argument("--max-decode-length", type=int, default=512)
@@ -408,6 +429,15 @@ def synthetic_config_from_args(args: argparse.Namespace) -> SyntheticConfig:
         value = getattr(args, field_name)
         if not configured or value != defaults[field_name]:
             overrides[field_name] = value
+    if "max_activities" in overrides:
+        overrides["max_generated_activities"] = min(
+            int(overrides["max_activities"]),
+            int(config.max_generated_activities or config.max_activities),
+        )
+        overrides["min_activities"] = min(
+            int(overrides.get("min_activities", config.min_activities)),
+            int(overrides["max_generated_activities"]),
+        )
     if not configured or args.log_view_modes != defaults["log_view_modes"]:
         overrides["log_view_modes"] = tuple(
             value.strip() for value in args.log_view_modes.split(",") if value.strip()
@@ -449,6 +479,10 @@ def run_train(args: argparse.Namespace) -> int:
     train_config = TrainConfig(
         epochs=args.epochs,
         batch_size=args.batch_size,
+        simple_batch_size=args.simple_batch_size,
+        medium_batch_size=args.medium_batch_size,
+        complex_batch_size=args.complex_batch_size,
+        min_complex_stage_epochs=max(0, args.min_complex_stage_epochs),
         learning_rate=args.learning_rate,
         latent_dim=args.latent_dim,
         hidden_dim=args.hidden_dim,
@@ -538,9 +572,19 @@ def run_test(args: argparse.Namespace) -> int:
         args.checkpoint,
         args.checkpoint_selection,
     )
-    sample_path = split_samples_path(args.data_dir, "test")
+    sample_path = split_samples_path(args.data_dir, "test", args.curriculum)
     test_debug(f"Loading test samples from {sample_path}", enabled=show_progress)
     samples = read_samples_jsonl(sample_path, show_progress=show_progress)
+    mismatches = [
+        index
+        for index, sample in enumerate(samples)
+        if getattr(sample, "complexity_level", args.curriculum) != args.curriculum
+    ]
+    if mismatches:
+        raise ValueError(
+            f"test split {sample_path} contains {len(mismatches)} rows outside requested "
+            f"curriculum {args.curriculum!r}; first mismatch at row {mismatches[0] + 1}"
+        )
     sample_count = len(samples)
     sample_label = "sample" if sample_count == 1 else "samples"
     conformance_label = (
@@ -572,6 +616,7 @@ def run_test(args: argparse.Namespace) -> int:
         show_progress=show_progress,
         conformance_method=args.conformance_method,
         max_decode_length=max(2, args.max_decode_length),
+        curriculum=args.curriculum,
     )
     if args.json:
         print(json.dumps(report, sort_keys=True))

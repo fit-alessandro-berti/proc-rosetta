@@ -4,12 +4,24 @@ import pytest
 
 from proc_rosetta.pm4py_bridge import petri_graph_to_net, simulate_traces, tree_to_petri_net
 from proc_rosetta.synthetic import (
+    CURRICULUM_LEVELS,
     ProcessSample,
     SyntheticConfig,
+    accepts_profile,
+    complexity_profile,
+    config_for_curriculum,
     generate_process_tree,
+    generate_process_tree_with_provenance,
     generate_sample,
 )
-from proc_rosetta.families import enumerate_visible_language, generate_behavior_family
+from proc_rosetta.families import (
+    allocate_operator_quotas,
+    enumerate_visible_language,
+    family_generation_plan,
+    flatten_behavior_family,
+    generate_behavior_family,
+)
+from proc_rosetta.data import operator_probability_audit, sample_statistics
 from proc_rosetta.tree import NodeKind, ProcessTreeNode
 
 
@@ -29,6 +41,143 @@ def test_operator_probability_defaults_and_configuration_round_trip():
         "loop": 0.1,
     }
     assert SyntheticConfig.from_dict(config.to_dict()) == config
+
+
+@pytest.mark.parametrize("level", CURRICULUM_LEVELS)
+def test_operator_probabilities_do_not_change_across_curricula(level):
+    config = config_for_curriculum(SyntheticConfig(), level)
+    assert config.operator_probabilities == {
+        "seq": 0.25,
+        "xor": 0.25,
+        "and": 0.25,
+        "loop": 0.25,
+    }
+    assert config.root_operator_probabilities == {
+        "seq": 0.7,
+        "xor": 0.1,
+        "and": 0.1,
+        "loop": 0.1,
+    }
+
+
+@pytest.mark.parametrize("level", CURRICULUM_LEVELS)
+def test_generated_final_folded_tree_satisfies_profile(level):
+    config = config_for_curriculum(SyntheticConfig(), level)
+    tree, provenance = generate_process_tree_with_provenance(
+        config, random.Random(101)
+    )
+    assert accepts_profile(tree, complexity_profile(level))
+    assert provenance["folded_complexity"]["tree_size"] == tree.size()
+    assert tree.kind is not NodeKind.ACTIVITY
+
+
+def test_root_operator_quota_is_exact_for_multiple_of_ten():
+    config = config_for_curriculum(
+        SyntheticConfig(
+            motif_weights={"ordinary_tree": 1.0},
+            min_families_per_motif={"training": 0, "validation": 0, "test": 0},
+        ),
+        "simple",
+    )
+    plan, quotas = family_generation_plan(1000, config, 13, "test")
+    assert quotas == {"seq": 700, "xor": 100, "and": 100, "loop": 100}
+    assert len(plan) == 1000
+    assert allocate_operator_quotas(11, config.root_operator_probabilities) == {
+        "seq": 8,
+        "xor": 1,
+        "and": 1,
+        "loop": 1,
+    }
+
+
+def test_operator_audit_uses_configured_probabilities_from_provenance():
+    config = config_for_curriculum(
+        SyntheticConfig(
+            motif_weights={"ordinary_tree": 1.0},
+            operator_probabilities={"xor": 1.0},
+            root_operator_probabilities={"seq": 1.0},
+        ),
+        "simple",
+    )
+    family = generate_behavior_family(
+        config,
+        0,
+        seed=31,
+        split="test",
+        motif="ordinary_tree",
+        forced_root_operator=NodeKind.SEQ,
+    )
+    audit = operator_probability_audit(
+        [flatten_behavior_family(family, max_activities=config.max_activities)[0]]
+    )
+
+    assert audit["expected_root_operator_probabilities"] == {
+        "seq": 1.0,
+        "xor": 0.0,
+        "and": 0.0,
+        "loop": 0.0,
+    }
+    assert audit["expected_non_root_operator_probabilities"] == {
+        "seq": 0.0,
+        "xor": 1.0,
+        "and": 0.0,
+        "loop": 0.0,
+    }
+
+
+def test_family_statistics_do_not_duplicate_cross_product_rows():
+    config = config_for_curriculum(
+        SyntheticConfig(
+            traces_per_sample=2,
+            log_views_per_behavior=2,
+            variants_per_behavior=2,
+            motif_weights={"duplicate_vs_silent": 1.0},
+        ),
+        "simple",
+    )
+    family = generate_behavior_family(
+        config,
+        0,
+        seed=37,
+        split="test",
+        motif="duplicate_vs_silent",
+    )
+    rows = flatten_behavior_family(family, max_activities=config.max_activities)
+    statistics = sample_statistics(rows)
+
+    assert len(rows) == 4
+    assert statistics["complexity_distributions"]["tree_size"]["count"] == 1
+    assert statistics["complexity_distributions"]["petri_node_count"]["count"] == 2
+    assert statistics["complexity_distributions"]["trace_length"]["count"] == 4
+
+
+def test_sequence_padding_no_longer_changes_forced_root():
+    config = config_for_curriculum(SyntheticConfig(), "simple")
+    tree = generate_process_tree(
+        config,
+        random.Random(7),
+        forced_root_operator=NodeKind.XOR,
+    )
+    assert tree.kind is NodeKind.XOR
+    assert len(tree.unique_activity_labels()) >= config.min_activities
+
+
+def test_isomorphic_loop_family_has_strong_positive_id():
+    config = config_for_curriculum(
+        SyntheticConfig(motif_weights={"ordinary_tree": 1.0}),
+        "simple",
+    )
+    family = generate_behavior_family(
+        config,
+        0,
+        seed=19,
+        split="training",
+        motif="ordinary_tree",
+        forced_root_operator=NodeKind.LOOP,
+    )
+    rows = flatten_behavior_family(family, max_activities=config.max_activities)
+    assert family.equivalence_certificate.status == "isomorphic"
+    assert all(row.strong_behavior_id == family.behavior_id for row in rows)
 
 
 def test_root_and_non_root_operator_probabilities_are_independent():
@@ -99,8 +248,14 @@ def test_generate_sample_contains_all_modalities():
     assert restored.to_dict() == sample.to_dict()
 
 
-def test_default_generator_uses_two_child_loops_and_larger_logs():
-    sample = generate_sample(SyntheticConfig(), equivalence_id="x")
+def test_phase_three_enables_but_does_not_require_two_child_loops():
+    sample = generate_sample(
+        SyntheticConfig(
+            operator_probabilities={"seq": 0.34, "xor": 0.33, "and": 0.33},
+            root_operator_probabilities={"seq": 1.0},
+        ),
+        equivalence_id="x",
+    )
 
     loop_nodes = []
 
@@ -114,8 +269,7 @@ def test_default_generator_uses_two_child_loops_and_larger_logs():
 
     assert len(sample.traces) == 128
     assert sample.tree.max_depth() >= 4
-    assert loop_nodes
-    assert all(len(node.children) == 2 for node in loop_nodes)
+    assert not loop_nodes
 
 
 def test_exact_behavior_family_motifs_share_language_and_ids():

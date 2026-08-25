@@ -12,7 +12,12 @@ import pandas as pd
 import torch
 
 from proc_rosetta.behavior import behavioral_distance
-from proc_rosetta.data import ProcessBatchCollator, progress_bar, progress_iterator
+from proc_rosetta.data import (
+    ProcessBatchCollator,
+    progress_bar,
+    progress_iterator,
+    sample_statistics,
+)
 from proc_rosetta.devices import resolve_device
 from proc_rosetta.pm4py_bridge import (
     petri_graph_to_net,
@@ -21,7 +26,7 @@ from proc_rosetta.pm4py_bridge import (
     tree_to_petri_net,
 )
 from proc_rosetta.synthetic import ProcessSample
-from proc_rosetta.training import evaluate_split_from_checkpoint, load_checkpoint
+from proc_rosetta.training import evaluate_samples_from_checkpoint, load_checkpoint
 
 
 Trace = Sequence[str]
@@ -53,6 +58,7 @@ def rich_test_report(
     checkpoint_path: str,
     data_dir: str,
     samples: Sequence[ProcessSample],
+    curriculum: str,
     batch_size: int = 16,
     device: str | None = None,
     include_pm4py_petri: bool = True,
@@ -62,6 +68,15 @@ def rich_test_report(
     max_decode_length: int = 512,
 ) -> dict[str, object]:
     validate_conformance_method(conformance_method)
+    mismatches = [
+        sample.complexity_level
+        for sample in samples
+        if sample.complexity_level != curriculum
+    ]
+    if mismatches:
+        raise ValueError(
+            f"selected samples contain complexity levels other than {curriculum!r}"
+        )
     started = perf_counter()
     torch_device = resolve_device(device)
     device_name = str(torch_device)
@@ -72,13 +87,13 @@ def rich_test_report(
         f"{math.ceil(len(samples) / max(batch_size, 1))} batches",
         enabled=show_progress,
     )
-    loss_metrics = evaluate_split_from_checkpoint(
+    loss_metrics = evaluate_samples_from_checkpoint(
         checkpoint_path=checkpoint_path,
-        data_dir=data_dir,
-        split="test",
+        samples=samples,
         batch_size=batch_size,
         device=device_name,
         show_progress=show_progress,
+        progress_desc=f"{curriculum.title()} test loss",
     )
     test_debug(
         f"[2/{stage_count}] Loading checkpoint and computing neural embeddings",
@@ -179,7 +194,10 @@ def rich_test_report(
     )
     report = {
         "split": "test",
+        "curriculum": curriculum,
         "sample_count": len(samples),
+        "behavior_family_count": len({sample.equivalence_id for sample in samples}),
+        "dataset_statistics": sample_statistics(samples),
         "loss_metrics": round_float_dict(loss_metrics),
         "behavioral_distance_summary": summarize_distance_matrix(behavior["mean_l1"]),
         "behavioral_component_summaries": {
@@ -192,7 +210,10 @@ def rich_test_report(
         "discovery_quality": discovery_quality,
         "cross_modal_retrieval": cross_modal_retrieval(
             neural_embeddings,
-            exact_behavior_ids=[sample.exact_behavior_id for sample in samples],
+            exact_behavior_ids=[
+                sample.strong_behavior_id or sample.exact_behavior_id
+                for sample in samples
+            ],
             partial_order_ids=[sample.partial_order_id for sample in samples],
             behavior_signatures=[sample.behavior_signature for sample in samples],
         ),
@@ -218,11 +239,63 @@ def rich_test_report(
             "pm4py_log_case_features_mean_std": "pm4py.extract_features_dataframe aggregated per log",
         },
     }
+    trace_decode = decode_quality["methods"]["proc_rosetta_trace_mu"]
+    assert isinstance(trace_decode, dict)
+    strata = trace_decode.get("strata", {})
+    assert isinstance(strata, dict)
+    report["metrics_by_motif"] = _strata_with_prefix(strata, "motif:")
+    report["metrics_by_observation_quality"] = _strata_with_prefix(
+        strata, "observation:"
+    )
+    report["metrics_by_tree_size_quantile"] = _strata_with_prefix(
+        strata, "tree_size_bin:"
+    )
+    report["metrics_by_loop_presence"] = _strata_with_prefix(strata, "loop:")
+    strong_ids = [
+        sample.strong_behavior_id or sample.exact_behavior_id
+        for sample in samples
+    ]
+    retrieval_rows = cross_modal_top1_rows(
+        neural_embeddings["proc_rosetta_trace_mu"],
+        neural_embeddings["proc_rosetta_tree_mu"],
+        strong_ids,
+        [sample.equivalence_id for sample in samples],
+    )
+    report["family_bootstrap_95_intervals"] = {
+        "exact_tree_match_rate": trace_decode["family_bootstrap_95_intervals"][
+            "exact_tree_match_rate"
+        ],
+        "normalized_edit_distance": trace_decode["family_bootstrap_95_intervals"][
+            "normalized_tree_edit_distance"
+        ],
+        "discovery_f1": discovery_quality["methods"]["proc_rosetta_trace_mu"][
+            "family_bootstrap_95_intervals"
+        ]["discovery_f1"],
+        "cross_modal_recall_at_1": family_bootstrap_interval(
+            retrieval_rows, "hit", boolean=True
+        ),
+        "behavior_distance_spearman": family_bootstrap_spearman_interval(
+            neural_embeddings["proc_rosetta_fused_mu"],
+            behavior["mean_l1"],
+            [sample.equivalence_id for sample in samples],
+        ),
+    }
     test_debug(
         f"Evaluation complete in {perf_counter() - started:.1f}s; formatting final report",
         enabled=show_progress,
     )
     return report
+
+
+def _strata_with_prefix(
+    strata: dict[str, object],
+    prefix: str,
+) -> dict[str, object]:
+    return {
+        name.removeprefix(prefix): values
+        for name, values in strata.items()
+        if name.startswith(prefix)
+    }
 
 
 def test_debug(message: str, enabled: bool = True) -> None:
@@ -369,6 +442,14 @@ def discovery_quality_report(
                     token_ids,
                     conformance_method=conformance_method,
                 )
+                proc_rosetta_row["equivalence_id"] = str(
+                    getattr(sample, "equivalence_id", start)
+                )
+                metadata = getattr(sample, "metadata", {})
+                proc_rosetta_row["motif"] = str(metadata.get("motif", "unknown"))
+                proc_rosetta_row["observation_quality"] = str(
+                    metadata.get("observation_quality", "unknown")
+                )
                 rows["proc_rosetta_trace_mu"].append(proc_rosetta_row)
                 conformance_successes += int(proc_rosetta_row["conformance_evaluable"])
                 completed_models += 1
@@ -383,6 +464,9 @@ def discovery_quality_report(
                 inductive_miner_row = evaluate_inductive_miner_discovery(
                     sample,
                     conformance_method=conformance_method,
+                )
+                inductive_miner_row["equivalence_id"] = str(
+                    getattr(sample, "equivalence_id", start)
                 )
                 rows["inductive_miner"].append(inductive_miner_row)
                 conformance_successes += int(inductive_miner_row["conformance_evaluable"])
@@ -725,6 +809,9 @@ def summarize_discovery_quality(
     else:
         summary["footprint_evaluable_rate"] = evaluable_rate
         summary["footprint_error_count"] = error_count
+    summary["family_bootstrap_95_intervals"] = {
+        "discovery_f1": family_bootstrap_interval(rows, "f1"),
+    }
     return summary
 
 
@@ -1016,6 +1103,7 @@ def evaluate_single_decode(
     except Exception:
         pass
     row: dict[str, object] = {
+        "equivalence_id": sample.equivalence_id,
         "motif": str(sample.metadata.get("motif", "ordinary_tree")),
         "contains_loop": tree_contains_loop(sample.tree),
         "tree_size": sample.tree.size(),
@@ -1108,6 +1196,14 @@ def summarize_decode_quality(rows: Sequence[dict[str, object]]) -> dict[str, obj
         "first_error": first_error,
     }
     summary["strata"] = decode_quality_strata(rows)
+    summary["family_bootstrap_95_intervals"] = {
+        "exact_tree_match_rate": family_bootstrap_interval(
+            rows, "exact_tree_match", boolean=True
+        ),
+        "normalized_tree_edit_distance": family_bootstrap_interval(
+            rows, "normalized_token_edit_distance"
+        ),
+    }
     return summary
 
 
@@ -1122,8 +1218,8 @@ def decode_quality_strata(
             "loop:loop" if bool(row.get("contains_loop")) else "loop:non_loop", []
         ).append(row)
         size = int(row.get("tree_size", 0))
-        size_bin = "small_1_20" if size <= 20 else "medium_21_40" if size <= 40 else "large_41_plus"
-        groups.setdefault(f"tree_size:{size_bin}", []).append(row)
+        size_bin = "1_10" if size <= 10 else "11_19" if size <= 19 else "20_plus"
+        groups.setdefault(f"tree_size_bin:{size_bin}", []).append(row)
         depth = int(row.get("tree_depth", 0))
         depth_bin = "shallow_1_4" if depth <= 4 else "medium_5_7" if depth <= 7 else "deep_8_plus"
         groups.setdefault(f"tree_depth:{depth_bin}", []).append(row)
@@ -1183,6 +1279,107 @@ def levenshtein_distance(left: Sequence[int], right: Sequence[int]) -> int:
             current.append(min(insert_cost, delete_cost, replace_cost))
         previous = current
     return previous[-1]
+
+
+def family_bootstrap_interval(
+    rows: Sequence[dict[str, object]],
+    key: str,
+    *,
+    boolean: bool = False,
+    replicates: int = 500,
+    seed: int = 1729,
+) -> dict[str, float | int]:
+    """Bootstrap a row metric by resampling behavior families as clusters."""
+
+    grouped: dict[str, list[float]] = {}
+    for index, row in enumerate(rows):
+        value = row.get(key)
+        if boolean:
+            numeric = float(bool(value))
+        elif isinstance(value, (int, float)):
+            numeric = float(value)
+        else:
+            continue
+        grouped.setdefault(str(row.get("equivalence_id", index)), []).append(numeric)
+    family_values = np.asarray(
+        [float(np.mean(values)) for values in grouped.values()],
+        dtype=float,
+    )
+    if family_values.size == 0:
+        return {"family_count": 0, "estimate": 0.0, "lower": 0.0, "upper": 0.0}
+    rng = np.random.default_rng(seed)
+    draws = family_values[
+        rng.integers(0, family_values.size, size=(max(1, replicates), family_values.size))
+    ].mean(axis=1)
+    return {
+        "family_count": int(family_values.size),
+        "estimate": round_float(float(family_values.mean())),
+        "lower": round_float(float(np.quantile(draws, 0.025))),
+        "upper": round_float(float(np.quantile(draws, 0.975))),
+    }
+
+
+def cross_modal_top1_rows(
+    query: np.ndarray,
+    candidates: np.ndarray,
+    labels: Sequence[str | None],
+    family_ids: Sequence[str],
+) -> list[dict[str, object]]:
+    query = np.asarray(query, dtype=float)
+    candidates = np.asarray(candidates, dtype=float)
+    query /= np.maximum(np.linalg.norm(query, axis=1, keepdims=True), 1e-12)
+    candidates /= np.maximum(np.linalg.norm(candidates, axis=1, keepdims=True), 1e-12)
+    similarities = query @ candidates.T
+    rows: list[dict[str, object]] = []
+    for index in range(len(query)):
+        nearest = int(np.argmax(similarities[index]))
+        label = labels[index]
+        hit = nearest == index if label is None else labels[nearest] == label
+        rows.append({"equivalence_id": family_ids[index], "hit": hit})
+    return rows
+
+
+def family_bootstrap_spearman_interval(
+    embeddings: np.ndarray,
+    behavior_distance: np.ndarray,
+    family_ids: Sequence[str],
+    *,
+    replicates: int = 200,
+    seed: int = 1733,
+) -> dict[str, float | int]:
+    groups: dict[str, list[int]] = {}
+    for index, family_id in enumerate(family_ids):
+        groups.setdefault(str(family_id), []).append(index)
+    names = list(groups)
+    if len(names) < 2:
+        return {
+            "family_count": len(names),
+            "estimate": 0.0,
+            "lower": 0.0,
+            "upper": 0.0,
+        }
+    embedding_distance = cosine_distance_matrix(np.asarray(embeddings, dtype=float))
+    behavior_distance = np.asarray(behavior_distance, dtype=float)
+    estimate = spearman_upper(embedding_distance, behavior_distance)
+    rng = np.random.default_rng(seed)
+    values: list[float] = []
+    for _ in range(max(1, replicates)):
+        selected_names = [names[index] for index in rng.integers(0, len(names), len(names))]
+        indices = [index for name in selected_names for index in groups[name]]
+        if len(indices) < 2:
+            continue
+        values.append(
+            spearman_upper(
+                embedding_distance[np.ix_(indices, indices)],
+                behavior_distance[np.ix_(indices, indices)],
+            )
+        )
+    return {
+        "family_count": len(names),
+        "estimate": round_float(float(estimate)),
+        "lower": round_float(float(np.quantile(values, 0.025))) if values else 0.0,
+        "upper": round_float(float(np.quantile(values, 0.975))) if values else 0.0,
+    }
 
 
 def rate(rows: Sequence[dict[str, object]], key: str) -> float:
@@ -1474,7 +1671,10 @@ def format_human_test_report(report: dict[str, object]) -> str:
     lines.append("ProcRosetta Test Report")
     lines.append("=======================")
     lines.append("")
-    lines.append(f"Split: {report['split']}  |  samples: {report['sample_count']}")
+    lines.append(
+        f"Split: {report['split']}  |  curriculum: {report.get('curriculum', 'legacy')}"
+        f"  |  samples: {report['sample_count']}"
+    )
     lines.append("")
 
     loss_metrics = report["loss_metrics"]
