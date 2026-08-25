@@ -55,7 +55,7 @@ and duplicate complete-language signatures are rejected.
 Motif weights favor ordinary random trees (`ordinary_tree=0.75`, the three
 controlled motifs approximately `0.0833` each) so most training logs carry realistic variant
 diversity and alphabet sizes. Ordinary-tree activity floors are profile-specific
-(2, 3, and 5 for simple, medium, and complex), and every stored
+(3, 5, and 8 for simple, medium, and complex), and every stored
 sample is relabeled to `A0, A1, ...` in first-seen trace order — the same
 canonicalization external XES logs receive at inference time — so the trace,
 tree, and Petri labels of a row always agree with the inference-time scheme.
@@ -216,8 +216,8 @@ data/
   complex/{metadata.json,training/samples.jsonl,validation/samples.jsonl,test/samples.jsonl}
 ```
 
-The three structural curricula use folded-tree targets of size 3–6, 7–11,
-and 12–18 respectively, with increasing depth and generated-activity bounds.
+The three structural curricula use folded-tree targets of size 5–11, 12–19,
+and 20–80 respectively, with increasing depth and generated-activity bounds.
 They share one 30-label tokenizer capacity, the same trace/log settings, 0.55
 leaf probability, 0.15 activity-reuse probability, and maximum arity 3.
 Ordinary families receive deterministic root quotas (70% `SEQ`, 10% each

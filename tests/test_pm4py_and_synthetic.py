@@ -45,7 +45,7 @@ def test_operator_probability_defaults_and_configuration_round_trip():
     assert SyntheticConfig.from_dict(config.to_dict()) == config
 
 
-def test_default_complexity_profiles_form_a_small_ordered_curriculum():
+def test_default_complexity_profiles_form_an_ordered_curriculum():
     def profile_bounds(level):
         profile = complexity_profile(level)
         return (
@@ -58,9 +58,9 @@ def test_default_complexity_profiles_form_a_small_ordered_curriculum():
         )
 
     assert {level: profile_bounds(level) for level in CURRICULUM_LEVELS} == {
-        "simple": (2, 2, 3, 6, 2, 4),
-        "medium": (3, 2, 7, 11, 3, 7),
-        "complex": (4, 3, 12, 18, 5, 12),
+        "simple": (3, 2, 5, 11, 3, 6),
+        "medium": (5, 3, 12, 19, 5, 14),
+        "complex": (7, 4, 20, 80, 8, 28),
     }
 
 

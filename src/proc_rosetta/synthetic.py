@@ -41,9 +41,9 @@ class ComplexityProfile:
 
 
 COMPLEXITY_PROFILES: dict[str, ComplexityProfile] = {
-    "simple": ComplexityProfile("simple", 2, 2, 3, 6, 2, 4),
-    "medium": ComplexityProfile("medium", 3, 2, 7, 11, 3, 7),
-    "complex": ComplexityProfile("complex", 4, 3, 12, 18, 5, 12),
+    "simple": ComplexityProfile("simple", 3, 2, 5, 11, 3, 6),
+    "medium": ComplexityProfile("medium", 5, 3, 12, 19, 5, 14),
+    "complex": ComplexityProfile("complex", 7, 4, 20, 80, 8, 28),
 }
 DEFAULT_COMPLEXITY_LEVEL = "complex"
 DEFAULT_COMPLEXITY_PROFILE = COMPLEXITY_PROFILES[DEFAULT_COMPLEXITY_LEVEL]

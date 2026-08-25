@@ -1,8 +1,8 @@
 {
   "generator": "behavior_families",
-  "max_depth": 4,
+  "max_depth": 7,
   "activity_vocab_size": 30,
-  "max_generated_activities": 12,
+  "max_generated_activities": 28,
   "max_arity": 3,
   "curriculum_phase": 3,
   "leaf_probability": 0.55,
@@ -20,9 +20,9 @@
   },
   "motif_context_min_nodes": 4,
   "motif_context_max_nodes": 12,
-  "min_tree_depth": 3,
-  "min_tree_size": 12,
-  "max_tree_size": 18,
+  "min_tree_depth": 4,
+  "min_tree_size": 20,
+  "max_tree_size": 80,
   "complexity_level": "complex",
   "motifs": {
     "ordinary_tree": 0.75,
@@ -74,5 +74,5 @@
     "exact_language_max_traces": 10000,
     "bounded_visible_length": 32
   },
-  "min_activities": 5
+  "min_activities": 8
 }

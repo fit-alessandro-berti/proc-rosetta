@@ -34,9 +34,9 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert split_counts.training // rows_per_family == 4096
     assert split_counts.validation // rows_per_family == 512
     assert split_counts.test // rows_per_family == 512
-    assert sample_args.max_depth == 4
+    assert sample_args.max_depth == 7
     assert sample_args.max_activities == 30
-    assert sample_args.min_activities == 5
+    assert sample_args.min_activities == 8
     assert sample_args.max_arity == 3
     assert sample_args.traces_per_sample == 128
     assert sample_args.curriculum_phase == 3
