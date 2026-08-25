@@ -166,6 +166,12 @@ def test_checkpoint_selection_resolves_best_and_latest_paths():
 
     assert checkpoint_for_selection(latest, "best").name == "proc_rosetta.best.pt"
     assert checkpoint_for_selection(latest, "latest").name == "proc_rosetta.pt"
+    assert checkpoint_for_selection(latest, "best_balanced").name == (
+        "proc_rosetta.best_balanced.pt"
+    )
+    assert checkpoint_for_selection(latest, "best_geometry").name == (
+        "proc_rosetta.best_geometry.pt"
+    )
     assert checkpoint_for_selection(
         "checkpoints/proc_rosetta.best_trace.pt", "best"
     ).name == "proc_rosetta.best_trace.pt"
@@ -430,7 +436,7 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
         weights_only=False,
     )["epoch"] == 1
     assert checkpoint.with_name("model.best.pt").exists()
-    for objective in ("loss", "trace", "edit", "latent"):
+    for objective in ("balanced", "decode", "retrieval", "geometry", "discovery"):
         assert checkpoint.with_name(f"model.best_{objective}.pt").exists()
     assert metrics_csv.exists()
     with metrics_csv.open(newline="", encoding="utf-8") as handle:
@@ -441,7 +447,7 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert rows[0]["validation_loss"]
 
     saved = torch.load(checkpoint, map_location="cpu", weights_only=False)
-    assert saved["version"] == 6
+    assert saved["version"] == 7
     assert saved["model_architecture"] == "proc-rosetta-latent-transformer-v6"
     assert saved["tree_normalization_version"] == "pm4py-fold-v1"
     assert saved["semantic_latent_stochastic"] is False
@@ -499,7 +505,7 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert len(resumed["history"]) == 2
     assert resumed["history"][-1]["resume_policy_overrides"] == {
         "scheduled_sampling_max": {
-            "checkpoint": 0.075,
+            "checkpoint": 0.20,
             "requested": 0.0,
         }
     }
@@ -514,7 +520,7 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
         epoch_one_checkpoint,
         map_location="cpu",
         weights_only=False,
-    )["version"] == 6
+    )["version"] == 7
 
     assert main(
         [
@@ -548,10 +554,11 @@ def test_train_and_test_cli_smoke(tmp_path, capsys):
     assert resumed["ema_state_dict"]["updates"] > 0
     assert resumed["history"][-1]["validation_ema"] is not None
     assert set(resumed["history"][-1]["objective_candidate_weights"]) == {
-        "loss",
-        "trace",
-        "edit",
-        "latent",
+        "balanced",
+        "decode",
+        "retrieval",
+        "geometry",
+        "discovery",
     }
     epoch_three_checkpoint = checkpoint.parent / "00003" / checkpoint.name
     assert epoch_three_checkpoint.exists()

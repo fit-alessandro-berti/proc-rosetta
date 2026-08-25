@@ -211,8 +211,13 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument(
         "--gradient-diagnostics-interval",
         type=int,
-        default=0,
+        default=1,
         help="epochs between expensive gradient diagnostics; <=0 disables them",
+    )
+    train.add_argument(
+        "--use-pcgrad",
+        action=argparse.BooleanOptionalAction,
+        default=True,
     )
     train.add_argument("--seed", type=int, default=13)
     train.add_argument("--loader-num-workers", type=int, default=0)
@@ -253,18 +258,47 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument(
         "--scheduled-sampling-max",
         type=float,
-        default=0.075,
+        default=0.20,
         help="Maximum scheduled-sampling probability; set to 0 to disable it.",
     )
-    train.add_argument("--scheduled-sampling-start-epoch", type=int, default=20)
+    train.add_argument("--scheduled-sampling-start-epoch", type=int, default=15)
     train.add_argument("--scheduled-sampling-ramp-epochs", type=int, default=20)
     train.add_argument("--gradient-clip-norm", type=float, default=5.0)
-    train.add_argument("--tree-reconstruction-weight", type=float, default=0.5)
-    train.add_argument("--trace-to-tree-weight", type=float, default=2.0)
-    train.add_argument("--petri-to-tree-weight", type=float, default=0.5)
+    train.add_argument("--tree-reconstruction-weight", type=float, default=1.0)
+    train.add_argument("--trace-to-tree-weight", type=float, default=1.0)
+    train.add_argument("--petri-to-tree-weight", type=float, default=1.0)
+    train.add_argument("--fused-to-tree-weight", type=float, default=1.0)
+    train.add_argument("--fused-subset-to-tree-weight", type=float, default=0.25)
+    train.add_argument("--deployment-to-tree-weight", type=float, default=0.25)
+    train.add_argument(
+        "--modality-subset-fusion-probability",
+        type=float,
+        default=0.5,
+    )
+    train.add_argument(
+        "--deployment-policy-probability",
+        type=float,
+        default=0.25,
+    )
     train.add_argument("--exact-contrastive-weight", type=float, default=0.30)
     train.add_argument("--within-modality-contrastive-weight", type=float, default=0.25)
+    train.add_argument("--semantic-exact-contrastive-weight", type=float, default=0.15)
+    train.add_argument("--semantic-memory-contrastive-weight", type=float, default=0.10)
+    train.add_argument("--hierarchical-metric-weight", type=float, default=0.15)
+    train.add_argument("--observation-view-consistency-weight", type=float, default=0.15)
+    train.add_argument("--semantic-memory-bank-size", type=int, default=4096)
     train.add_argument("--soft-behavior-geometry-weight", type=float, default=0.25)
+    train.add_argument("--observed-behavior-regression-weight", type=float, default=0.20)
+    train.add_argument("--observed-behavior-ranking-weight", type=float, default=0.20)
+    train.add_argument("--beam-minimum-risk-weight", type=float, default=0.05)
+    train.add_argument("--eos-calibration-weight", type=float, default=0.05)
+    train.add_argument("--generated-length-weight", type=float, default=0.05)
+    train.add_argument("--unresolved-open-slots-weight", type=float, default=0.05)
+    train.add_argument("--completion-feasibility-weight", type=float, default=0.05)
+    train.add_argument("--beam-risk-start-epoch", type=int, default=15)
+    train.add_argument("--beam-risk-batch-probability", type=float, default=0.10)
+    train.add_argument("--beam-risk-size", type=int, default=5)
+    train.add_argument("--beam-risk-max-decode-length", type=int, default=128)
     train.add_argument("--variance-weight", type=float, default=0.1)
     train.add_argument("--covariance-weight", type=float, default=0.01)
     train.add_argument("--latent-alignment-weight", type=float, default=0.075)
@@ -289,9 +323,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train.add_argument(
         "--scheduler-monitor",
-        choices=["trace_to_tree", "reconstruction_composite", "loss"],
-        default="trace_to_tree",
-        help="Stable validation metric used by both LR scheduling and early stopping.",
+        choices=["balanced"],
+        default="balanced",
+        help="Test-aligned balanced validation score used for scheduling and stopping.",
     )
     train.add_argument(
         "--restore-best-weights",
@@ -318,6 +352,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable family-grouped batches (multi-positive loss remains ID-aware).",
     )
+    train.add_argument("--validation-decode-interval", type=int, default=2)
+    train.add_argument("--validation-full-interval", type=int, default=10)
+    train.add_argument("--validation-decode-family-count", type=int, default=64)
+    train.add_argument("--validation-discovery-family-count", type=int, default=32)
+    train.add_argument("--validation-beam-size", type=int, default=5)
+    train.add_argument("--validation-max-decode-length", type=int, default=512)
 
     test = subparsers.add_parser("test", help="load a checkpoint and evaluate the persisted test split")
     test.add_argument("--data-dir", default="data")
@@ -330,7 +370,15 @@ def build_parser() -> argparse.ArgumentParser:
     test.add_argument("--checkpoint", default="checkpoints/proc_rosetta.pt")
     test.add_argument(
         "--checkpoint-selection",
-        choices=["best", "latest"],
+        choices=[
+            "best",
+            "latest",
+            "best_balanced",
+            "best_decode",
+            "best_retrieval",
+            "best_geometry",
+            "best_discovery",
+        ],
         default="best",
         help="Evaluate the selected comparison checkpoint by default, or the latest epoch.",
     )
@@ -519,9 +567,36 @@ def run_train(args: argparse.Namespace) -> int:
         tree_reconstruction_weight=args.tree_reconstruction_weight,
         trace_to_tree_weight=args.trace_to_tree_weight,
         petri_to_tree_weight=args.petri_to_tree_weight,
+        fused_to_tree_weight=args.fused_to_tree_weight,
+        fused_subset_to_tree_weight=args.fused_subset_to_tree_weight,
+        deployment_to_tree_weight=args.deployment_to_tree_weight,
+        modality_subset_fusion_probability=(
+            args.modality_subset_fusion_probability
+        ),
+        deployment_policy_probability=args.deployment_policy_probability,
         exact_contrastive_weight=args.exact_contrastive_weight,
         within_modality_contrastive_weight=args.within_modality_contrastive_weight,
+        semantic_exact_contrastive_weight=args.semantic_exact_contrastive_weight,
+        semantic_memory_contrastive_weight=args.semantic_memory_contrastive_weight,
+        hierarchical_metric_weight=args.hierarchical_metric_weight,
+        observation_view_consistency_weight=(
+            args.observation_view_consistency_weight
+        ),
+        semantic_memory_bank_size=args.semantic_memory_bank_size,
         soft_behavior_geometry_weight=args.soft_behavior_geometry_weight,
+        observed_behavior_regression_weight=(
+            args.observed_behavior_regression_weight
+        ),
+        observed_behavior_ranking_weight=args.observed_behavior_ranking_weight,
+        beam_minimum_risk_weight=args.beam_minimum_risk_weight,
+        eos_calibration_weight=args.eos_calibration_weight,
+        generated_length_weight=args.generated_length_weight,
+        unresolved_open_slots_weight=args.unresolved_open_slots_weight,
+        completion_feasibility_weight=args.completion_feasibility_weight,
+        beam_risk_start_epoch=args.beam_risk_start_epoch,
+        beam_risk_batch_probability=args.beam_risk_batch_probability,
+        beam_risk_size=args.beam_risk_size,
+        beam_risk_max_decode_length=args.beam_risk_max_decode_length,
         variance_weight=args.variance_weight,
         covariance_weight=args.covariance_weight,
         latent_alignment_weight=args.latent_alignment_weight,
@@ -548,6 +623,15 @@ def run_train(args: argparse.Namespace) -> int:
         training_stage=args.training_stage,
         stage_gate_interval=max(1, args.stage_gate_interval),
         gradient_diagnostics_interval=args.gradient_diagnostics_interval,
+        use_pcgrad=args.use_pcgrad,
+        validation_decode_interval=args.validation_decode_interval,
+        validation_full_interval=args.validation_full_interval,
+        validation_decode_family_count=args.validation_decode_family_count,
+        validation_discovery_family_count=(
+            args.validation_discovery_family_count
+        ),
+        validation_beam_size=args.validation_beam_size,
+        validation_max_decode_length=args.validation_max_decode_length,
         loader_num_workers=max(0, args.loader_num_workers),
         loader_pin_memory=args.loader_pin_memory,
         loader_persistent_workers=args.loader_persistent_workers,
@@ -692,11 +776,22 @@ def checkpoint_for_selection(
     path = Path(checkpoint_path)
     if selection == "latest":
         return path
-    if selection != "best":
-        raise ValueError("checkpoint selection must be best or latest")
+    objectives = {
+        "best": None,
+        "best_balanced": "balanced",
+        "best_decode": "decode",
+        "best_retrieval": "retrieval",
+        "best_geometry": "geometry",
+        "best_discovery": "discovery",
+    }
+    if selection not in objectives:
+        raise ValueError(
+            "checkpoint selection must be best, latest, best_balanced, "
+            "best_decode, best_retrieval, best_geometry, or best_discovery"
+        )
     if path.stem.endswith(".best") or ".best_" in path.stem:
         return path
-    return best_checkpoint_for(path)
+    return best_checkpoint_for(path, objectives[selection])
 
 
 def _positive(value: int | None, default: int, name: str) -> int:

@@ -82,7 +82,7 @@ event-log traces    -> 1-layer biGRU + 1-layer set encoder -+-> 6 x 192 source m
 Petri graph         -> 5-layer edge-aware residual GNN ----'       |
                                                                 cross-attention
 normalized 96-D semantic latent <---- each encoder              3-layer tree decoder
-             `-> disposable 2-layer hard-contrastive head
+             `-> exact/hierarchical metric losses + memory queue
 ```
 
 The training objective combines:
@@ -90,10 +90,13 @@ The training objective combines:
 - tree-to-tree reconstruction;
 - trace-to-tree translation;
 - Petri-to-tree translation;
+- raw-mean all-source fusion and sampled two-source reconstruction;
 - all-positive supervised contrast across all six modality directions;
+- exact, analogy, broader-family, and hard-negative metric ordering directly
+  on the semantic means, with a cross-batch memory queue;
 - within-modality view invariance;
-- soft behavior-neighborhood matching;
-- positive-only cross-modal cosine alignment on the semantic latent;
+- exact observed-log behavioral-distance regression and ordinal ranking;
+- sparse/incomplete/noisy observation-view consistency;
 - variance/covariance anti-collapse regularization.
 
 Semantic content is deterministic: supervised decoding does not sample a VAE,
@@ -320,31 +323,40 @@ Training writes:
 
 ```text
 checkpoints/proc_rosetta.pt       # latest completed epoch
-checkpoints/proc_rosetta.best.pt  # complex-primary, macro-tiebreak selection (testing default)
-checkpoints/proc_rosetta.best_loss.pt
-checkpoints/proc_rosetta.best_trace.pt
-checkpoints/proc_rosetta.best_edit.pt
-checkpoints/proc_rosetta.best_latent.pt
+checkpoints/proc_rosetta.best.pt  # robust balanced selection (testing default)
+checkpoints/proc_rosetta.best_balanced.pt
+checkpoints/proc_rosetta.best_decode.pt
+checkpoints/proc_rosetta.best_retrieval.pt
+checkpoints/proc_rosetta.best_geometry.pt
+checkpoints/proc_rosetta.best_discovery.pt
 checkpoints/proc_rosetta.best_simple.pt
 checkpoints/proc_rosetta.best_medium.pt
 checkpoints/proc_rosetta.best_complex.pt
 checkpoints/training_metrics.csv  # per-epoch metrics
 ```
 
-The default 100-epoch structural schedule uses 100% simple batches for epochs
+The nominal 100-epoch structural schedule uses 100% simple batches for epochs
 1–15, 25% simple/75% medium for epochs 16–40, and 10% simple/20% medium/70%
 complex thereafter. Batches are curriculum-homogeneous; defaults use batch
 sizes 128/96/64. Validation is computed independently for every curriculum,
-then macro and worst-case summaries are recorded. Scheduler and patience state
-reset at stage transitions, and early stopping is disabled until the complex
-stage has completed its minimum run.
+then macro and worst-case summaries are recorded. Competence gates can hold a
+stage until decoding, retrieval, family, geometry, and observation-quality
+criteria improve without regressing simpler curricula; validation deficits
+also rebalance curriculum sampling and source reconstruction weights.
 
-Every strict objective improvement is checkpointed. Learning-rate scheduling
-and early stopping default to the stable validation `trace_to_tree` loss (or
-can use `reconstruction_composite`/`loss`) with the same absolute
-`--min-delta`. `train_from_data_dir()` restores `.best.pt` before returning;
+The model-selection score is explicit and test-aligned: 40% decoding, 20%
+retrieval, 15% equivalence, 15% geometry, and 10% discovery, with decoding hard
+gates and a fused-geometry baseline comparison. It drives ordinary-versus-EMA
+selection, best checkpoints, LR scheduling, early stopping, and curriculum
+decisions. Specialized decode/retrieval/geometry/discovery checkpoints are
+also retained. `train_from_data_dir()` restores `.best.pt` before returning;
 `--no-restore-best-weights` disables that return-time step without changing the
 latest resume checkpoint.
+
+Each epoch runs an in-memory, test-equivalent validation audit without touching
+the test split. Deterministic baselines and O(n²) behavior matrices are cached;
+decode audits use fixed family-balanced subsets, and full PM4Py Inductive Miner
+audits run periodically and at stage transitions.
 
 An EMA starts at epoch 3 with decay 0.995. Ordinary and EMA validation metrics
 are both recorded, and the better scheduler-monitor result supplies the epoch's
@@ -404,17 +416,17 @@ The staged run sequence is intentionally gated:
    `stage_d_observation_curriculum` / `--training-stage d` (six views including
    the two clean baselines).
 
-Expensive per-encoder gradient diagnostics are disabled by default. Enable them
-for a diagnostic run with `--gradient-diagnostics-interval 10` (or another
-positive interval), then inspect both metric/reconstruction norm ratios and the
-recorded reconstruction/exact, reconstruction/geometry, and exact/geometry
-gradient cosines for every encoder.
+Per-encoder gradient diagnostics run every epoch by default. Inspect metric /
+reconstruction norm ratios and the recorded reconstruction/exact,
+reconstruction/geometry, and exact/geometry gradient cosines for every encoder.
+PCGrad is enabled by default for conflicting reconstruction and metric groups;
+use `--no-use-pcgrad` for an ablation.
 
-By default, reconstruction trains alone for epochs 1–2, exact/within contrastive
-and anti-collapse terms ramp across epochs 3–6, and soft behavior geometry ramps
-across epochs 5–10. Hard contrastive loss uses its own projection head at
-temperature 0.3; the downstream semantic latent is aligned with a smaller
-positive-only cosine term.
+By default, reconstruction trains alone for epochs 1–2, exact/hierarchical
+semantic objectives ramp across epochs 3–6, and observed behavior geometry
+ramps across epochs 5–10. Scheduled sampling begins at epoch 15 and ramps to
+20%. Training also samples bounded, duplicate-free deployment targets while the
+raw semantic path preserves legitimate repeated activities.
 
 The tokenizer size is fixed by the data metadata stored when `sample.py` runs.
 For logs with many activities, generate data with a sufficiently large
@@ -464,10 +476,12 @@ The test report includes:
 
 - neural test losses;
 - grammar-constrained, length-normalized beam decode quality from tree, trace,
-  Petri, and fused sources;
+  Petri, and fused sources, each scored against its own legal source target;
+- separate raw semantic and bounded duplicate-free deployment results, plus
+  beam-oracle exact/edit/behavior gaps;
 - process-discovery quality comparing `proc_rosetta_trace_mu` with PM4Py
   Inductive Miner using the selected token-based replay or footprint fitness,
-  precision, and F1;
+  precision, and F1, including reranked-versus-oracle beam F1;
 - behavioral distance summaries over the test logs;
 - exact-behavior, partial-order, and analogy-neighborhood retrieval metrics;
 - behavior-family cosine, retrieval, equivalence margin, and distance by
@@ -475,6 +489,7 @@ The test report includes:
 - learned embedding quality versus deterministic log and Petri baselines;
 - PM4Py Petri-net Node2Vec/Word2Vec baseline when available.
 - family-level complexity/operator audits, motif/observation/size/loop strata,
+  per-observation decoding and exact-retrieval metrics,
   and family-bootstrap 95% intervals.
 
 The PM4Py Petri embedding baseline can be slow. Disable it when iterating:

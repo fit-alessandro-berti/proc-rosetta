@@ -11,12 +11,26 @@ from proc_rosetta.tokenizers import TreeTokenizer
 
 @dataclass(frozen=True)
 class LossWeights:
-    tree_reconstruction: float = 0.5
-    trace_to_tree: float = 2.0
-    petri_to_tree: float = 0.5
+    tree_reconstruction: float = 1.0
+    trace_to_tree: float = 1.0
+    petri_to_tree: float = 1.0
+    fused_to_tree: float = 1.0
+    fused_subset_to_tree: float = 0.25
+    deployment_to_tree: float = 0.25
     exact_contrastive: float = 0.30
     within_modality_contrastive: float = 0.25
+    semantic_exact_contrastive: float = 0.15
+    semantic_memory_contrastive: float = 0.10
+    hierarchical_metric: float = 0.15
     soft_behavior_geometry: float = 0.25
+    observed_behavior_regression: float = 0.20
+    observed_behavior_ranking: float = 0.20
+    beam_minimum_risk: float = 0.05
+    eos_calibration: float = 0.05
+    generated_length: float = 0.05
+    unresolved_open_slots: float = 0.05
+    completion_feasibility: float = 0.05
+    observation_view_consistency: float = 0.15
     variance: float = 0.1
     covariance: float = 0.01
     latent_alignment: float = 0.075
@@ -27,6 +41,179 @@ class LossWeights:
     contrastive_temperature: float = 0.3
     behavior_temperature: float = 0.2
     latent_temperature: float = 0.2
+
+
+class SemanticMemoryBank:
+    """Detached cross-batch semantic negatives and exact-behavior positives."""
+
+    def __init__(self, capacity: int = 4096) -> None:
+        self.capacity = max(1, int(capacity))
+        self.embeddings: torch.Tensor | None = None
+        self.exact_ids: list[str | None] = []
+        self.family_ids: list[str] = []
+
+    def __len__(self) -> int:
+        return len(self.exact_ids)
+
+    def enqueue(
+        self,
+        embeddings: torch.Tensor,
+        exact_ids: list[str | None],
+        family_ids: list[str],
+    ) -> None:
+        values = F.normalize(embeddings.detach().float(), dim=-1).cpu()
+        self.embeddings = (
+            values if self.embeddings is None else torch.cat((self.embeddings, values), dim=0)
+        )
+        self.exact_ids.extend(exact_ids)
+        self.family_ids.extend(family_ids)
+        if len(self.exact_ids) > self.capacity:
+            start = len(self.exact_ids) - self.capacity
+            self.embeddings = self.embeddings[start:]
+            self.exact_ids = self.exact_ids[start:]
+            self.family_ids = self.family_ids[start:]
+
+
+def semantic_exact_contrastive_loss(
+    dists: dict[str, LatentDistribution],
+    exact_positive_mask: torch.Tensor | None,
+    candidate_mask: torch.Tensor | None,
+    *,
+    temperature: float,
+) -> torch.Tensor:
+    """Apply negative-aware supervision directly to the evaluated semantic mu."""
+
+    semantic_candidates = candidate_mask
+    if candidate_mask is not None and exact_positive_mask is not None:
+        semantic_candidates = candidate_mask | exact_positive_mask.to(
+            candidate_mask.device,
+            dtype=torch.bool,
+        )
+    cross = cross_modal_contrastive_loss(
+        dists,
+        temperature=temperature,
+        positive_mask=exact_positive_mask,
+        candidate_mask=semantic_candidates,
+    )
+    within = within_modality_contrastive_loss(
+        dists,
+        exact_positive_mask,
+        semantic_candidates,
+        temperature=temperature,
+    )
+    return 0.5 * (cross + within)
+
+
+def semantic_memory_contrastive_loss(
+    dists: dict[str, LatentDistribution],
+    memory_bank: SemanticMemoryBank | None,
+    exact_ids: list[str | None] | None,
+    family_ids: list[str] | None,
+    *,
+    temperature: float,
+) -> torch.Tensor:
+    first = next(iter(dists.values())).mu
+    if memory_bank is None or exact_ids is None or family_ids is None:
+        return first.sum() * 0.0
+    total = first.sum() * 0.0
+    directions = 0
+    if memory_bank.embeddings is not None and len(memory_bank):
+        candidates = memory_bank.embeddings.to(first.device)
+        queue_exact = memory_bank.exact_ids
+        queue_family = memory_bank.family_ids
+        for distribution in dists.values():
+            anchors = F.normalize(distribution.mu, dim=-1)
+            logits = anchors @ candidates.T / temperature
+            positive = torch.tensor(
+                [
+                    [
+                        exact_id is not None and exact_id == candidate_id
+                        for candidate_id in queue_exact
+                    ]
+                    for exact_id in exact_ids
+                ],
+                dtype=torch.bool,
+                device=logits.device,
+            )
+            candidate = torch.tensor(
+                [
+                    [
+                        bool(positive[row, column])
+                        or family_ids[row] != queue_family[column]
+                        for column in range(len(queue_family))
+                    ]
+                    for row in range(len(family_ids))
+                ],
+                dtype=torch.bool,
+                device=logits.device,
+            )
+            if positive.any():
+                total = total + all_positive_supcon(logits, positive, candidate)
+                directions += 1
+    memory_bank.enqueue(dists["fused"].mu, exact_ids, family_ids)
+    return total / max(directions, 1)
+
+
+def hierarchical_metric_loss(
+    dists: dict[str, LatentDistribution],
+    strong_positive_mask: torch.Tensor | None,
+    analogy_mask: torch.Tensor | None,
+    family_positive_mask: torch.Tensor | None,
+    negative_mask: torch.Tensor | None,
+    *,
+    margins: tuple[float, float, float] = (0.05, 0.10, 0.15),
+) -> torch.Tensor:
+    """Enforce strong < exact analogue < family < unrelated distances."""
+
+    first = next(iter(dists.values())).mu
+    masks = (
+        strong_positive_mask,
+        analogy_mask,
+        family_positive_mask,
+        negative_mask,
+    )
+    if any(mask is None for mask in masks):
+        return first.sum() * 0.0
+    prepared = [mask.to(first.device, dtype=torch.bool).clone() for mask in masks]
+    for mask in prepared:
+        mask.fill_diagonal_(False)
+    total = first.sum() * 0.0
+    comparisons = 0
+    for distribution in dists.values():
+        embedding = F.normalize(distribution.mu, dim=-1)
+        distances = 1.0 - embedding @ embedding.T
+        for anchor in range(distances.shape[0]):
+            levels = [distances[anchor][mask[anchor]] for mask in prepared]
+            representatives = [values.mean() if values.numel() else None for values in levels]
+            for left_index, margin in enumerate(margins):
+                left = representatives[left_index]
+                right = representatives[left_index + 1]
+                if left is not None and right is not None:
+                    total = total + F.softplus(left - right + margin)
+                    comparisons += 1
+    return total / max(comparisons, 1)
+
+
+def observation_view_consistency_loss(
+    dists: dict[str, LatentDistribution],
+    observation_view_mask: torch.Tensor | None,
+) -> torch.Tensor:
+    first = next(iter(dists.values())).mu
+    if observation_view_mask is None:
+        return first.sum() * 0.0
+    mask = observation_view_mask.to(first.device, dtype=torch.bool)
+    mask = torch.triu(mask, diagonal=1)
+    if not mask.any():
+        return first.sum() * 0.0
+    values = []
+    for distribution in dists.values():
+        embedding = F.normalize(distribution.mu, dim=-1)
+        distances = 1.0 - embedding @ embedding.T
+        # A soft worst-view term prevents a good average from hiding one
+        # collapsed sparse/noisy/incomplete observation view.
+        pair_values = distances[mask]
+        values.append(pair_values.mean() + 0.25 * pair_values.max())
+    return torch.stack(values).mean()
 
 
 def tree_token_weights(tokenizer: TreeTokenizer) -> torch.Tensor:
@@ -120,7 +307,7 @@ def duplicate_activity_probability_loss(
     decoder_targets: torch.Tensor,
     tokenizer: TreeTokenizer,
     *,
-    required_duplicate_fraction: float = 0.15,
+    required_duplicate_fraction: float = 0.0,
 ) -> torch.Tensor:
     """Penalize probability assigned to activities used in the actual prefix.
 
@@ -218,6 +405,113 @@ def sequence_cross_entropy(
         selected = token_weights.to(logits.device)[flat_targets]
         return (nll * selected).sum() / selected.sum().clamp_min(1e-12)
     return nll.mean()
+
+
+def sequence_termination_losses(
+    logits: dict[str, torch.Tensor],
+    decoder_targets: dict[str, torch.Tensor],
+    tokenizer: TreeTokenizer,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    calibration_values: list[torch.Tensor] = []
+    length_values: list[torch.Tensor] = []
+    for name in ("tree", "trace", "petri", "fused"):
+        if name not in logits or name not in decoder_targets:
+            continue
+        probabilities = F.softmax(logits[name].float(), dim=-1)[..., tokenizer.eos_id]
+        target_next = decoder_targets[name][:, 1:]
+        active = target_next.ne(tokenizer.pad_id)
+        eos_target = target_next.eq(tokenizer.eos_id).to(probabilities.dtype)
+        calibration_values.append(
+            F.binary_cross_entropy(
+                probabilities[active].clamp(1e-6, 1.0 - 1e-6),
+                eos_target[active],
+            )
+        )
+        positions = torch.arange(
+            probabilities.shape[1],
+            dtype=probabilities.dtype,
+            device=probabilities.device,
+        )
+        active_probabilities = probabilities * active.to(probabilities.dtype)
+        expected_position = (
+            active_probabilities * positions
+        ).sum(dim=-1) / active_probabilities.sum(dim=-1).clamp_min(1e-6)
+        target_position = eos_target.argmax(dim=-1).to(probabilities.dtype)
+        denominator = active.sum(dim=-1).to(probabilities.dtype).clamp_min(1.0)
+        length_values.append(
+            F.smooth_l1_loss(
+                expected_position / denominator,
+                target_position / denominator,
+            )
+        )
+    if not calibration_values:
+        zero = next(iter(logits.values())).sum() * 0.0
+        return zero, zero
+    return torch.stack(calibration_values).mean(), torch.stack(length_values).mean()
+
+
+def sequence_policy_feasibility_losses(
+    logits: dict[str, torch.Tensor],
+    decoder_inputs: dict[str, torch.Tensor],
+    decoder_targets: dict[str, torch.Tensor],
+    tokenizer: TreeTokenizer,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Penalize unresolved expected slots and budget-infeasible next tokens."""
+
+    first = next(iter(logits.values()))
+    token_deltas = torch.zeros(
+        tokenizer.vocab_size,
+        dtype=torch.float32,
+        device=first.device,
+    )
+    for name in (*tokenizer.activity_tokens, "TAU", *tokenizer.operator_tokens):
+        token_deltas[tokenizer.token_to_id[name]] = -1.0
+    for arity in range(2, tokenizer.max_arity + 1):
+        token_deltas[tokenizer.token_to_id[f"ARITY_{arity}"]] = float(arity)
+
+    unresolved_values: list[torch.Tensor] = []
+    feasibility_values: list[torch.Tensor] = []
+    for name, values in logits.items():
+        if name not in decoder_inputs or name not in decoder_targets:
+            continue
+        probabilities = F.softmax(values.float(), dim=-1)
+        target_next = decoder_targets[name][:, 1:]
+        active = target_next.ne(tokenizer.pad_id)
+        expected_delta = probabilities @ token_deltas
+        expected_open_slots = 1.0 + torch.cumsum(expected_delta, dim=1)
+        eos_positions = active & target_next.eq(tokenizer.eos_id)
+        if eos_positions.any():
+            unresolved_values.append(F.relu(expected_open_slots[eos_positions]).mean())
+
+        inputs = decoder_inputs[name]
+        for row in range(inputs.shape[0]):
+            width = int(active[row].sum().item())
+            if width <= 0:
+                continue
+            prefix = inputs[row : row + 1, :width]
+            budget = torch.arange(
+                width,
+                0,
+                -1,
+                dtype=torch.long,
+                device=inputs.device,
+            ).unsqueeze(0)
+            prefix_legal = tokenizer.valid_next_token_masks(prefix)
+            bounded_legal = tokenizer.valid_next_token_masks(
+                prefix,
+                remaining_tokens=budget,
+            )
+            infeasible = prefix_legal & ~bounded_legal
+            feasibility_values.append(
+                (probabilities[row : row + 1, :width] * infeasible).sum(dim=-1).mean()
+            )
+
+    zero = first.sum() * 0.0
+    unresolved = torch.stack(unresolved_values).mean() if unresolved_values else zero
+    feasibility = (
+        torch.stack(feasibility_values).mean() if feasibility_values else zero
+    )
+    return unresolved, feasibility
 
 
 def all_positive_supcon(
@@ -390,6 +684,62 @@ def soft_behavior_geometry_loss(
     return total / max(directions, 1)
 
 
+def observed_behavior_geometry_loss(
+    dists: dict[str, LatentDistribution],
+    target_distances: torch.Tensor | None,
+    pair_mask: torch.Tensor | None,
+    *,
+    ranking_tolerance: float = 0.05,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Regress and rank cosine distance against benchmark observed-log L1."""
+
+    first = next(iter(dists.values())).mu
+    if target_distances is None or pair_mask is None:
+        zero = first.sum() * 0.0
+        return zero, zero
+    targets = target_distances.to(first.device, dtype=first.dtype)
+    selected = pair_mask.to(first.device, dtype=torch.bool)
+    selected = torch.triu(selected, diagonal=1)
+    if not selected.any():
+        zero = first.sum() * 0.0
+        return zero, zero
+    regression = first.sum() * 0.0
+    ranking = first.sum() * 0.0
+    regression_count = 0
+    ranking_count = 0
+    for distribution in dists.values():
+        embedding = F.normalize(distribution.mu, dim=-1)
+        latent = 1.0 - embedding @ embedding.T
+        regression = regression + F.smooth_l1_loss(
+            latent[selected],
+            targets[selected],
+        )
+        regression_count += 1
+        for anchor in range(latent.shape[0]):
+            candidates = torch.where(pair_mask[anchor].to(first.device))[0]
+            if candidates.numel() < 2:
+                continue
+            target_values = targets[anchor, candidates]
+            latent_values = latent[anchor, candidates]
+            difference = target_values[:, None] - target_values[None, :]
+            ordered = torch.triu(
+                difference.abs() > ranking_tolerance,
+                diagonal=1,
+            )
+            if not ordered.any():
+                continue
+            signs = difference[ordered].sign()
+            latent_difference = (
+                latent_values[:, None] - latent_values[None, :]
+            )[ordered]
+            ranking = ranking + F.softplus(-signs * latent_difference).mean()
+            ranking_count += 1
+    return (
+        regression / max(regression_count, 1),
+        ranking / max(ranking_count, 1),
+    )
+
+
 def variance_covariance_loss(
     dists: dict[str, LatentDistribution],
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -431,8 +781,18 @@ def multimodal_tree_loss(
     pad_id: int = 0,
     weights: LossWeights | None = None,
     positive_mask: torch.Tensor | None = None,
+    exact_positive_mask: torch.Tensor | None = None,
+    analogy_mask: torch.Tensor | None = None,
+    family_positive_mask: torch.Tensor | None = None,
+    negative_mask: torch.Tensor | None = None,
+    observation_view_mask: torch.Tensor | None = None,
     contrastive_candidate_mask: torch.Tensor | None = None,
+    semantic_memory_bank: SemanticMemoryBank | None = None,
+    strong_behavior_ids: list[str | None] | None = None,
+    equivalence_ids: list[str] | None = None,
     behavior_signatures: torch.Tensor | None = None,
+    observed_behavior_distances: torch.Tensor | None = None,
+    observed_behavior_pair_mask: torch.Tensor | None = None,
     tokenizer: TreeTokenizer | None = None,
 ) -> dict[str, torch.Tensor]:
     weights = weights or LossWeights()
@@ -472,6 +832,21 @@ def multimodal_tree_loss(
     rec_tree = reconstruction("tree")
     trace_to_tree = reconstruction("trace")
     petri_to_tree = reconstruction("petri")
+    fused_to_tree = (
+        reconstruction("fused")
+        if "fused" in logits and "fused" in decoder_loss_targets
+        else rec_tree.sum() * 0.0
+    )
+    fused_subset_to_tree = (
+        reconstruction("fused_subset")
+        if "fused_subset" in logits
+        else fused_to_tree.sum() * 0.0
+    )
+    deployment_to_tree = (
+        reconstruction("deployment")
+        if "deployment" in logits
+        else fused_to_tree.sum() * 0.0
+    )
     contrastive_embeddings = outputs.get("contrastive_embeddings", dists)
     assert isinstance(contrastive_embeddings, dict)
     exact = cross_modal_contrastive_loss(
@@ -486,11 +861,55 @@ def multimodal_tree_loss(
         contrastive_candidate_mask,
         temperature=weights.contrastive_temperature,
     )
+    semantic_exact = semantic_exact_contrastive_loss(
+        dists,
+        exact_positive_mask if exact_positive_mask is not None else positive_mask,
+        contrastive_candidate_mask,
+        temperature=weights.contrastive_temperature,
+    )
+    semantic_memory = semantic_memory_contrastive_loss(
+        dists,
+        semantic_memory_bank,
+        strong_behavior_ids,
+        equivalence_ids,
+        temperature=weights.contrastive_temperature,
+    )
+    hierarchical = hierarchical_metric_loss(
+        dists,
+        positive_mask,
+        analogy_mask,
+        family_positive_mask,
+        negative_mask,
+    )
+    observation_consistency = observation_view_consistency_loss(
+        dists,
+        observation_view_mask,
+    )
     soft = soft_behavior_geometry_loss(
         dists,
         behavior_signatures,
         behavior_temperature=weights.behavior_temperature,
         latent_temperature=weights.latent_temperature,
+    )
+    observed_regression, observed_ranking = observed_behavior_geometry_loss(
+        dists,
+        observed_behavior_distances,
+        observed_behavior_pair_mask,
+    )
+    eos_calibration, generated_length = (
+        sequence_termination_losses(logits, decoder_loss_targets, tokenizer)
+        if tokenizer is not None
+        else (rec_tree.sum() * 0.0, rec_tree.sum() * 0.0)
+    )
+    unresolved_open_slots, completion_feasibility = (
+        sequence_policy_feasibility_losses(
+            logits,
+            decoder_inputs,
+            decoder_loss_targets,
+            tokenizer,
+        )
+        if tokenizer is not None
+        else (rec_tree.sum() * 0.0, rec_tree.sum() * 0.0)
     )
     variance, covariance = variance_covariance_loss(dists)
     latent_alignment = positive_latent_alignment_loss(dists, positive_mask)
@@ -524,9 +943,22 @@ def multimodal_tree_loss(
         weights.tree_reconstruction * rec_tree
         + weights.trace_to_tree * trace_to_tree
         + weights.petri_to_tree * petri_to_tree
+        + weights.fused_to_tree * fused_to_tree
+        + weights.fused_subset_to_tree * fused_subset_to_tree
+        + weights.deployment_to_tree * deployment_to_tree
         + weights.exact_contrastive * exact
         + weights.within_modality_contrastive * within
+        + weights.semantic_exact_contrastive * semantic_exact
+        + weights.semantic_memory_contrastive * semantic_memory
+        + weights.hierarchical_metric * hierarchical
+        + weights.observation_view_consistency * observation_consistency
         + weights.soft_behavior_geometry * soft
+        + weights.observed_behavior_regression * observed_regression
+        + weights.observed_behavior_ranking * observed_ranking
+        + weights.eos_calibration * eos_calibration
+        + weights.generated_length * generated_length
+        + weights.unresolved_open_slots * unresolved_open_slots
+        + weights.completion_feasibility * completion_feasibility
         + weights.variance * variance
         + weights.covariance * covariance
         + weights.latent_alignment * latent_alignment
@@ -542,11 +974,24 @@ def multimodal_tree_loss(
         "tree_reconstruction": rec_tree,
         "trace_to_tree": trace_to_tree,
         "petri_to_tree": petri_to_tree,
+        "fused_to_tree": fused_to_tree,
+        "fused_subset_to_tree": fused_subset_to_tree,
+        "deployment_to_tree": deployment_to_tree,
         "tree_complexity": tree_complexity,
         "duplicate_activity": duplicate_activity,
         "exact_contrastive": exact,
         "within_modality_contrastive": within,
+        "semantic_exact_contrastive": semantic_exact,
+        "semantic_memory_contrastive": semantic_memory,
+        "hierarchical_metric": hierarchical,
+        "observation_view_consistency": observation_consistency,
         "soft_behavior_geometry": soft,
+        "observed_behavior_regression": observed_regression,
+        "observed_behavior_ranking": observed_ranking,
+        "eos_calibration": eos_calibration,
+        "generated_length": generated_length,
+        "unresolved_open_slots": unresolved_open_slots,
+        "completion_feasibility": completion_feasibility,
         "variance": variance,
         "covariance": covariance,
         "effective_rank": ranks.mean(),

@@ -1,4 +1,5 @@
 import sys
+import inspect
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,6 +10,13 @@ from proc_rosetta.benchmarks import (
     activity_count_features,
     alignment_f1_score,
     discovery_quality_report,
+    decode_target_tree,
+    decode_with_beam,
+    behavior_matrices,
+    evaluate_single_decode,
+    ValidationAuditConfig,
+    validation_audit_report,
+    validation_split_hash,
     evaluate_inductive_miner_discovery,
     evaluate_proc_rosetta_discovery,
     evaluate_embedding_method,
@@ -16,6 +24,7 @@ from proc_rosetta.benchmarks import (
     footprint_fitness_precision,
     format_human_test_report,
     levenshtein_distance,
+    observation_quality_report,
     retrieval_metrics,
     rich_test_report,
     summarize_discovery_quality,
@@ -23,6 +32,11 @@ from proc_rosetta.benchmarks import (
     trim_tree_token_sequence,
 )
 from proc_rosetta.tokenizers import TreeTokenizer
+from proc_rosetta.tree import ProcessTreeNode
+from proc_rosetta.data import ProcessBatchCollator, SyntheticProcessDataset
+from proc_rosetta.models import ProcRosettaModel
+from proc_rosetta.synthetic import SyntheticConfig
+from proc_rosetta.tokenizers import ActivityTokenizer
 
 
 def test_report_rejects_mixed_curriculum_samples():
@@ -97,6 +111,160 @@ def test_decode_token_edit_helpers():
     assert levenshtein_distance([1, 2, 3], [1, 4, 3, 5]) == 2
 
 
+def _decode_sample(tree, *, targets=None, traces=None):
+    return SimpleNamespace(
+        tree=tree,
+        traces=traces or [[label for label in tree.activity_labels()]],
+        petri_graph=SimpleNamespace(
+            transition_labels=tuple(tree.activity_labels()),
+        ),
+        decoder_target_trees=targets or {
+            name: tree for name in ("tree", "trace", "petri")
+        },
+        equivalence_id="family",
+        metadata={},
+    )
+
+
+def test_evaluate_single_decode_uses_explicit_source_target(monkeypatch):
+    tokenizer = TreeTokenizer(max_activities=3)
+    original = ProcessTreeNode.seq(
+        ProcessTreeNode.activity("A0"),
+        ProcessTreeNode.activity("A1"),
+    )
+    trace_target = ProcessTreeNode.activity("A0")
+    sample = _decode_sample(
+        original,
+        targets={"tree": original, "trace": trace_target, "petri": original},
+    )
+    simulated = []
+
+    def simulate(tree, num_traces):
+        simulated.append(tree)
+        return [[str(tree)]]
+
+    monkeypatch.setattr("proc_rosetta.benchmarks.simulate_traces", simulate)
+    monkeypatch.setattr("proc_rosetta.benchmarks.tree_to_petri_net", lambda tree: object())
+    tokens = tokenizer.encode_tree(trace_target, canonicalize=False)
+
+    row = evaluate_single_decode(
+        SimpleNamespace(tree_tokenizer=tokenizer),
+        sample,
+        tokens,
+        source_name="trace",
+        target_tree=trace_target,
+        include_original_tree_metrics=True,
+    )
+
+    assert row["source_name"] == "trace"
+    assert row["exact_tree_match"] is True
+    assert row["original_tree_exact_match"] is False
+    assert row["normalized_token_edit_distance"] == 0.0
+    assert simulated[0] == trace_target
+    assert row["tree_size"] == trace_target.size()
+
+
+def test_semantic_and_deployment_duplicate_policies_use_matching_targets():
+    duplicate = ProcessTreeNode.seq(
+        ProcessTreeNode.activity("A0"),
+        ProcessTreeNode.activity("A0"),
+    )
+    sample = _decode_sample(duplicate)
+
+    semantic = decode_target_tree(sample, "tree", avoid_duplicates=False)
+    deployment = decode_target_tree(sample, "tree", avoid_duplicates=True)
+
+    assert semantic.activity_labels() == ("A0", "A0")
+    assert deployment.activity_labels() == ("A0",)
+
+
+def test_raw_beam_policy_allows_semantic_duplicates():
+    calls = []
+
+    class Decoder:
+        def decode_beam(self, source, **kwargs):
+            calls.append(kwargs)
+            return torch.tensor([[1, 2]])
+
+    decode_with_beam(
+        Decoder(),
+        torch.zeros((1, 2)),
+        max_length=4,
+        completion_policy="prefix_only",
+        avoid_duplicate_activity_labels=False,
+    )
+    decode_with_beam(
+        Decoder(),
+        torch.zeros((1, 2)),
+        max_length=4,
+        completion_policy="bounded",
+        avoid_duplicate_activity_labels=True,
+    )
+
+    assert calls[0]["avoid_duplicate_activity_labels"] is False
+    assert calls[1]["avoid_duplicate_activity_labels"] is True
+
+
+def test_behavior_matrix_cache_is_invalidated_when_validation_rows_change(tmp_path):
+    config = SyntheticConfig(max_depth=2, max_activities=4, traces_per_sample=2)
+    first = SyntheticProcessDataset(2, config=config, seed=31).samples
+    second = SyntheticProcessDataset(2, config=config, seed=32).samples
+
+    first_matrices = behavior_matrices(first, cache_dir=tmp_path)
+    second_matrices = behavior_matrices(second, cache_dir=tmp_path)
+
+    assert validation_split_hash(first) != validation_split_hash(second)
+    assert len(list(tmp_path.glob("behavior-*.npz"))) == 2
+    assert first_matrices["mean_l1"].shape == second_matrices["mean_l1"].shape
+
+
+def test_validation_audit_has_no_checkpoint_or_split_path_surface(monkeypatch):
+    parameters = inspect.signature(validation_audit_report).parameters
+    assert "checkpoint_path" not in parameters
+    assert "data_dir" not in parameters
+    assert "split" not in parameters
+
+    monkeypatch.setattr(
+        "proc_rosetta.training.load_checkpoint",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("validation audit must not load a checkpoint")
+        ),
+    )
+    config = SyntheticConfig(max_depth=1, max_activities=3, traces_per_sample=1)
+    samples = SyntheticProcessDataset(1, config=config, seed=41).samples
+    tokenizer = TreeTokenizer(max_activities=3, max_arity=3)
+    model = ProcRosettaModel(
+        tokenizer,
+        ActivityTokenizer(max_activities=3),
+        latent_dim=4,
+        hidden_dim=8,
+        decoder_layers=1,
+        tree_encoder_layers=1,
+        memory_tokens=1,
+    )
+
+    report = validation_audit_report(
+        model,
+        samples,
+        "complex",
+        loss_metrics={"loss": 1.0},
+        epoch=1,
+        config=ValidationAuditConfig(
+            decode_interval=2,
+            full_interval=10,
+            decode_family_count=1,
+            discovery_family_count=1,
+            beam_size=1,
+            max_decode_length=8,
+        ),
+        batch_size=1,
+        device="cpu",
+    )
+
+    assert report["split"] == "validation"
+    assert "decode_quality" in report and "cross_modal_retrieval" in report
+
+
 def test_discovery_quality_summary_helpers():
     rows = [
         {
@@ -133,6 +301,93 @@ def test_discovery_quality_summary_helpers():
     footprint_summary = summarize_discovery_quality(rows, conformance_method="footprints")
     assert footprint_summary["footprint_evaluable_rate"] == 0.5
     assert footprint_summary["footprint_error_count"] == 1
+
+
+def test_discovery_reports_reranked_f1_against_beam_oracle(monkeypatch):
+    class Decoder:
+        @staticmethod
+        def decode_beam_candidates(source, **kwargs):
+            return [[([1], 0.0), ([2], -1.0)] for _ in range(len(source.mu))]
+
+    class Tokenizer:
+        def decode_tree(self, token_ids):
+            raise ValueError("force language-model reranking")
+
+    class Model:
+        tree_tokenizer = Tokenizer()
+        activity_tokenizer = object()
+        tree_decoder = Decoder()
+
+        def eval(self):
+            return None
+
+        def to(self, device):
+            return None
+
+        def encode_traces(self, traces):
+            return SimpleNamespace(mu=torch.zeros((len(traces), 1)))
+
+    sample = SimpleNamespace(
+        equivalence_id="family",
+        metadata={"motif": "ordinary_tree", "observation_quality": "full"},
+    )
+    monkeypatch.setattr(
+        "proc_rosetta.benchmarks.ProcessBatchCollator",
+        lambda *args: lambda samples: {"traces": torch.zeros((len(samples), 1))},
+    )
+
+    def discovery_row(model, sample, token_ids, **kwargs):
+        f1 = 1.0 if token_ids == [2] else 0.5
+        return {
+            "model_discovered": True,
+            "conformance_evaluable": True,
+            "fitness": f1,
+            "precision": f1,
+            "f1": f1,
+            "error": None,
+        }
+
+    monkeypatch.setattr(
+        "proc_rosetta.benchmarks.evaluate_proc_rosetta_discovery", discovery_row
+    )
+    monkeypatch.setattr(
+        "proc_rosetta.benchmarks.evaluate_inductive_miner_discovery",
+        lambda *args, **kwargs: discovery_row(None, None, [2]),
+    )
+
+    report = discovery_quality_report(Model(), [sample], batch_size=1, device="cpu")
+    neural = report["methods"]["proc_rosetta_trace_mu"]
+
+    assert neural["mean_f1"] == 0.5
+    assert neural["mean_beam_oracle_f1"] == 1.0
+    assert neural["mean_beam_oracle_f1_gap"] == 0.5
+
+
+def test_observation_quality_report_includes_decode_and_exact_retrieval():
+    samples = [
+        SimpleNamespace(
+            strong_behavior_id=f"exact-{index}",
+            exact_behavior_id=f"exact-{index}",
+            metadata={"observation_quality": quality},
+        )
+        for index, quality in enumerate(("full", "sparse", "noisy"))
+    ]
+    embeddings = {
+        "proc_rosetta_trace_mu": np.eye(3),
+        "proc_rosetta_tree_mu": np.eye(3),
+    }
+
+    report = observation_quality_report(
+        samples,
+        embeddings,
+        {"full": {"exact_tree_match_rate": 0.75}},
+    )
+
+    assert report["full"]["exact_tree_match_rate"] == 0.75
+    assert all(
+        values["exact_retrieval_recall_at_1"] == 1.0
+        for values in report.values()
+    )
 
 
 def test_footprint_fitness_and_precision_use_log_and_process_tree_footprints(monkeypatch):

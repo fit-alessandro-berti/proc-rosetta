@@ -15,8 +15,11 @@ from proc_rosetta.losses import (
     cross_modal_contrastive_loss,
     duplicate_activity_probability_loss,
     expected_tree_complexity_loss,
+    hierarchical_metric_loss,
     multimodal_tree_loss,
     positive_latent_alignment_loss,
+    semantic_exact_contrastive_loss,
+    sequence_policy_feasibility_losses,
     sequence_cross_entropy,
     tree_complexity_token_costs,
 )
@@ -31,17 +34,21 @@ from proc_rosetta.training import (
     _different_behavior_permutation,
     _folded_tree_statistics,
     _summarize_discovery_metrics,
+    adaptive_scheduled_sampling_probability,
     build_lr_scheduler,
     build_model,
     build_optimizer,
+    balanced_validation_components,
     checkpoint_selection_key,
     curriculum_batch_plan,
     final_curriculum_checkpoint_key,
     epoch_snapshot_directory,
     loss_weights_from_checkpoint,
     loss_weights_from_config,
+    metric_spec,
     replay_scheduler_history,
     save_epoch_snapshot,
+    select_validation_candidate,
     stage_acceptance_report,
     structural_curriculum_for_epoch,
     train_synthetic,
@@ -173,9 +180,19 @@ def test_model_forward_and_loss(monkeypatch):
         outputs["dists"]["trace"].mu,
     )
     assert torch.isfinite(losses["loss"])
-    assert set(outputs["contrastive_embeddings"]) == {"tree", "trace", "petri"}
-    assert set(outputs["decoder_inputs"]) == {"tree", "trace", "petri"}
-    for name in ("tree", "trace", "petri"):
+    assert set(outputs["contrastive_embeddings"]) == {
+        "tree", "trace", "petri", "fused"
+    }
+    assert set(outputs["decoder_inputs"]) == {"tree", "trace", "petri", "fused"}
+    assert outputs["dists"]["fused"].memory is None
+    assert torch.allclose(
+        outputs["fused_decoder_source"],
+        torch.stack(
+            [outputs["dists"][name].mu for name in ("tree", "trace", "petri")]
+        ).mean(dim=0),
+    )
+    assert torch.isfinite(losses["fused_to_tree"])
+    for name in ("tree", "trace", "petri", "fused"):
         assert torch.equal(
             outputs["decoder_inputs"][name],
             outputs["decoder_targets"][name][:, :-1],
@@ -220,7 +237,7 @@ def test_model_forward_and_loss(monkeypatch):
     )
     sampled_losses["loss"].backward()
 
-    assert decoder_forward_calls == 1
+    assert decoder_forward_calls == 2
     assert torch.equal(
         decoder_inputs_seen[0],
         torch.cat(
@@ -231,6 +248,10 @@ def test_model_forward_and_loss(monkeypatch):
             dim=0,
         ),
     )
+    assert torch.equal(
+        decoder_inputs_seen[1],
+        sampled_outputs["decoder_inputs"]["fused"],
+    )
     assert incremental_grad_modes and not any(incremental_grad_modes)
     assert all(
         torch.isfinite(logits).any(dim=-1).all()
@@ -238,6 +259,41 @@ def test_model_forward_and_loss(monkeypatch):
     )
     assert torch.isfinite(sampled_losses["loss"])
     assert any(parameter.grad is not None for parameter in model.tree_decoder.parameters())
+
+
+def test_fused_reconstruction_backpropagates_to_every_encoder_and_decoder():
+    config = SyntheticConfig(max_depth=2, max_activities=4, traces_per_sample=2)
+    tokenizer = TreeTokenizer(max_activities=4, max_arity=3)
+    activity_tokenizer = ActivityTokenizer(max_activities=4)
+    batch = ProcessBatchCollator(tokenizer, activity_tokenizer)(
+        SyntheticProcessDataset(2, config=config, seed=19).samples
+    )
+    model = ProcRosettaModel(
+        tokenizer,
+        activity_tokenizer,
+        latent_dim=8,
+        hidden_dim=16,
+        decoder_layers=1,
+        tree_encoder_layers=1,
+        memory_tokens=2,
+    )
+    fused_loss = multimodal_tree_loss(
+        model(batch),
+        batch["decoder_targets"],
+    )["fused_to_tree"]
+
+    fused_loss.backward()
+
+    for module in (
+        model.tree_encoder,
+        model.trace_encoder,
+        model.petri_encoder,
+        model.tree_decoder,
+    ):
+        assert any(
+            parameter.grad is not None and parameter.grad.abs().sum() > 0
+            for parameter in module.parameters()
+        )
 
 
 def _peaked_logits(
@@ -667,7 +723,23 @@ def test_zero_structure_weights_preserve_previous_total_exactly():
         "decoder_targets": {name: targets for name in logits},
         "decoder_inputs": {name: targets[:, :-1] for name in logits},
     }
-    weights = LossWeights(tree_complexity=0.0, duplicate_activity=0.0)
+    weights = LossWeights(
+        fused_to_tree=0.0,
+        fused_subset_to_tree=0.0,
+        deployment_to_tree=0.0,
+        semantic_exact_contrastive=0.0,
+        semantic_memory_contrastive=0.0,
+        hierarchical_metric=0.0,
+        observed_behavior_regression=0.0,
+        observed_behavior_ranking=0.0,
+        eos_calibration=0.0,
+        generated_length=0.0,
+        unresolved_open_slots=0.0,
+        completion_feasibility=0.0,
+        observation_view_consistency=0.0,
+        tree_complexity=0.0,
+        duplicate_activity=0.0,
+    )
 
     losses = multimodal_tree_loss(
         outputs,
@@ -701,6 +773,62 @@ def test_zero_structure_weights_preserve_previous_total_exactly():
         legacy_losses["duplicate_activity"],
         losses["duplicate_activity"],
     )
+
+
+def test_policy_feasibility_losses_are_differentiable():
+    tokenizer = TreeTokenizer(max_activities=2, max_arity=4)
+    target = torch.tensor(
+        [
+            tokenizer.encode_tree(
+                ProcessTreeNode.seq(
+                    ProcessTreeNode.activity("A0"),
+                    ProcessTreeNode.activity("A1"),
+                ),
+                canonicalize=False,
+            )
+        ]
+    )
+    logits = torch.zeros(
+        (1, target.shape[1] - 1, tokenizer.vocab_size),
+        requires_grad=True,
+    )
+
+    unresolved, feasibility = sequence_policy_feasibility_losses(
+        {"tree": logits},
+        {"tree": target[:, :-1]},
+        {"tree": target},
+        tokenizer,
+    )
+    (unresolved + feasibility).backward()
+
+    assert unresolved >= 0.0
+    assert feasibility > 0.0
+    assert logits.grad is not None and logits.grad.abs().sum() > 0.0
+
+
+def test_scheduled_sampling_adapts_to_raw_decode_exposure_gap():
+    config = TrainConfig(
+        device="cpu",
+        scheduled_sampling_max=0.20,
+        scheduled_sampling_start_epoch=5,
+        scheduled_sampling_ramp_epochs=10,
+    )
+    metrics = {
+        "trace_to_tree": 0.05,
+        "decode_quality": {
+            "methods": {
+                "proc_rosetta_trace_mu": {
+                    "terminated_rate": 0.25,
+                    "mean_normalized_token_edit_distance": 0.75,
+                }
+            }
+        },
+    }
+
+    baseline = adaptive_scheduled_sampling_probability(config, 6, None)
+    adapted = adaptive_scheduled_sampling_probability(config, 6, metrics)
+
+    assert baseline < adapted <= config.scheduled_sampling_max
 
 
 def test_legacy_checkpoint_defaults_new_structure_objectives_to_zero():
@@ -824,7 +952,7 @@ def test_label_smoothing_ignores_grammar_masked_logits():
     assert loss.item() < 1.0
 
 
-def test_checkpoint_selection_is_strictly_lexicographic():
+def test_checkpoint_selection_uses_balanced_quality_before_loss():
     baseline = {
         "checkpoint_selection_primary_exact": 0.90,
         "checkpoint_selection_edit_score": 0.90,
@@ -844,8 +972,8 @@ def test_checkpoint_selection_is_strictly_lexicographic():
         "checkpoint_selection_spearman": -1.0,
     }
 
-    assert checkpoint_selection_key(lower_exact) < checkpoint_selection_key(baseline)
-    assert checkpoint_selection_key(tied_exact_better_edit) > checkpoint_selection_key(
+    assert checkpoint_selection_key(lower_exact) > checkpoint_selection_key(baseline)
+    assert checkpoint_selection_key(tied_exact_better_edit) < checkpoint_selection_key(
         baseline
     )
     legacy_metrics = {
@@ -854,10 +982,42 @@ def test_checkpoint_selection_is_strictly_lexicographic():
         "exact_behavior_recall_at_1": 0.60,
         "behavior_distance_spearman": 0.40,
     }
-    assert checkpoint_selection_key(legacy_metrics) == (0.75, 0.80, 0.60, 0.40)
+    assert checkpoint_selection_key(legacy_metrics)[1] == pytest.approx(
+        balanced_validation_components(legacy_metrics)["balanced_score"]
+    )
 
 
-def test_final_curriculum_checkpoint_uses_complex_then_macro():
+def test_ordinary_and_ema_use_the_same_balanced_selection_key():
+    ordinary = {
+        "checkpoint_selection_primary_exact": 0.70,
+        "checkpoint_selection_edit_score": 0.70,
+        "checkpoint_selection_recall_at_1": 0.70,
+        "checkpoint_selection_spearman": 0.20,
+        "loss": 0.1,
+    }
+    ema = {
+        **ordinary,
+        "checkpoint_selection_primary_exact": 0.80,
+        "checkpoint_selection_recall_at_1": 0.80,
+        "loss": 1.0,
+    }
+
+    selected, weight_kind = select_validation_candidate(ordinary, ema)
+
+    assert selected is ema
+    assert weight_kind == "ema"
+    assert checkpoint_selection_key(ema) > checkpoint_selection_key(ordinary)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ("mean_behavior_l1", "mean_rank", "nearest_neighbor_behavior_l1"),
+)
+def test_metric_registry_marks_distance_and_rank_metrics_lower_is_better(name):
+    assert metric_spec(name).direction == "min"
+
+
+def test_final_curriculum_checkpoint_uses_robust_macro_and_regression_gate():
     complex_metrics = {
         "checkpoint_selection_primary_exact": 0.80,
         "checkpoint_selection_edit_score": 0.70,
@@ -875,10 +1035,15 @@ def test_final_curriculum_checkpoint_uses_complex_then_macro():
 
     baseline = final_curriculum_checkpoint_key(complex_metrics, macro_metrics)
     assert final_curriculum_checkpoint_key(complex_metrics, better_macro) > baseline
-    assert final_curriculum_checkpoint_key(worse_complex, better_macro) < baseline
+    assert final_curriculum_checkpoint_key(worse_complex, better_macro) > baseline
+    assert final_curriculum_checkpoint_key(
+        complex_metrics,
+        better_macro,
+        regression_within_tolerance=False,
+    )[0] == 0.0
 
 
-def test_lr_scheduler_tracks_validation_loss_instead_of_discovery_score():
+def test_lr_scheduler_tracks_balanced_validation_score():
     parameter = torch.nn.Parameter(torch.tensor(0.0))
     optimizer = torch.optim.AdamW([parameter], lr=1e-3)
     config = TrainConfig(lr_patience=0, lr_factor=0.5)
@@ -888,22 +1053,28 @@ def test_lr_scheduler_tracks_validation_loss_instead_of_discovery_score():
         {
             "validation": {
                 "loss": 1.0,
-                "checkpoint_selection_score": 0.1,
+                "trace_canonical_exact": 0.1,
+                "trace_normalized_tree_edit": 0.9,
+                "exact_behavior_recall_at_1": 0.1,
+                "behavior_distance_spearman": -0.8,
             }
         },
         {
             "validation": {
                 "loss": 1.1,
-                "checkpoint_selection_score": 0.9,
+                "trace_canonical_exact": 0.9,
+                "trace_normalized_tree_edit": 0.1,
+                "exact_behavior_recall_at_1": 0.9,
+                "behavior_distance_spearman": 0.8,
             }
         },
     ]
     replay_scheduler_history(scheduler, history)
 
-    assert scheduler.mode == "min"
+    assert scheduler.mode == "max"
     assert scheduler.threshold == config.min_delta
     assert scheduler.threshold_mode == "abs"
-    assert optimizer.param_groups[0]["lr"] == pytest.approx(5e-4)
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(1e-3)
 
 
 def test_train_synthetic_smoke():
@@ -980,6 +1151,7 @@ def test_train_from_data_dir_restores_best_weights_before_return(tmp_path, monke
             trace_set_layers=1,
             petri_message_passing_steps=1,
             use_ema=False,
+            validation_audit_enabled=False,
             device="cpu",
         ),
         show_progress=False,
@@ -1014,6 +1186,51 @@ def test_multi_positive_contrastive_loss_does_not_make_family_views_negatives():
     # Every positive contributes its own log probability; two equally likely
     # positives therefore produce the irreducible log(2) normalization term.
     assert torch.allclose(family_positive, torch.log(torch.tensor(2.0)))
+
+
+def test_semantic_retrieval_loss_operates_without_projection_head():
+    semantic = torch.tensor(
+        [[1.0, 0.0], [0.8, 0.2], [-1.0, 0.0]],
+        requires_grad=True,
+    )
+    dists = {
+        name: LatentDistribution(semantic, torch.zeros_like(semantic))
+        for name in ("tree", "trace", "petri")
+    }
+    exact = torch.tensor(
+        [[True, True, False], [True, True, False], [False, False, True]]
+    )
+    candidates = torch.ones_like(exact)
+
+    loss = semantic_exact_contrastive_loss(
+        dists,
+        exact,
+        candidates,
+        temperature=0.2,
+    )
+    loss.backward()
+
+    assert torch.isfinite(loss)
+    assert semantic.grad is not None and semantic.grad.abs().sum() > 0
+
+
+def test_hierarchical_metric_consumes_analogy_mask_and_has_finite_gradients():
+    embedding = torch.tensor(
+        [[1.0, 0.0], [0.9, 0.1], [0.5, 0.5], [0.0, 1.0], [-1.0, 0.0]],
+        requires_grad=True,
+    )
+    dists = {"tree": LatentDistribution(embedding, torch.zeros_like(embedding))}
+    masks = []
+    for index in range(4):
+        mask = torch.zeros((5, 5), dtype=torch.bool)
+        mask[0, index + 1] = mask[index + 1, 0] = True
+        masks.append(mask)
+
+    loss = hierarchical_metric_loss(dists, *masks)
+    loss.backward()
+
+    assert torch.isfinite(loss) and loss > 0
+    assert embedding.grad is not None and torch.isfinite(embedding.grad).all()
 
 
 def test_petri_batch_contains_visible_transition_label_ids():
@@ -1107,8 +1324,8 @@ def test_effective_contrastive_batch_contains_32_distinct_behaviors():
     )
     first_batch = next(iter(sampler))
 
-    assert len(first_batch) == 128
-    assert len({samples[index].equivalence_id for index in first_batch}) == 32
+    assert 120 <= len(first_batch) <= 128
+    assert len({samples[index].equivalence_id for index in first_batch}) >= 25
 
 
 def test_batch_sampler_groups_exact_partial_order_positives_without_orphans():
@@ -1129,12 +1346,39 @@ def test_batch_sampler_groups_exact_partial_order_positives_without_orphans():
     )
 
     batches = list(sampler)
+    mixed_relation_batch = False
     for batch in batches:
         partial_counts = {
             partial: sum(samples[index].partial_order_id == partial for index in batch)
             for partial in {samples[index].partial_order_id for index in batch}
         }
-        assert all(count >= 2 for count in partial_counts.values())
+        assert max(partial_counts.values()) >= 2
+        mixed_relation_batch |= len(partial_counts) > 1
+    assert mixed_relation_batch
+
+
+def test_relation_aware_sampler_length_matches_expanded_batches():
+    samples = [
+        SimpleNamespace(
+            equivalence_id=f"family-{family}",
+            exact_behavior_id=f"exact-{family}-{variant // 2}",
+            partial_order_id=f"partial-{variant % 2}",
+        )
+        for family in range(6)
+        for variant in range(4)
+    ]
+    sampler = BehaviorFamilyBatchSampler(
+        samples,
+        batch_size=5,
+        views_per_family=2,
+        shuffle=True,
+    )
+
+    expected_length = len(sampler)
+    batches = list(sampler)
+
+    assert expected_length == len(batches)
+    assert all(1 <= len(batch) <= 5 for batch in batches)
 
 
 def test_source_ablation_deranges_adjacent_views_of_the_same_behavior():

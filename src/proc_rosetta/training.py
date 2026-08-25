@@ -4,7 +4,7 @@ import csv
 from collections import defaultdict
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import random
 import math
@@ -14,6 +14,7 @@ from time import perf_counter
 
 import torch
 import numpy as np
+from torch.nn import functional as F
 from torch.utils.data import DataLoader, Sampler
 
 from proc_rosetta.data import (
@@ -26,14 +27,19 @@ from proc_rosetta.data import (
     split_samples_path,
 )
 from proc_rosetta.devices import default_device, resolve_device
-from proc_rosetta.losses import LossWeights, multimodal_tree_loss
+from proc_rosetta.behavior import behavioral_distance
+from proc_rosetta.losses import LossWeights, SemanticMemoryBank, multimodal_tree_loss
 from proc_rosetta.models import LatentDistribution, ProcRosettaModel
-from proc_rosetta.pm4py_bridge import TREE_NORMALIZATION_VERSION
+from proc_rosetta.pm4py_bridge import (
+    TREE_NORMALIZATION_VERSION,
+    simulate_traces,
+    tree_to_petri_net,
+)
 from proc_rosetta.synthetic import CURRICULUM_LEVELS, SyntheticConfig
 from proc_rosetta.tokenizers import ActivityTokenizer, TreeTokenizer
 
 
-CHECKPOINT_FORMAT_VERSION = 6
+CHECKPOINT_FORMAT_VERSION = 7
 MODEL_ARCHITECTURE_VERSION = "proc-rosetta-latent-transformer-v6"
 RESUME_POLICY_OVERRIDE_FIELDS = frozenset(
     {
@@ -63,6 +69,167 @@ DEFAULT_CURRICULUM_STAGES = (
         "weights": {"simple": 0.10, "medium": 0.20, "complex": 0.70},
     },
 )
+
+
+def curriculum_stage_state(name: str) -> dict[str, object]:
+    for stage in DEFAULT_CURRICULUM_STAGES:
+        if stage["name"] == name:
+            return {
+                "name": name,
+                "weights": {
+                    level: float(dict(stage["weights"]).get(level, 0.0))
+                    for level in CURRICULUM_LEVELS
+                },
+            }
+    raise ValueError(f"unknown structural curriculum stage {name!r}")
+
+
+def competence_curriculum_state(
+    current_stage: str | None,
+    metrics_by_curriculum: dict[str, dict[str, object]],
+    stage_baseline: dict[str, object] | None,
+    *,
+    epochs_in_stage: int,
+    minimum_epochs: int,
+    min_delta: float,
+    simple_best_score: float = float("-inf"),
+    regression_tolerance: float = 0.02,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Advance only after baseline-relative competence and regression gates."""
+
+    stage = current_stage or "simple"
+    report: dict[str, object] = {
+        "current_stage": stage,
+        "eligible": False,
+        "advanced": False,
+        "checks": {},
+    }
+    if stage == "complex" or stage not in metrics_by_curriculum:
+        return curriculum_stage_state(stage), report
+    current = balanced_validation_components(metrics_by_curriculum[stage])
+    baseline = (
+        balanced_validation_components(stage_baseline)
+        if stage_baseline is not None
+        else current
+    )
+    checks = {
+        "minimum_stage_duration": epochs_in_stage >= minimum_epochs,
+        "hard_decode_gates": bool(current["all_hard_gates_pass"]),
+        "decode_improved_from_stage_baseline": (
+            float(current["decode_score"])
+            >= float(baseline["decode_score"]) + min_delta
+        ),
+        "retrieval_improved_from_stage_baseline": (
+            float(current["retrieval_score"])
+            >= float(baseline["retrieval_score"]) + min_delta
+        ),
+    }
+    if stage == "medium" and math.isfinite(simple_best_score):
+        simple_current = balanced_validation_components(
+            metrics_by_curriculum["simple"]
+        )
+        checks["simple_regression_within_tolerance"] = (
+            float(simple_current["balanced_score"])
+            >= simple_best_score - regression_tolerance
+        )
+    report["checks"] = checks
+    report["eligible"] = all(checks.values())
+    if bool(report["eligible"]):
+        next_stage = "medium" if stage == "simple" else "complex"
+        report["advanced"] = True
+        report["next_stage"] = next_stage
+        return curriculum_stage_state(next_stage), report
+    return curriculum_stage_state(stage), report
+
+
+@dataclass(frozen=True)
+class MetricSpec:
+    name: str
+    direction: str
+    lower_bound: float | None = None
+    upper_bound: float | None = None
+    group: str = "diagnostic"
+
+    def __post_init__(self) -> None:
+        if self.direction not in {"min", "max"}:
+            raise ValueError("metric direction must be 'min' or 'max'")
+
+
+def _metric_specs() -> tuple[MetricSpec, ...]:
+    return (
+        MetricSpec("loss", "min", 0.0, None, "loss"),
+        MetricSpec("tree_reconstruction", "min", 0.0, None, "loss"),
+        MetricSpec("trace_to_tree", "min", 0.0, None, "loss"),
+        MetricSpec("petri_to_tree", "min", 0.0, None, "loss"),
+        MetricSpec("fused_to_tree", "min", 0.0, None, "loss"),
+        MetricSpec("mean_behavior_l1", "min", 0.0, 2.0, "decode"),
+        MetricSpec("behavior_l1", "min", 0.0, 2.0, "decode"),
+        MetricSpec("nearest_neighbor_behavior_l1", "min", 0.0, 2.0, "geometry"),
+        MetricSpec("mean_behavior_l1_at_nearest_neighbor", "min", 0.0, 2.0, "geometry"),
+        MetricSpec("mean_rank", "min", 1.0, None, "retrieval"),
+        MetricSpec("normalized_token_edit_distance", "min", 0.0, 1.0, "decode"),
+        MetricSpec("mean_normalized_token_edit_distance", "min", 0.0, 1.0, "decode"),
+        MetricSpec("trace_normalized_tree_edit", "min", 0.0, 1.0, "decode"),
+        MetricSpec("deployment_duplicate_free_tree_edit", "min", 0.0, 1.0, "decode"),
+        MetricSpec("terminated_rate", "max", 0.0, 1.0, "decode"),
+        MetricSpec("valid_tree_rate", "max", 0.0, 1.0, "decode"),
+        MetricSpec("exact_tree_match_rate", "max", 0.0, 1.0, "decode"),
+        MetricSpec("petri_conversion_rate", "max", 0.0, 1.0, "decode"),
+        MetricSpec("behavior_eval_success_rate", "max", 0.0, 1.0, "decode"),
+        MetricSpec("trace_canonical_exact", "max", 0.0, 1.0, "decode"),
+        MetricSpec("deployment_duplicate_free_tree_exact", "max", 0.0, 1.0, "decode"),
+        MetricSpec("top1_accuracy", "max", 0.0, 1.0, "retrieval"),
+        MetricSpec("mrr", "max", 0.0, 1.0, "retrieval"),
+        MetricSpec("recall_at_5", "max", 0.0, 1.0, "retrieval"),
+        MetricSpec("partial_order_recall_at_1", "max", 0.0, 1.0, "retrieval"),
+        MetricSpec("partial_order_recall_at_5", "max", 0.0, 1.0, "retrieval"),
+        MetricSpec("analogy_neighborhood_spearman", "max", -1.0, 1.0, "retrieval"),
+        MetricSpec("exact_behavior_recall_at_1", "max", 0.0, 1.0, "retrieval"),
+        MetricSpec("within_family_cosine", "max", -1.0, 1.0, "equivalence"),
+        MetricSpec("between_family_cosine", "min", -1.0, 1.0, "equivalence"),
+        MetricSpec("equivalence_margin", "max", -2.0, 2.0, "equivalence"),
+        MetricSpec("behavior_id_retrieval_top1", "max", 0.0, 1.0, "equivalence"),
+        MetricSpec("log_resampling_consistency", "max", -1.0, 1.0, "equivalence"),
+        MetricSpec("behavior_distance_spearman", "max", -1.0, 1.0, "geometry"),
+        MetricSpec("spearman_embedding_distance_vs_behavior_l1", "max", -1.0, 1.0, "geometry"),
+        MetricSpec("fitness", "max", 0.0, 1.0, "discovery"),
+        MetricSpec("precision", "max", 0.0, 1.0, "discovery"),
+        MetricSpec("f1", "max", 0.0, 1.0, "discovery"),
+        MetricSpec("mean_fitness", "max", 0.0, 1.0, "discovery"),
+        MetricSpec("mean_precision", "max", 0.0, 1.0, "discovery"),
+        MetricSpec("mean_f1", "max", 0.0, 1.0, "discovery"),
+        MetricSpec("checkpoint_selection_score", "max", 0.0, 1.0, "selection"),
+        MetricSpec("checkpoint_selection_decode_score", "max", 0.0, 1.0, "decode"),
+        MetricSpec("checkpoint_selection_retrieval_score", "max", 0.0, 1.0, "retrieval"),
+        MetricSpec("checkpoint_selection_equivalence_score", "max", 0.0, 1.0, "equivalence"),
+        MetricSpec("checkpoint_selection_geometry_score", "max", 0.0, 1.0, "geometry"),
+        MetricSpec("checkpoint_selection_discovery_score", "max", 0.0, 1.0, "discovery"),
+        MetricSpec("checkpoint_selection_hard_gates_pass", "max", 0.0, 1.0, "selection"),
+        MetricSpec("checkpoint_selection_fused_geometry_advantage", "max", None, None, "geometry"),
+    )
+
+
+METRIC_REGISTRY = {spec.name: spec for spec in _metric_specs()}
+
+
+def metric_spec(name: str) -> MetricSpec:
+    """Resolve a registered metric, including a dotted evaluator path."""
+
+    if name in METRIC_REGISTRY:
+        return METRIC_REGISTRY[name]
+    leaf = name.rsplit(".", 1)[-1]
+    if leaf in METRIC_REGISTRY:
+        return METRIC_REGISTRY[leaf]
+    raise KeyError(f"metric {name!r} is not registered")
+
+
+def normalized_metric_score(name: str, value: float) -> float:
+    spec = metric_spec(name)
+    if spec.lower_bound is None or spec.upper_bound is None:
+        raise ValueError(f"metric {name!r} has no finite normalization range")
+    span = max(spec.upper_bound - spec.lower_bound, 1e-12)
+    normalized = min(1.0, max(0.0, (float(value) - spec.lower_bound) / span))
+    return normalized if spec.direction == "max" else 1.0 - normalized
 
 
 def structural_curriculum_for_epoch(
@@ -123,6 +290,70 @@ def curriculum_batch_plan(
     return plan
 
 
+def deficit_adjusted_curriculum_weights(
+    base_weights: dict[str, float],
+    metrics_by_curriculum: dict[str, dict[str, object]],
+) -> dict[str, float]:
+    active = [level for level, weight in base_weights.items() if weight > 0.0]
+    if not active or not all(level in metrics_by_curriculum for level in active):
+        return dict(base_weights)
+    scores = {
+        level: float(
+            balanced_validation_components(metrics_by_curriculum[level])[
+                "balanced_score"
+            ]
+        )
+        for level in active
+    }
+    best = max(scores.values())
+    adjusted = {
+        level: float(base_weights[level]) * (1.0 + max(0.0, best - scores[level]))
+        for level in active
+    }
+    total = sum(adjusted.values())
+    return {
+        level: (adjusted.get(level, 0.0) / total if total else 0.0)
+        for level in CURRICULUM_LEVELS
+    }
+
+
+def validation_deficit_loss_weights(
+    weights: LossWeights,
+    validation_metrics: dict[str, object] | None,
+) -> LossWeights:
+    if not validation_metrics:
+        return weights
+    raw = validation_metrics.get("decode_quality")
+    if not isinstance(raw, dict) or not isinstance(raw.get("methods"), dict):
+        return weights
+    methods = raw["methods"]
+    mapping = {
+        "tree_reconstruction": "proc_rosetta_tree_mu",
+        "trace_to_tree": "proc_rosetta_trace_mu",
+        "petri_to_tree": "proc_rosetta_petri_mu",
+        "fused_to_tree": "proc_rosetta_fused_mu",
+    }
+    scores: dict[str, float] = {}
+    for field, method_name in mapping.items():
+        values = methods.get(method_name)
+        if isinstance(values, dict):
+            scores[field] = _decode_method_score(values)[0]
+    if len(scores) != len(mapping):
+        return weights
+    best = max(scores.values())
+    factors = {
+        field: min(2.0, 1.0 + max(0.0, best - score))
+        for field, score in scores.items()
+    }
+    return replace(
+        weights,
+        tree_reconstruction=weights.tree_reconstruction * factors["tree_reconstruction"],
+        trace_to_tree=weights.trace_to_tree * factors["trace_to_tree"],
+        petri_to_tree=weights.petri_to_tree * factors["petri_to_tree"],
+        fused_to_tree=weights.fused_to_tree * factors["fused_to_tree"],
+    )
+
+
 class CurriculumMixtureLoader:
     """Deterministically interleave whole homogeneous batches across loaders."""
 
@@ -166,6 +397,8 @@ class TrainConfig:
     medium_batch_size: int | None = None
     complex_batch_size: int | None = None
     min_complex_stage_epochs: int = 5
+    min_curriculum_stage_epochs: int = 5
+    curriculum_regression_tolerance: float = 0.02
     learning_rate: float = 3e-4
     latent_dim: int = 96
     hidden_dim: int = 192
@@ -197,16 +430,37 @@ class TrainConfig:
     trace_set_layers: int = 1
     petri_message_passing_steps: int = 5
     decoder_input_dropout: float = 0.15
-    scheduled_sampling_max: float = 0.075
-    scheduled_sampling_start_epoch: int = 20
+    scheduled_sampling_max: float = 0.20
+    scheduled_sampling_start_epoch: int = 15
     scheduled_sampling_ramp_epochs: int = 20
     gradient_clip_norm: float = 5.0
-    tree_reconstruction_weight: float = 0.5
-    trace_to_tree_weight: float = 2.0
-    petri_to_tree_weight: float = 0.5
+    tree_reconstruction_weight: float = 1.0
+    trace_to_tree_weight: float = 1.0
+    petri_to_tree_weight: float = 1.0
+    fused_to_tree_weight: float = 1.0
+    fused_subset_to_tree_weight: float = 0.25
+    deployment_to_tree_weight: float = 0.25
+    modality_subset_fusion_probability: float = 0.5
+    deployment_policy_probability: float = 0.25
     exact_contrastive_weight: float = 0.30
     within_modality_contrastive_weight: float = 0.25
+    semantic_exact_contrastive_weight: float = 0.15
+    semantic_memory_contrastive_weight: float = 0.10
+    hierarchical_metric_weight: float = 0.15
+    observation_view_consistency_weight: float = 0.15
+    semantic_memory_bank_size: int = 4096
     soft_behavior_geometry_weight: float = 0.25
+    observed_behavior_regression_weight: float = 0.20
+    observed_behavior_ranking_weight: float = 0.20
+    beam_minimum_risk_weight: float = 0.05
+    eos_calibration_weight: float = 0.05
+    generated_length_weight: float = 0.05
+    unresolved_open_slots_weight: float = 0.05
+    completion_feasibility_weight: float = 0.05
+    beam_risk_start_epoch: int = 15
+    beam_risk_batch_probability: float = 0.10
+    beam_risk_size: int = 5
+    beam_risk_max_decode_length: int = 128
     variance_weight: float = 0.1
     covariance_weight: float = 0.01
     kl_weight: float = 0.0
@@ -222,14 +476,22 @@ class TrainConfig:
     soft_geometry_ramp_epochs: int = 6
     structure_regularization_start_epoch: int = 5
     structure_regularization_ramp_epochs: int = 5
-    scheduler_monitor: str = "trace_to_tree"
+    scheduler_monitor: str = "balanced"
     restore_best_weights: bool = True
     use_ema: bool = True
     ema_start_epoch: int = 3
     ema_decay: float = 0.995
     training_stage: str = "full"
     stage_gate_interval: int = 5
-    gradient_diagnostics_interval: int = 0
+    gradient_diagnostics_interval: int = 1
+    use_pcgrad: bool = True
+    validation_audit_enabled: bool = True
+    validation_decode_interval: int = 2
+    validation_full_interval: int = 10
+    validation_decode_family_count: int = 64
+    validation_discovery_family_count: int = 32
+    validation_beam_size: int = 5
+    validation_max_decode_length: int = 512
     loader_num_workers: int = 0
     loader_pin_memory: bool = True
     loader_persistent_workers: bool = True
@@ -240,17 +502,15 @@ class TrainConfig:
             raise ValueError(
                 "kl_weight is unsupported: the supervised semantic path is deterministic"
             )
-        if self.scheduler_monitor not in {
-            "trace_to_tree",
-            "reconstruction_composite",
-            "loss",
-        }:
-            raise ValueError(
-                "scheduler_monitor must be trace_to_tree, reconstruction_composite, or loss"
-            )
+        if self.scheduler_monitor != "balanced":
+            raise ValueError("scheduler_monitor must be balanced")
         for name in ("tree_complexity_weight", "duplicate_activity_weight"):
             if not getattr(self, name) >= 0.0:
                 raise ValueError(f"{name} must be nonnegative")
+        if self.min_curriculum_stage_epochs < 1:
+            raise ValueError("min_curriculum_stage_epochs must be positive")
+        if self.curriculum_regression_tolerance < 0.0:
+            raise ValueError("curriculum_regression_tolerance must be nonnegative")
         for name in (
             "activity_remap_probability",
             "tree_encoder_dropout",
@@ -260,11 +520,28 @@ class TrainConfig:
             "projection_dropout",
             "decoder_input_dropout",
             "scheduled_sampling_max",
+            "modality_subset_fusion_probability",
+            "deployment_policy_probability",
+            "beam_risk_batch_probability",
             "ema_decay",
         ):
             value = getattr(self, name)
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} must be in [0, 1]")
+        for name in (
+            "validation_decode_interval",
+            "validation_full_interval",
+            "validation_decode_family_count",
+            "validation_discovery_family_count",
+            "validation_beam_size",
+            "validation_max_decode_length",
+            "semantic_memory_bank_size",
+            "beam_risk_start_epoch",
+            "beam_risk_size",
+            "beam_risk_max_decode_length",
+        ):
+            if int(getattr(self, name)) < 1:
+                raise ValueError(f"{name} must be positive")
 
 
 def loss_weights_from_config(
@@ -282,8 +559,12 @@ def loss_weights_from_config(
         if config.training_stage in {"c", "d", "full"}
         else 0.0
     )
+    geometry_stage_scale = (
+        1.0 if config.training_stage in {"c", "d", "full"} else 0.0
+    )
     variance_weight = 0.0 if config.training_stage == "a" else config.variance_weight
     covariance_weight = 0.0 if config.training_stage == "a" else config.covariance_weight
+    semantic_scale = 0.0 if config.training_stage == "a" else 1.0
     exact_scale = _objective_ramp(
         epoch,
         start_epoch=config.exact_contrastive_start_epoch,
@@ -303,9 +584,48 @@ def loss_weights_from_config(
         tree_reconstruction=config.tree_reconstruction_weight,
         trace_to_tree=config.trace_to_tree_weight,
         petri_to_tree=config.petri_to_tree_weight,
+        fused_to_tree=config.fused_to_tree_weight,
+        fused_subset_to_tree=config.fused_subset_to_tree_weight,
+        deployment_to_tree=config.deployment_to_tree_weight,
         exact_contrastive=exact_weight * exact_scale,
         within_modality_contrastive=within_weight * exact_scale,
+        semantic_exact_contrastive=(
+            config.semantic_exact_contrastive_weight * exact_scale * semantic_scale
+        ),
+        semantic_memory_contrastive=(
+            config.semantic_memory_contrastive_weight * exact_scale * semantic_scale
+        ),
+        hierarchical_metric=(
+            config.hierarchical_metric_weight * exact_scale * semantic_scale
+        ),
+        observation_view_consistency=(
+            config.observation_view_consistency_weight
+            * exact_scale
+            * semantic_scale
+        ),
         soft_behavior_geometry=soft_weight * soft_scale,
+        observed_behavior_regression=(
+            config.observed_behavior_regression_weight
+            * soft_scale
+            * geometry_stage_scale
+        ),
+        observed_behavior_ranking=(
+            config.observed_behavior_ranking_weight
+            * soft_scale
+            * geometry_stage_scale
+        ),
+        beam_minimum_risk=(
+            config.beam_minimum_risk_weight
+            * _objective_ramp(
+                epoch,
+                start_epoch=config.beam_risk_start_epoch,
+                ramp_epochs=5,
+            )
+        ),
+        eos_calibration=config.eos_calibration_weight,
+        generated_length=config.generated_length_weight,
+        unresolved_open_slots=config.unresolved_open_slots_weight,
+        completion_feasibility=config.completion_feasibility_weight,
         variance=variance_weight * exact_scale,
         covariance=covariance_weight * exact_scale,
         latent_alignment=config.latent_alignment_weight * exact_scale,
@@ -341,6 +661,24 @@ def loss_weights_from_checkpoint(
     stored = checkpoint.get("loss_weights")
     if isinstance(stored, dict):
         values.update({name: stored[name] for name in values if name in stored})
+    if int(checkpoint.get("version", 0)) < 7:
+        for name in (
+            "fused_to_tree",
+            "fused_subset_to_tree",
+            "deployment_to_tree",
+            "semantic_exact_contrastive",
+            "semantic_memory_contrastive",
+            "hierarchical_metric",
+            "observed_behavior_regression",
+            "observed_behavior_ranking",
+            "beam_minimum_risk",
+            "eos_calibration",
+            "generated_length",
+            "unresolved_open_slots",
+            "completion_feasibility",
+            "observation_view_consistency",
+        ):
+            values[name] = 0.0
     return LossWeights(**values)
 
 
@@ -351,6 +689,226 @@ def scheduled_sampling_probability(config: TrainConfig, epoch: int | None) -> fl
         config.scheduled_sampling_ramp_epochs, 1
     )
     return config.scheduled_sampling_max * min(max(progress, 0.0), 1.0)
+
+
+def adaptive_scheduled_sampling_probability(
+    config: TrainConfig,
+    epoch: int | None,
+    validation_metrics: dict[str, object] | None,
+) -> float:
+    """Increase exposure training when raw decode lags teacher-forced quality."""
+
+    base = scheduled_sampling_probability(config, epoch)
+    if base <= 0.0 or not validation_metrics:
+        return base
+    raw_decode = validation_metrics.get("decode_quality")
+    if not isinstance(raw_decode, dict) or not isinstance(
+        raw_decode.get("methods"), dict
+    ):
+        return base
+    qualities: list[float] = []
+    for values in raw_decode["methods"].values():
+        if not isinstance(values, dict):
+            continue
+        termination = float(values.get("terminated_rate", 0.0))
+        edit_quality = 1.0 - min(
+            1.0,
+            float(values.get("mean_normalized_token_edit_distance", 1.0)),
+        )
+        qualities.append(0.5 * termination + 0.5 * edit_quality)
+    if not qualities:
+        return base
+    raw_quality = _mean_scores(qualities)
+    teacher_quality = math.exp(
+        -max(0.0, float(validation_metrics.get("trace_to_tree", 5.0)))
+    )
+    exposure_gap = max(0.0, teacher_quality - raw_quality)
+    failure = max(0.0, 1.0 - raw_quality)
+    multiplier = 1.0 + 0.5 * failure + 0.5 * exposure_gap
+    return min(config.scheduled_sampling_max, base * multiplier)
+
+
+def _repeat_latent_row(
+    distribution: LatentDistribution,
+    row: int,
+    count: int,
+) -> LatentDistribution:
+    def repeat(value: torch.Tensor | None) -> torch.Tensor | None:
+        if value is None:
+            return None
+        return value[row : row + 1].expand(count, *value.shape[1:])
+
+    return LatentDistribution(
+        mu=repeat(distribution.mu),
+        logvar=repeat(distribution.logvar),
+        memory=repeat(distribution.memory),
+        pre_normalized=repeat(distribution.pre_normalized),
+        activity_mask=repeat(distribution.activity_mask),
+        activity_memory=repeat(distribution.activity_memory),
+    )
+
+
+def beam_minimum_risk_loss(
+    model: ProcRosettaModel,
+    outputs: dict[str, object],
+    batch: dict[str, object],
+    *,
+    beam_size: int,
+    max_decode_length: int,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Optimize expected test-aligned cost under generated beam candidates."""
+
+    dists = outputs["dists"]
+    assert isinstance(dists, dict)
+    decoder_targets = batch["decoder_targets"]
+    source_masks = batch["source_activity_masks"]
+    samples = batch.get("samples")
+    assert isinstance(decoder_targets, dict)
+    assert isinstance(source_masks, dict)
+    assert isinstance(samples, list)
+    first = dists["fused"].mu
+    total = first.sum() * 0.0
+    rows = 0
+    top1_exact = 0
+    oracle_exact = 0
+    top1_edits: list[float] = []
+    oracle_edits: list[float] = []
+    top1_behaviors: list[float] = []
+    oracle_behaviors: list[float] = []
+    for source_name in ("tree", "trace", "petri", "fused"):
+        distribution = dists[source_name]
+        assert isinstance(distribution, LatentDistribution)
+        allowed = source_masks[source_name]
+        assert isinstance(allowed, torch.Tensor)
+        for row, sample in enumerate(samples):
+            source_row: LatentDistribution | torch.Tensor = (
+                distribution.mu[row : row + 1]
+                if source_name == "fused"
+                else _repeat_latent_row(distribution, row, 1)
+            )
+            with torch.no_grad():
+                candidates = model.tree_decoder.decode_beam_candidates(
+                    source_row,
+                    max_length=max_decode_length,
+                    beam_size=beam_size,
+                    length_penalty=0.7,
+                    allowed_activity_mask=allowed[row : row + 1],
+                    avoid_duplicate_activity_labels=False,
+                    completion_policy="prefix_only",
+                )[0]
+            if not candidates:
+                continue
+            candidate_ids = [tokens for tokens, _ in candidates]
+            width = max(len(tokens) for tokens in candidate_ids)
+            padded = torch.full(
+                (len(candidate_ids), width),
+                model.tree_tokenizer.pad_id,
+                dtype=torch.long,
+                device=first.device,
+            )
+            for candidate_index, token_ids in enumerate(candidate_ids):
+                padded[candidate_index, : len(token_ids)] = torch.tensor(
+                    token_ids,
+                    dtype=torch.long,
+                    device=first.device,
+                )
+            scoring_source: LatentDistribution | torch.Tensor = (
+                distribution.mu[row : row + 1].expand(len(candidate_ids), -1)
+                if source_name == "fused"
+                else _repeat_latent_row(distribution, row, len(candidate_ids))
+            )
+            logits = model.tree_decoder(
+                scoring_source,
+                padded[:, :-1],
+                allowed_activity_mask=allowed[row : row + 1].expand(
+                    len(candidate_ids), -1
+                ),
+            )
+            predicted = padded[:, 1:]
+            active = predicted.ne(model.tree_tokenizer.pad_id)
+            token_log_prob = F.log_softmax(logits, dim=-1).gather(
+                -1,
+                predicted.unsqueeze(-1),
+            ).squeeze(-1)
+            lengths = active.sum(dim=-1).clamp_min(1)
+            sequence_log_prob = (
+                token_log_prob.masked_fill(~active, 0.0).sum(dim=-1)
+                / lengths.to(token_log_prob.dtype).pow(0.7)
+            )
+            target_ids = _trim_token_ids(
+                decoder_targets[source_name][row].detach().cpu().tolist(),
+                model.tree_tokenizer,
+            )
+            target_tree = model.tree_tokenizer.decode_tree(target_ids)
+            target_traces = simulate_traces(target_tree, num_traces=16)
+            costs: list[float] = []
+            edits: list[float] = []
+            behaviors: list[float] = []
+            exacts: list[bool] = []
+            for token_ids in candidate_ids:
+                trimmed = _trim_token_ids(token_ids, model.tree_tokenizer)
+                edit = _token_edit_distance(target_ids, trimmed) / max(
+                    len(target_ids), len(trimmed), 1
+                )
+                terminated = model.tree_tokenizer.eos_id in token_ids
+                valid = False
+                convertible = False
+                behavior = 2.0
+                directly_follows = 2.0
+                try:
+                    tree = model.tree_tokenizer.decode_tree(token_ids)
+                    valid = True
+                    tree_to_petri_net(tree)
+                    convertible = True
+                    decoded_traces = simulate_traces(tree, num_traces=16)
+                    reference_traces = (
+                        sample.traces if source_name == "trace" else target_traces
+                    )
+                    distance = behavioral_distance(reference_traces, decoded_traces)
+                    behavior = float(distance["mean_l1"])
+                    directly_follows = float(distance["directly_follows_l1"])
+                except Exception:
+                    pass
+                exact = trimmed == target_ids
+                cost = (
+                    0.25 * float(not exact)
+                    + 0.25 * edit
+                    + 0.10 * float(not terminated)
+                    + 0.10 * float(not valid)
+                    + 0.10 * float(not convertible)
+                    + 0.15 * min(behavior / 2.0, 1.0)
+                    + 0.05 * min(directly_follows / 2.0, 1.0)
+                )
+                costs.append(cost)
+                edits.append(edit)
+                behaviors.append(behavior)
+                exacts.append(exact)
+            probabilities = F.softmax(sequence_log_prob, dim=0)
+            total = total + (
+                probabilities
+                * torch.tensor(costs, dtype=probabilities.dtype, device=first.device)
+            ).sum()
+            rows += 1
+            top1_exact += int(exacts[0])
+            oracle_exact += int(any(exacts))
+            top1_edits.append(edits[0])
+            oracle_edits.append(min(edits))
+            top1_behaviors.append(behaviors[0])
+            oracle_behaviors.append(min(behaviors))
+    zero = first.detach().sum() * 0.0
+    diagnostics = {
+        "beam_top1_exact": zero + top1_exact / max(rows, 1),
+        "beam_oracle_exact": zero + oracle_exact / max(rows, 1),
+        "beam_top1_edit": zero + _mean_numeric(top1_edits),
+        "beam_oracle_edit": zero + _mean_numeric(oracle_edits),
+        "beam_top1_behavior_l1": zero + _mean_numeric(top1_behaviors),
+        "beam_oracle_behavior_l1": zero + _mean_numeric(oracle_behaviors),
+    }
+    return total / max(rows, 1), diagnostics
+
+
+def _mean_numeric(values: list[float]) -> float:
+    return float(np.mean(values)) if values else 0.0
 
 
 def move_batch_to_device(batch: dict[str, object], device: torch.device) -> dict[str, object]:
@@ -384,6 +942,8 @@ def train_epoch(
     train_config: TrainConfig | None = None,
     ema: ModelEMA | None = None,
     collect_curriculum_metrics: bool = False,
+    semantic_memory_bank: SemanticMemoryBank | None = None,
+    scheduled_sampling_override: float | None = None,
 ) -> dict[str, object]:
     model.train()
     totals: dict[str, float | torch.Tensor] = {}
@@ -418,9 +978,21 @@ def train_epoch(
                 0.0 if train_config is None else train_config.decoder_input_dropout
             ),
             scheduled_sampling_probability=(
-                0.0
+                scheduled_sampling_override
+                if scheduled_sampling_override is not None
+                else 0.0
                 if train_config is None
                 else scheduled_sampling_probability(train_config, epoch)
+            ),
+            modality_subset_fusion_probability=(
+                0.0
+                if train_config is None
+                else train_config.modality_subset_fusion_probability
+            ),
+            deployment_policy_probability=(
+                0.0
+                if train_config is None
+                else train_config.deployment_policy_probability
             ),
         )
         tree_tokens = batch["tree_tokens"]
@@ -433,9 +1005,56 @@ def train_epoch(
             model.tree_tokenizer.pad_id,
             weights=weights,
             positive_mask=positive_mask,
+            exact_positive_mask=batch.get("exact_positive_mask"),
+            analogy_mask=batch.get("analogy_mask"),
+            family_positive_mask=batch.get("family_positive_mask"),
+            negative_mask=batch.get("negative_mask"),
+            observation_view_mask=batch.get("observation_view_mask"),
             contrastive_candidate_mask=batch.get("contrastive_candidate_mask"),
+            semantic_memory_bank=semantic_memory_bank,
+            strong_behavior_ids=batch.get("strong_behavior_ids"),
+            equivalence_ids=batch.get("equivalence_ids"),
             behavior_signatures=batch.get("behavior_signatures"),
+            observed_behavior_distances=batch.get("observed_behavior_distances"),
+            observed_behavior_pair_mask=batch.get("observed_behavior_pair_mask"),
             tokenizer=model.tree_tokenizer,
+        )
+        active_weights = weights or LossWeights()
+        run_beam_risk = (
+            train_config is not None
+            and epoch is not None
+            and epoch >= train_config.beam_risk_start_epoch
+            and active_weights.beam_minimum_risk > 0.0
+            and bool(
+                torch.rand((), device=device)
+                < train_config.beam_risk_batch_probability
+            )
+        )
+        if run_beam_risk:
+            beam_risk, beam_diagnostics = beam_minimum_risk_loss(
+                model,
+                outputs,
+                batch,
+                beam_size=train_config.beam_risk_size,
+                max_decode_length=train_config.beam_risk_max_decode_length,
+            )
+        else:
+            beam_risk = losses["loss"].sum() * 0.0
+            beam_diagnostics = {
+                name: beam_risk.detach()
+                for name in (
+                    "beam_top1_exact",
+                    "beam_oracle_exact",
+                    "beam_top1_edit",
+                    "beam_oracle_edit",
+                    "beam_top1_behavior_l1",
+                    "beam_oracle_behavior_l1",
+                )
+            }
+        losses["beam_minimum_risk"] = beam_risk
+        losses.update(beam_diagnostics)
+        losses["loss"] = (
+            losses["loss"] + active_weights.beam_minimum_risk * beam_risk
         )
         diagnostics_interval = (
             0 if train_config is None else train_config.gradient_diagnostics_interval
@@ -447,10 +1066,50 @@ def train_epoch(
             gradient_metrics = gradient_norm_diagnostics(
                 model,
                 losses,
-                weights or LossWeights(),
+                active_weights,
             )
             totals.update(gradient_metrics)
-        losses["loss"].backward()
+        if train_config is not None and train_config.use_pcgrad:
+            reconstruction_objective = (
+                active_weights.tree_reconstruction * losses["tree_reconstruction"]
+                + active_weights.trace_to_tree * losses["trace_to_tree"]
+                + active_weights.petri_to_tree * losses["petri_to_tree"]
+                + active_weights.fused_to_tree * losses["fused_to_tree"]
+                + active_weights.fused_subset_to_tree
+                * losses["fused_subset_to_tree"]
+                + active_weights.deployment_to_tree * losses["deployment_to_tree"]
+            )
+            metric_objective = (
+                active_weights.exact_contrastive * losses["exact_contrastive"]
+                + active_weights.within_modality_contrastive
+                * losses["within_modality_contrastive"]
+                + active_weights.semantic_exact_contrastive
+                * losses["semantic_exact_contrastive"]
+                + active_weights.semantic_memory_contrastive
+                * losses["semantic_memory_contrastive"]
+                + active_weights.hierarchical_metric * losses["hierarchical_metric"]
+                + active_weights.soft_behavior_geometry
+                * losses["soft_behavior_geometry"]
+                + active_weights.observed_behavior_regression
+                * losses["observed_behavior_regression"]
+                + active_weights.observed_behavior_ranking
+                * losses["observed_behavior_ranking"]
+                + active_weights.observation_view_consistency
+                * losses["observation_view_consistency"]
+                + active_weights.variance * losses["variance"]
+                + active_weights.covariance * losses["covariance"]
+                + active_weights.latent_alignment * losses["latent_alignment"]
+            )
+            pcgrad_metrics = pcgrad_backward(
+                model,
+                reconstruction_objective,
+                metric_objective,
+                losses["loss"] - reconstruction_objective - metric_objective,
+            )
+            for name, value in pcgrad_metrics.items():
+                totals[name] = totals.get(name, 0.0) + value
+        else:
+            losses["loss"].backward()
         torch.nn.utils.clip_grad_norm_(
             model.parameters(),
             max_norm=(5.0 if train_config is None else train_config.gradient_clip_norm),
@@ -504,25 +1163,51 @@ def gradient_norm_diagnostics(
     losses: dict[str, torch.Tensor],
     weights: LossWeights,
 ) -> dict[str, float]:
+    first_loss = next(iter(losses.values()))
+
+    def value(name: str) -> torch.Tensor:
+        return losses.get(name, first_loss.sum() * 0.0)
+
     metric_objective = (
-        weights.exact_contrastive * losses["exact_contrastive"]
-        + weights.within_modality_contrastive * losses["within_modality_contrastive"]
-        + weights.soft_behavior_geometry * losses["soft_behavior_geometry"]
-        + weights.variance * losses["variance"]
-        + weights.covariance * losses["covariance"]
+        weights.exact_contrastive * value("exact_contrastive")
+        + weights.within_modality_contrastive * value("within_modality_contrastive")
+        + weights.semantic_exact_contrastive * value("semantic_exact_contrastive")
+        + weights.semantic_memory_contrastive * value("semantic_memory_contrastive")
+        + weights.hierarchical_metric * value("hierarchical_metric")
+        + weights.soft_behavior_geometry * value("soft_behavior_geometry")
+        + weights.observed_behavior_regression * value("observed_behavior_regression")
+        + weights.observed_behavior_ranking * value("observed_behavior_ranking")
+        + weights.variance * value("variance")
+        + weights.covariance * value("covariance")
     )
+    semantic_objective = (
+        weights.semantic_exact_contrastive * value("semantic_exact_contrastive")
+        + weights.semantic_memory_contrastive
+        * value("semantic_memory_contrastive")
+        + weights.hierarchical_metric * value("hierarchical_metric")
+    )
+    observed_geometry_objective = (
+        weights.observed_behavior_regression
+        * value("observed_behavior_regression")
+        + weights.observed_behavior_ranking * value("observed_behavior_ranking")
+    )
+    beam_objective = weights.beam_minimum_risk * value("beam_minimum_risk")
+    fused_objective = weights.fused_to_tree * value("fused_to_tree")
     specifications = {
         "tree": (
             model.tree_encoder,
-            weights.tree_reconstruction * losses["tree_reconstruction"],
+            weights.tree_reconstruction * value("tree_reconstruction")
+            + weights.fused_to_tree * value("fused_to_tree"),
         ),
         "trace": (
             model.trace_encoder,
-            weights.trace_to_tree * losses["trace_to_tree"],
+            weights.trace_to_tree * value("trace_to_tree")
+            + weights.fused_to_tree * value("fused_to_tree"),
         ),
         "petri": (
             model.petri_encoder,
-            weights.petri_to_tree * losses["petri_to_tree"],
+            weights.petri_to_tree * value("petri_to_tree")
+            + weights.fused_to_tree * value("fused_to_tree"),
         ),
     }
     result: dict[str, float] = {}
@@ -541,19 +1226,43 @@ def gradient_norm_diagnostics(
             allow_unused=True,
         )
         exact_gradients = torch.autograd.grad(
-            losses["exact_contrastive"],
+            value("exact_contrastive"),
             parameters,
             retain_graph=True,
             allow_unused=True,
         )
         soft_gradients = torch.autograd.grad(
-            losses["soft_behavior_geometry"],
+            value("soft_behavior_geometry"),
             parameters,
             retain_graph=True,
             allow_unused=True,
         )
         raw_reconstruction_gradients = torch.autograd.grad(
-            losses[f"{name}_reconstruction" if name == "tree" else f"{name}_to_tree"],
+            value(f"{name}_reconstruction" if name == "tree" else f"{name}_to_tree"),
+            parameters,
+            retain_graph=True,
+            allow_unused=True,
+        )
+        fused_gradients = torch.autograd.grad(
+            fused_objective,
+            parameters,
+            retain_graph=True,
+            allow_unused=True,
+        )
+        semantic_gradients = torch.autograd.grad(
+            semantic_objective,
+            parameters,
+            retain_graph=True,
+            allow_unused=True,
+        )
+        observed_geometry_gradients = torch.autograd.grad(
+            observed_geometry_objective,
+            parameters,
+            retain_graph=True,
+            allow_unused=True,
+        )
+        beam_gradients = torch.autograd.grad(
+            beam_objective,
             parameters,
             retain_graph=True,
             allow_unused=True,
@@ -562,6 +1271,19 @@ def gradient_norm_diagnostics(
         metric_norm = _gradient_norm(metric_gradients)
         result[f"reconstruction_gradient_norm_{name}"] = reconstruction_norm
         result[f"metric_gradient_norm_{name}"] = metric_norm
+        result[f"source_reconstruction_gradient_norm_{name}"] = _gradient_norm(
+            raw_reconstruction_gradients
+        )
+        result[f"fused_reconstruction_gradient_norm_{name}"] = _gradient_norm(
+            fused_gradients
+        )
+        result[f"semantic_retrieval_gradient_norm_{name}"] = _gradient_norm(
+            semantic_gradients
+        )
+        result[f"observed_geometry_gradient_norm_{name}"] = _gradient_norm(
+            observed_geometry_gradients
+        )
+        result[f"beam_risk_gradient_norm_{name}"] = _gradient_norm(beam_gradients)
         result[f"metric_to_reconstruction_gradient_ratio_{name}"] = (
             metric_norm / max(reconstruction_norm, 1e-12)
         )
@@ -575,6 +1297,22 @@ def gradient_norm_diagnostics(
         result[f"exact_soft_geometry_gradient_cosine_{name}"] = _gradient_cosine(
             exact_gradients,
             soft_gradients,
+        )
+        result[f"reconstruction_semantic_gradient_cosine_{name}"] = _gradient_cosine(
+            raw_reconstruction_gradients,
+            semantic_gradients,
+        )
+        result[f"reconstruction_observed_geometry_gradient_cosine_{name}"] = (
+            _gradient_cosine(
+                raw_reconstruction_gradients,
+                observed_geometry_gradients,
+            )
+        )
+        result[f"semantic_observed_geometry_gradient_cosine_{name}"] = (
+            _gradient_cosine(semantic_gradients, observed_geometry_gradients)
+        )
+        result[f"reconstruction_beam_risk_gradient_cosine_{name}"] = (
+            _gradient_cosine(raw_reconstruction_gradients, beam_gradients)
         )
     return result
 
@@ -605,6 +1343,84 @@ def _gradient_cosine(
         right_squared += float(right_flat.square().sum().cpu())
     denominator = (left_squared * right_squared) ** 0.5
     return 0.0 if denominator <= 1e-24 else dot / denominator
+
+
+def pcgrad_backward(
+    model: ProcRosettaModel,
+    reconstruction_objective: torch.Tensor,
+    metric_objective: torch.Tensor,
+    auxiliary_objective: torch.Tensor,
+) -> dict[str, float]:
+    """Project metric gradients when they conflict with reconstruction."""
+
+    parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    reconstruction_gradients = torch.autograd.grad(
+        reconstruction_objective,
+        parameters,
+        retain_graph=True,
+        allow_unused=True,
+    )
+    metric_gradients = torch.autograd.grad(
+        metric_objective,
+        parameters,
+        retain_graph=True,
+        allow_unused=True,
+    )
+    auxiliary_gradients = torch.autograd.grad(
+        auxiliary_objective,
+        parameters,
+        allow_unused=True,
+    )
+    dot = sum(
+        (left * right).sum()
+        for left, right in zip(reconstruction_gradients, metric_gradients)
+        if left is not None and right is not None
+    )
+    reconstruction_squared = sum(
+        gradient.square().sum()
+        for gradient in reconstruction_gradients
+        if gradient is not None
+    )
+    metric_squared = sum(
+        gradient.square().sum()
+        for gradient in metric_gradients
+        if gradient is not None
+    )
+    dot_value = float(dot.detach().cpu()) if isinstance(dot, torch.Tensor) else 0.0
+    denominator = float(
+        (reconstruction_squared * metric_squared).sqrt().detach().cpu()
+    ) if isinstance(reconstruction_squared, torch.Tensor) and isinstance(metric_squared, torch.Tensor) else 0.0
+    conflict = dot_value < 0.0 and isinstance(reconstruction_squared, torch.Tensor)
+    coefficient = (
+        dot / reconstruction_squared.clamp_min(1e-12)
+        if conflict and isinstance(dot, torch.Tensor)
+        else None
+    )
+    for parameter, reconstruction, metric, auxiliary in zip(
+        parameters,
+        reconstruction_gradients,
+        metric_gradients,
+        auxiliary_gradients,
+    ):
+        gradient = None
+        for value in (reconstruction, metric, auxiliary):
+            if value is not None:
+                gradient = value if gradient is None else gradient + value
+        if conflict and metric is not None and reconstruction is not None:
+            assert coefficient is not None
+            projected_metric = metric - coefficient * reconstruction
+            gradient = projected_metric
+            if reconstruction is not None:
+                gradient = gradient + reconstruction
+            if auxiliary is not None:
+                gradient = gradient + auxiliary
+        parameter.grad = None if gradient is None else gradient.detach()
+    return {
+        "pcgrad_reconstruction_metric_cosine": (
+            dot_value / max(denominator, 1e-12)
+        ),
+        "pcgrad_projection_applied": float(conflict),
+    }
 
 
 @torch.no_grad()
@@ -652,8 +1468,15 @@ def evaluate_epoch(
             model.tree_tokenizer.pad_id,
             weights=weights,
             positive_mask=positive_mask,
+            exact_positive_mask=batch.get("exact_positive_mask"),
+            analogy_mask=batch.get("analogy_mask"),
+            family_positive_mask=batch.get("family_positive_mask"),
+            negative_mask=batch.get("negative_mask"),
+            observation_view_mask=batch.get("observation_view_mask"),
             contrastive_candidate_mask=batch.get("contrastive_candidate_mask"),
             behavior_signatures=batch.get("behavior_signatures"),
+            observed_behavior_distances=batch.get("observed_behavior_distances"),
+            observed_behavior_pair_mask=batch.get("observed_behavior_pair_mask"),
             tokenizer=model.tree_tokenizer,
         )
         for name, value in losses.items():
@@ -1281,8 +2104,8 @@ def _summarize_discovery_metrics(
         if ordinary
         else metrics["trace_canonical_exact"]
     )
-    # Retain a scalar discovery-quality proxy for schedulers and tabular logs.
-    # Best-checkpoint selection itself is based on validation loss.
+    # Retain legacy component keys for tabular consumers while exposing the
+    # unified balanced score used by all training-state decisions.
     behavior_spearman = metrics.get("behavior_distance_spearman", -1.0)
     metrics["checkpoint_selection_primary_exact"] = primary_exact
     metrics["checkpoint_selection_edit_score"] = 1.0 - metrics[
@@ -1292,51 +2115,385 @@ def _summarize_discovery_metrics(
         "exact_behavior_recall_at_1"
     ]
     metrics["checkpoint_selection_spearman"] = behavior_spearman
-    metrics["checkpoint_selection_score"] = (
-        primary_exact
-        + 1e-6 * metrics["checkpoint_selection_edit_score"]
-        + 1e-9 * metrics["exact_behavior_recall_at_1"]
-        + 1e-12 * ((behavior_spearman + 1.0) / 2.0)
+    components = balanced_validation_components(metrics)
+    metrics["checkpoint_selection_score"] = float(components["balanced_score"])
+    for name in (
+        "decode_score",
+        "retrieval_score",
+        "equivalence_score",
+        "geometry_score",
+        "discovery_score",
+        "fused_geometry_advantage",
+    ):
+        metrics[f"checkpoint_selection_{name}"] = float(components[name])
+    metrics["checkpoint_selection_hard_gates_pass"] = float(
+        bool(components["all_hard_gates_pass"])
     )
     return metrics
 
 
-def checkpoint_selection_key(metrics: dict[str, float]) -> tuple[float, ...]:
-    """Return the discovery-quality ordering recorded with checkpoints."""
+def attach_validation_audit(
+    model: ProcRosettaModel,
+    dataloader: DataLoader,
+    metrics: dict[str, float],
+    *,
+    curriculum: str,
+    epoch: int,
+    train_config: TrainConfig,
+    device: torch.device,
+    cache_dir: str | Path,
+    stage_transition: bool,
+    show_progress: bool,
+) -> dict[str, object]:
+    """Attach the evaluator-equivalent report used by model selection."""
 
-    primary_exact = metrics.get(
-        "checkpoint_selection_primary_exact",
-        metrics.get(
-            "ordinary_trace_canonical_exact",
-            metrics.get("trace_canonical_exact", float("-inf")),
+    if not train_config.validation_audit_enabled:
+        return dict(metrics)
+    from proc_rosetta.benchmarks import (
+        ValidationAuditConfig,
+        validation_audit_report,
+    )
+
+    samples = getattr(getattr(dataloader, "dataset", None), "samples", None)
+    if not isinstance(samples, list):
+        raise ValueError("validation audit requires a loader backed by persisted samples")
+    audit = validation_audit_report(
+        model,
+        samples,
+        curriculum,
+        loss_metrics=metrics,
+        epoch=epoch,
+        config=ValidationAuditConfig(
+            decode_interval=train_config.validation_decode_interval,
+            full_interval=train_config.validation_full_interval,
+            decode_family_count=train_config.validation_decode_family_count,
+            discovery_family_count=train_config.validation_discovery_family_count,
+            beam_size=train_config.validation_beam_size,
+            max_decode_length=train_config.validation_max_decode_length,
+            cache_dir=str(cache_dir),
+        ),
+        batch_size=train_config.batch_size,
+        device=str(device),
+        show_progress=show_progress,
+        stage_transition=stage_transition,
+    )
+    combined: dict[str, object] = {**metrics, **audit}
+    components = balanced_validation_components(combined)
+    combined["checkpoint_selection_score"] = float(components["balanced_score"])
+    combined["checkpoint_selection_hard_gates_pass"] = float(
+        bool(components["all_hard_gates_pass"])
+    )
+    for name in (
+        "decode_score",
+        "retrieval_score",
+        "equivalence_score",
+        "geometry_score",
+        "discovery_score",
+        "fused_geometry_advantage",
+    ):
+        combined[f"checkpoint_selection_{name}"] = float(components[name])
+    return combined
+
+
+def _mean_scores(values: list[float], default: float = 0.0) -> float:
+    return float(np.mean(values)) if values else float(default)
+
+
+def _decode_method_score(values: dict[str, object]) -> tuple[float, bool]:
+    scores = [
+        float(values.get("exact_tree_match_rate", 0.0)),
+        1.0 - min(1.0, float(values.get("mean_normalized_token_edit_distance", 1.0))),
+        1.0 - min(1.0, float(values.get("mean_behavior_l1", 2.0)) / 2.0),
+    ]
+    gate_values = [
+        float(values.get(name, 0.0))
+        for name in (
+            "terminated_rate",
+            "valid_tree_rate",
+            "petri_conversion_rate",
+            "behavior_eval_success_rate",
+        )
+    ]
+    scores.extend(gate_values)
+    return _mean_scores(scores), all(value >= 0.95 for value in gate_values)
+
+
+def balanced_validation_components(
+    metrics: dict[str, object],
+) -> dict[str, float | bool]:
+    """Calculate the test-aligned balanced score for flat or rich metrics."""
+
+    raw_decode = metrics.get("decode_quality")
+    bounded_decode = metrics.get("deployment_decode_quality")
+    if isinstance(raw_decode, dict) and isinstance(bounded_decode, dict):
+        policy_scores: list[float] = []
+        hard_gates: list[bool] = []
+        for policy, policy_weight in ((raw_decode, 0.60), (bounded_decode, 0.40)):
+            methods = policy.get("methods", {})
+            method_scores: list[float] = []
+            method_gates: list[bool] = []
+            if isinstance(methods, dict):
+                for values in methods.values():
+                    if isinstance(values, dict):
+                        score, passed = _decode_method_score(values)
+                        method_scores.append(score)
+                        method_gates.append(passed)
+            policy_scores.append(policy_weight * _mean_scores(method_scores))
+            hard_gates.extend(method_gates)
+        decode_score = sum(policy_scores)
+        all_hard_gates_pass = bool(hard_gates) and all(hard_gates)
+    else:
+        exact = float(
+            metrics.get(
+                "trace_canonical_exact",
+                metrics.get("checkpoint_selection_primary_exact", 0.0),
+            )
+        )
+        edit = float(
+            metrics.get(
+                "trace_normalized_tree_edit",
+                1.0 - float(metrics.get("checkpoint_selection_edit_score", 0.0)),
+            )
+        )
+        bounded_exact = float(
+            metrics.get("deployment_duplicate_free_tree_exact", exact)
+        )
+        bounded_edit = float(
+            metrics.get("deployment_duplicate_free_tree_edit", edit)
+        )
+        decode_score = float(
+            metrics.get(
+                "checkpoint_selection_decode_score",
+                0.60 * _mean_scores([exact, 1.0 - min(edit, 1.0)])
+                + 0.40
+                * _mean_scores([bounded_exact, 1.0 - min(bounded_edit, 1.0)]),
+            )
+        )
+        available_gates = [
+            float(metrics[name])
+            for name in (
+                "terminated_rate",
+                "valid_tree_rate",
+                "petri_conversion_rate",
+                "behavior_eval_success_rate",
+            )
+            if isinstance(metrics.get(name), (int, float))
+        ]
+        stored_gate = metrics.get("checkpoint_selection_hard_gates_pass")
+        all_hard_gates_pass = (
+            float(stored_gate) >= 1.0
+            if isinstance(stored_gate, (int, float))
+            else all(value >= 0.95 for value in available_gates)
+        )
+
+    retrieval = metrics.get("cross_modal_retrieval")
+    retrieval_values: list[float] = []
+    if isinstance(retrieval, dict):
+        for direction in retrieval.values():
+            if not isinstance(direction, dict):
+                continue
+            for name in (
+                "top1_accuracy",
+                "mrr",
+                "recall_at_5",
+                "partial_order_recall_at_1",
+                "partial_order_recall_at_5",
+            ):
+                if isinstance(direction.get(name), (int, float)):
+                    retrieval_values.append(float(direction[name]))
+            if isinstance(direction.get("analogy_neighborhood_spearman"), (int, float)):
+                retrieval_values.append(
+                    (float(direction["analogy_neighborhood_spearman"]) + 1.0) / 2.0
+                )
+    retrieval_score = _mean_scores(
+        retrieval_values,
+        float(
+            metrics.get(
+                "checkpoint_selection_retrieval_score",
+                metrics.get(
+                    "exact_behavior_recall_at_1",
+                    metrics.get("checkpoint_selection_recall_at_1", 0.0),
+                ),
+            )
         ),
     )
+
+    equivalence = metrics.get("equivalence_families")
+    equivalence_values: list[float] = []
+    if isinstance(equivalence, dict):
+        methods = equivalence.get("methods", {})
+        if isinstance(methods, dict):
+            for values in methods.values():
+                if not isinstance(values, dict):
+                    continue
+                for name in (
+                    "within_family_cosine",
+                    "log_resampling_consistency",
+                ):
+                    if isinstance(values.get(name), (int, float)):
+                        equivalence_values.append((float(values[name]) + 1.0) / 2.0)
+                if isinstance(values.get("equivalence_margin"), (int, float)):
+                    equivalence_values.append(
+                        min(1.0, max(0.0, (float(values["equivalence_margin"]) + 2.0) / 4.0))
+                    )
+                if isinstance(values.get("behavior_id_retrieval_top1"), (int, float)):
+                    equivalence_values.append(float(values["behavior_id_retrieval_top1"]))
+    equivalence_score = _mean_scores(
+        equivalence_values,
+        float(metrics.get("checkpoint_selection_equivalence_score", retrieval_score)),
+    )
+
+    geometry_score = float(
+        metrics.get(
+            "checkpoint_selection_geometry_score",
+            (
+                float(
+                    metrics.get(
+                        "behavior_distance_spearman",
+                        metrics.get("checkpoint_selection_spearman", -1.0),
+                    )
+                )
+                + 1.0
+            )
+            / 2.0,
+        )
+    )
+    fused_geometry_advantage = float(
+        metrics.get(
+            "fused_geometry_advantage",
+            metrics.get("checkpoint_selection_fused_geometry_advantage", 0.0),
+        )
+    )
+    methods = metrics.get("embedding_methods")
+    if isinstance(methods, dict):
+        fused = methods.get("proc_rosetta_fused_mu", {})
+        if isinstance(fused, dict):
+            alignment = fused.get("behavior_alignment", {})
+            nearest = fused.get("nearest_neighbor_behavior", {})
+            geometry_values: list[float] = []
+            if isinstance(alignment, dict) and isinstance(
+                alignment.get("spearman_embedding_distance_vs_behavior_l1"),
+                (int, float),
+            ):
+                fused_rho = float(
+                    alignment["spearman_embedding_distance_vs_behavior_l1"]
+                )
+                geometry_values.append((fused_rho + 1.0) / 2.0)
+            else:
+                fused_rho = -1.0
+            if isinstance(nearest, dict) and isinstance(
+                nearest.get("mean_behavior_l1_at_nearest_neighbor"),
+                (int, float),
+            ):
+                fused_nn = float(nearest["mean_behavior_l1_at_nearest_neighbor"])
+                geometry_values.append(1.0 - min(fused_nn / 2.0, 1.0))
+            else:
+                fused_nn = 2.0
+            geometry_score = _mean_scores(geometry_values, geometry_score)
+            baseline_rhos: list[float] = []
+            baseline_nn: list[float] = []
+            for name, values in methods.items():
+                if name.startswith("proc_rosetta_") or not isinstance(values, dict):
+                    continue
+                baseline_alignment = values.get("behavior_alignment", {})
+                baseline_nearest = values.get("nearest_neighbor_behavior", {})
+                if isinstance(baseline_alignment, dict) and isinstance(
+                    baseline_alignment.get("spearman_embedding_distance_vs_behavior_l1"),
+                    (int, float),
+                ):
+                    baseline_rhos.append(
+                        float(baseline_alignment["spearman_embedding_distance_vs_behavior_l1"])
+                    )
+                if isinstance(baseline_nearest, dict) and isinstance(
+                    baseline_nearest.get("mean_behavior_l1_at_nearest_neighbor"),
+                    (int, float),
+                ):
+                    baseline_nn.append(
+                        float(baseline_nearest["mean_behavior_l1_at_nearest_neighbor"])
+                    )
+            if baseline_rhos or baseline_nn:
+                advantages = []
+                if baseline_rhos:
+                    advantages.append(fused_rho - max(baseline_rhos))
+                if baseline_nn:
+                    advantages.append(min(baseline_nn) - fused_nn)
+                fused_geometry_advantage = _mean_scores(advantages)
+
+    discovery = metrics.get("discovery_quality")
+    discovery_values: list[float] = []
+    if isinstance(discovery, dict):
+        methods = discovery.get("methods", {})
+        proc = methods.get("proc_rosetta_trace_mu", {}) if isinstance(methods, dict) else {}
+        if isinstance(proc, dict):
+            for name in (
+                "mean_fitness",
+                "mean_precision",
+                "mean_f1",
+                "conformance_evaluable_rate",
+            ):
+                if isinstance(proc.get(name), (int, float)):
+                    discovery_values.append(float(proc[name]))
+    discovery_score = _mean_scores(
+        discovery_values,
+        float(metrics.get("checkpoint_selection_discovery_score", decode_score)),
+    )
+
+    balanced_score = (
+        0.40 * decode_score
+        + 0.20 * retrieval_score
+        + 0.15 * equivalence_score
+        + 0.15 * geometry_score
+        + 0.10 * discovery_score
+    )
+    return {
+        "balanced_score": balanced_score,
+        "decode_score": decode_score,
+        "retrieval_score": retrieval_score,
+        "equivalence_score": equivalence_score,
+        "geometry_score": geometry_score,
+        "discovery_score": discovery_score,
+        "all_hard_gates_pass": all_hard_gates_pass,
+        "fused_geometry_advantage": fused_geometry_advantage,
+    }
+
+
+def checkpoint_selection_key(metrics: dict[str, object]) -> tuple[float, ...]:
+    components = balanced_validation_components(metrics)
     return (
-        primary_exact,
-        metrics.get(
-            "checkpoint_selection_edit_score",
-            1.0 - metrics.get("trace_normalized_tree_edit", float("inf")),
-        ),
-        metrics.get(
-            "checkpoint_selection_recall_at_1",
-            metrics.get("exact_behavior_recall_at_1", float("-inf")),
-        ),
-        metrics.get(
-            "checkpoint_selection_spearman",
-            metrics.get("behavior_distance_spearman", -1.0),
-        ),
+        float(bool(components["all_hard_gates_pass"])),
+        float(components["balanced_score"]),
+        float(components["fused_geometry_advantage"]),
+        -float(metrics.get("loss", float("inf"))),
     )
 
 
 def final_curriculum_checkpoint_key(
-    complex_metrics: dict[str, float],
-    macro_metrics: dict[str, float],
+    complex_metrics: dict[str, object],
+    macro_metrics: dict[str, object],
+    worst_metrics: dict[str, object] | None = None,
+    *,
+    regression_within_tolerance: bool = True,
 ) -> tuple[float, ...]:
-    """Complex validation is primary; the unweighted macro is the tie-breaker."""
+    """Use robust macro/worst performance before complex and loss tie-breaks."""
 
+    complex_components = balanced_validation_components(complex_metrics)
+    macro_components = balanced_validation_components(macro_metrics)
+    worst_components = balanced_validation_components(worst_metrics or macro_metrics)
+    robust_score = (
+        0.70 * float(macro_components["balanced_score"])
+        + 0.30 * float(worst_components["balanced_score"])
+    )
     return (
-        *checkpoint_selection_key(complex_metrics),
-        *checkpoint_selection_key(macro_metrics),
+        float(
+            bool(complex_components["all_hard_gates_pass"])
+            and bool(macro_components["all_hard_gates_pass"])
+            and bool(worst_components["all_hard_gates_pass"])
+            and regression_within_tolerance
+        ),
+        robust_score,
+        float(complex_components["balanced_score"]),
+        float(complex_components["fused_geometry_advantage"]),
+        -float(complex_metrics.get("loss", float("inf"))),
     )
 
 
@@ -1483,12 +2640,7 @@ def _loader_worker_options(
 
 
 class BehaviorFamilyBatchSampler(Sampler[list[int]]):
-    """Batch strong-positive classes while retaining many exact behaviors.
-
-    Strong positives require both exact behavior and partial-order identity.
-    Grouping only by the broader equivalence family can place incompatible
-    representations in a chunk and leave a row without a valid positive.
-    """
+    """Build strong/exact-analogy/family/hard-negative relation bundles."""
 
     def __init__(
         self,
@@ -1505,12 +2657,27 @@ class BehaviorFamilyBatchSampler(Sampler[list[int]]):
         self.seed = int(seed)
         self.epoch = 0
         grouped: dict[tuple[str, ...], list[int]] = defaultdict(list)
+        self.samples = list(samples)
+        self.exact_groups: dict[str, list[int]] = defaultdict(list)
+        self.family_groups: dict[str, list[int]] = defaultdict(list)
+        self.exact_ids: list[str | None] = []
+        self.partial_ids: list[str | None] = []
+        self.family_ids: list[str] = []
         for index, sample in enumerate(samples):
             exact_behavior_id = (
                 getattr(sample, "strong_behavior_id", None)
                 or getattr(sample, "exact_behavior_id", None)
             )
             partial_order_id = getattr(sample, "partial_order_id", None)
+            family_id = str(getattr(sample, "equivalence_id", index))
+            exact_key = None if exact_behavior_id is None else str(exact_behavior_id)
+            partial_key = None if partial_order_id is None else str(partial_order_id)
+            self.exact_ids.append(exact_key)
+            self.partial_ids.append(partial_key)
+            self.family_ids.append(family_id)
+            if exact_key is not None:
+                self.exact_groups[exact_key].append(index)
+            self.family_groups[family_id].append(index)
             if exact_behavior_id is not None and partial_order_id is not None:
                 key = ("strong", str(exact_behavior_id), str(partial_order_id))
             else:
@@ -1531,19 +2698,31 @@ class BehaviorFamilyBatchSampler(Sampler[list[int]]):
             for sample in samples
         ]
         self.sample_count = len(samples)
+        self.hard_negatives = self._hard_negative_indices()
 
     def __iter__(self):
-        import random
-
-        rng = random.Random(self.seed + self.epoch)
+        batches = self._planned_batches(self.epoch)
         self.epoch += 1
+        yield from batches
+
+    def __len__(self) -> int:
+        # Relation bundles add analogies, broader-family positives, and hard
+        # negatives.  DataLoader and the curriculum interleaver need the exact
+        # expanded batch count or they silently leave valid batches unused.
+        return len(self._planned_batches(self.epoch))
+
+    def _planned_batches(self, epoch: int) -> list[list[int]]:
+        rng = random.Random(self.seed + epoch)
         groups = [list(group) for group in self.groups]
         if self.shuffle:
             rng.shuffle(groups)
             for group in groups:
                 rng.shuffle(group)
 
-        per_group_chunks = [self._positive_chunks(group) for group in groups]
+        per_group_chunks = [
+            [self._relation_bundle(chunk, rng) for chunk in self._positive_chunks(group)]
+            for group in groups
+        ]
         # Interleave chunk rounds so a 128-row batch with four views contains
         # 32 distinct behaviors before any family contributes a second chunk.
         chunks: list[list[int]] = []
@@ -1558,21 +2737,20 @@ class BehaviorFamilyBatchSampler(Sampler[list[int]]):
                 reverse=True,
             )
             chunks.extend(round_chunks)
+        batches: list[list[int]] = []
         batch: list[int] = []
         for chunk in chunks:
             if batch and len(batch) + len(chunk) > self.batch_size:
-                yield batch
+                batches.append(batch)
                 batch = []
             if len(chunk) > self.batch_size:
                 for start in range(0, len(chunk), self.batch_size):
-                    yield chunk[start : start + self.batch_size]
+                    batches.append(chunk[start : start + self.batch_size])
             else:
                 batch.extend(chunk)
         if batch:
-            yield batch
-
-    def __len__(self) -> int:
-        return (self.sample_count + self.batch_size - 1) // self.batch_size
+            batches.append(batch)
+        return batches
 
     def _positive_chunks(self, group: list[int]) -> list[list[int]]:
         if len(group) <= 1:
@@ -1581,7 +2759,10 @@ class BehaviorFamilyBatchSampler(Sampler[list[int]]):
         # has at least two views.  For three views and a target width of two, a
         # single three-view chunk is preferable to one positive pair plus an
         # orphan row.
-        target_width = max(self.views_per_family, 2)
+        target_width = min(
+            max(self.views_per_family, 2),
+            max(2, self.batch_size - 3),
+        )
         chunk_count = min(
             (len(group) + target_width - 1) // target_width,
             len(group) // 2,
@@ -1595,6 +2776,66 @@ class BehaviorFamilyBatchSampler(Sampler[list[int]]):
             chunks.append(group[start : start + size])
             start += size
         return chunks
+
+    def _relation_bundle(self, strong_chunk: list[int], rng) -> list[int]:
+        bundle = list(strong_chunk)
+        anchor = strong_chunk[0]
+        exact_id = self.exact_ids[anchor]
+        partial_id = self.partial_ids[anchor]
+        if exact_id is not None:
+            analogues = [
+                index
+                for index in self.exact_groups.get(exact_id, [])
+                if self.partial_ids[index] != partial_id and index not in bundle
+            ]
+            if analogues:
+                bundle.append(rng.choice(analogues))
+        broader_family = [
+            index
+            for index in self.family_groups.get(self.family_ids[anchor], [])
+            if self.exact_ids[index] != exact_id and index not in bundle
+        ]
+        if broader_family:
+            bundle.append(rng.choice(broader_family))
+        hard_negative = self.hard_negatives[anchor]
+        if hard_negative is not None and hard_negative not in bundle:
+            bundle.append(hard_negative)
+        return bundle
+
+    def _hard_negative_indices(self) -> list[int | None]:
+        signatures = [
+            tuple(float(value) for value in getattr(sample, "behavior_signature", ()))
+            for sample in self.samples
+        ]
+        if not signatures or not signatures[0] or len({len(row) for row in signatures}) != 1:
+            return [
+                next(
+                    (
+                        other
+                        for other in range(self.sample_count)
+                        if self.family_ids[other] != self.family_ids[index]
+                    ),
+                    None,
+                )
+                for index in range(self.sample_count)
+            ]
+        matrix = np.asarray(signatures, dtype=float)
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        normalized = matrix / np.maximum(norms, 1e-12)
+        distances = 1.0 - normalized @ normalized.T
+        result: list[int | None] = []
+        for index in range(self.sample_count):
+            candidates = [
+                other
+                for other in range(self.sample_count)
+                if self.family_ids[other] != self.family_ids[index]
+            ]
+            result.append(
+                min(candidates, key=lambda other: distances[index, other])
+                if candidates
+                else None
+            )
+        return result
 
 
 def build_model(
@@ -1731,7 +2972,7 @@ def build_lr_scheduler(
 
     return torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
-        mode="min",
+        mode="max",
         factor=train_config.lr_factor,
         patience=train_config.lr_patience,
         min_lr=train_config.min_lr,
@@ -1741,20 +2982,25 @@ def build_lr_scheduler(
 
 
 def scheduler_monitor_value(
-    metrics: dict[str, float],
+    metrics: dict[str, object],
     monitor: str,
 ) -> float:
-    if monitor == "trace_to_tree":
-        return metrics["trace_to_tree"]
-    if monitor == "reconstruction_composite":
-        return (
-            0.5 * metrics["tree_reconstruction"]
-            + 2.0 * metrics["trace_to_tree"]
-            + 0.5 * metrics["petri_to_tree"]
-        )
-    if monitor == "loss":
-        return metrics["loss"]
-    raise ValueError(f"unsupported scheduler monitor: {monitor}")
+    if monitor != "balanced":
+        raise ValueError(f"unsupported scheduler monitor: {monitor}")
+    return float(balanced_validation_components(metrics)["balanced_score"])
+
+
+def select_validation_candidate(
+    ordinary_metrics: dict[str, object],
+    ema_metrics: dict[str, object] | None,
+) -> tuple[dict[str, object], str]:
+    """Compare ordinary and EMA weights on the same checkpoint-selection key."""
+
+    if ema_metrics is not None and checkpoint_selection_key(
+        ema_metrics
+    ) > checkpoint_selection_key(ordinary_metrics):
+        return ema_metrics, "ema"
+    return ordinary_metrics, "ordinary"
 
 
 def macro_average_metrics(
@@ -1777,13 +3023,13 @@ def worst_case_metrics(
     result: dict[str, float] = {}
     for name in macro:
         values = [float(metrics[name]) for metrics in metrics_by_curriculum.values()]
-        lower_is_better = (
-            "loss" in name
-            or "edit" in name
-            or name.endswith("_to_tree")
-            or name.endswith("_reconstruction")
-        )
-        result[name] = max(values) if lower_is_better else min(values)
+        try:
+            direction = metric_spec(name).direction
+        except KeyError:
+            # Unknown diagnostics are deliberately excluded from the robust
+            # selection surface instead of guessing their direction by name.
+            continue
+        result[name] = max(values) if direction == "min" else min(values)
     return result
 
 
@@ -1812,19 +3058,22 @@ def train_synthetic(
     )
     optimizer = build_optimizer(model, train_config)
     ema = ModelEMA(train_config.ema_decay) if train_config.use_ema else None
-    history = [
-        train_epoch(
-            model,
-            dataloader,
-            optimizer,
-            device,
-            weights=loss_weights_from_config(train_config, epoch=epoch),
-            epoch=epoch,
-            train_config=train_config,
-            ema=ema,
+    semantic_memory_bank = SemanticMemoryBank(train_config.semantic_memory_bank_size)
+    history = []
+    for epoch in range(1, train_config.epochs + 1):
+        history.append(
+            train_epoch(
+                model,
+                dataloader,
+                optimizer,
+                device,
+                weights=loss_weights_from_config(train_config, epoch=epoch),
+                epoch=epoch,
+                train_config=train_config,
+                ema=ema,
+                semantic_memory_bank=semantic_memory_bank,
+            )
         )
-        for epoch in range(1, train_config.epochs + 1)
-    ]
     return model, history
 
 
@@ -2021,6 +3270,7 @@ def train_from_data_dir(
     optimizer = build_optimizer(model, train_config)
     scheduler = build_lr_scheduler(optimizer, train_config)
     ema = ModelEMA(train_config.ema_decay) if train_config.use_ema else None
+    semantic_memory_bank = SemanticMemoryBank(train_config.semantic_memory_bank_size)
     if ema is not None and resume_checkpoint is not None:
         ema_state = resume_checkpoint.get("ema_state_dict")
         if isinstance(ema_state, dict):
@@ -2028,7 +3278,7 @@ def train_from_data_dir(
     evaluation_weights = loss_weights_from_config(train_config)
     history: list[dict[str, object]] = []
     best_validation_loss = float("inf")
-    best_early_stopping_metric = float("inf")
+    best_early_stopping_metric = float("-inf")
     best_validation_score = float("-inf")
     best_validation_key = (float("-inf"),) * 4
     epochs_without_improvement = 0
@@ -2072,18 +3322,28 @@ def train_from_data_dir(
             epochs_without_improvement = int(
                 history[-1].get("epochs_without_improvement", 0)
             )
-            best_early_stopping_metric = min(
-                float(
-                    row.get(
-                        "early_stopping_metric",
-                        scheduler_monitor_value(
-                            row["validation"], train_config.scheduler_monitor
-                        ),
+            if int(resume_checkpoint.get("version", 0)) < 7:
+                best_early_stopping_metric = max(
+                    scheduler_monitor_value(
+                        row["validation"],
+                        train_config.scheduler_monitor,
                     )
+                    for row in history
+                    if isinstance(row.get("validation"), dict)
                 )
-                for row in history
-                if isinstance(row.get("validation"), dict)
-            )
+            else:
+                best_early_stopping_metric = max(
+                    float(
+                        row.get(
+                            "early_stopping_metric",
+                            scheduler_monitor_value(
+                                row["validation"], train_config.scheduler_monitor
+                            ),
+                        )
+                    )
+                    for row in history
+                    if isinstance(row.get("validation"), dict)
+                )
         restore_training_state(
             checkpoint=resume_checkpoint,
             optimizer=optimizer,
@@ -2104,26 +3364,28 @@ def train_from_data_dir(
     best_checkpoint_path = best_checkpoint_for(checkpoint_path)
     objective_checkpoint_paths = {
         name: best_checkpoint_for(checkpoint_path, name)
-        for name in ("loss", "trace", "edit", "latent")
+        for name in ("balanced", "decode", "retrieval", "geometry", "discovery")
     }
     structural_checkpoint_paths = {
         level: best_checkpoint_for(checkpoint_path, level)
         for level in CURRICULUM_LEVELS
     }
-    best_structural_stage_metrics = {level: float("inf") for level in CURRICULUM_LEVELS}
-    best_final_curriculum_key = (float("-inf"),) * 8
+    best_structural_stage_metrics = {
+        level: float("-inf") for level in CURRICULUM_LEVELS
+    }
+    best_final_curriculum_key = (float("-inf"),) * 5
     for history_row in history:
         level = str(history_row.get("structural_curriculum_stage", ""))
         metric = history_row.get("early_stopping_metric")
         if level in best_structural_stage_metrics and isinstance(metric, (int, float)):
-            best_structural_stage_metrics[level] = min(
+            best_structural_stage_metrics[level] = max(
                 best_structural_stage_metrics[level], float(metric)
             )
         stored_final_key = history_row.get("final_checkpoint_selection_key")
         if (
             level == "complex"
             and isinstance(stored_final_key, (list, tuple))
-            and len(stored_final_key) == 8
+            and len(stored_final_key) == 5
         ):
             best_final_curriculum_key = max(
                 best_final_curriculum_key,
@@ -2143,6 +3405,33 @@ def train_from_data_dir(
         if previous_structural_stage_value in CURRICULUM_LEVELS
         else None
     )
+    previous_validation_by_curriculum = (
+        dict(history[-1].get("validation_by_curriculum", {}))
+        if curriculum_mode and history
+        else {}
+    )
+    current_stage_epochs = [
+        int(row["epoch"])
+        for row in history
+        if row.get("structural_curriculum_stage") == previous_structural_stage
+        and isinstance(row.get("epoch"), (int, float))
+    ]
+    curriculum_stage_start_epoch = (
+        min(current_stage_epochs) if current_stage_epochs else start_epoch
+    )
+    curriculum_stage_baseline: dict[str, object] | None = None
+    if previous_structural_stage is not None:
+        for row in history:
+            if row.get("structural_curriculum_stage") != previous_structural_stage:
+                continue
+            by_curriculum = row.get("validation_by_curriculum")
+            if isinstance(by_curriculum, dict) and isinstance(
+                by_curriculum.get(previous_structural_stage), dict
+            ):
+                curriculum_stage_baseline = dict(
+                    by_curriculum[previous_structural_stage]
+                )
+                break
     prior_complex_epochs = [
         int(row["epoch"])
         for row in history
@@ -2156,22 +3445,40 @@ def train_from_data_dir(
     )
     for epoch in range(start_epoch, train_config.epochs + 1):
         epoch_start = perf_counter()
-        curriculum_state = (
-            structural_curriculum_for_epoch(
-                epoch,
-                train_config.epochs,
-                minimum_stage=previous_structural_stage,
+        if curriculum_mode:
+            curriculum_state, curriculum_competence = competence_curriculum_state(
+                previous_structural_stage,
+                previous_validation_by_curriculum,
+                curriculum_stage_baseline,
+                epochs_in_stage=epoch - curriculum_stage_start_epoch,
+                minimum_epochs=train_config.min_curriculum_stage_epochs,
+                min_delta=train_config.min_delta,
+                simple_best_score=best_structural_stage_metrics["simple"],
+                regression_tolerance=train_config.curriculum_regression_tolerance,
             )
-            if curriculum_mode
-            else {"name": "legacy", "weights": {}}
-        )
+        else:
+            curriculum_state = {"name": "legacy", "weights": {}}
+            curriculum_competence = {
+                "current_stage": "legacy",
+                "eligible": False,
+                "advanced": False,
+                "checks": {},
+            }
         structural_stage = str(curriculum_state["name"])
+        if curriculum_mode:
+            curriculum_state["weights"] = deficit_adjusted_curriculum_weights(
+                dict(curriculum_state["weights"]),
+                previous_validation_by_curriculum,
+            )
         stage_transition = (
             curriculum_mode
             and previous_structural_stage is not None
             and structural_stage != previous_structural_stage
         )
         if curriculum_mode:
+            if stage_transition:
+                curriculum_stage_start_epoch = epoch
+                curriculum_stage_baseline = None
             train_loader = CurriculumMixtureLoader(
                 train_loaders,
                 dict(curriculum_state["weights"]),
@@ -2181,20 +3488,44 @@ def train_from_data_dir(
         if stage_transition:
             scheduler = build_lr_scheduler(optimizer, train_config)
             epochs_without_improvement = 0
-            best_early_stopping_metric = float("inf")
+            best_early_stopping_metric = float("-inf")
             if structural_stage == "complex":
+                complex_stage_start_epoch = epoch
                 best_validation_loss = float("inf")
                 best_validation_score = float("-inf")
                 best_validation_key = (float("-inf"),) * 4
                 best_objectives = best_objectives_from_history([])
-                best_final_curriculum_key = (float("-inf"),) * 8
+                best_final_curriculum_key = (float("-inf"),) * 5
             debug(
                 f"Structural curriculum transition to {structural_stage}; reset "
                 "scheduler plateau and early-stopping patience state.",
                 enabled=show_progress,
             )
         debug(f"Starting epoch {epoch}/{train_config.epochs}", enabled=show_progress)
-        epoch_weights = loss_weights_from_config(train_config, epoch=epoch)
+        epoch_weights = validation_deficit_loss_weights(
+            loss_weights_from_config(train_config, epoch=epoch),
+            previous_validation_by_curriculum.get(structural_stage)
+            if curriculum_mode
+            else (
+                history[-1].get("validation")
+                if history and isinstance(history[-1].get("validation"), dict)
+                else None
+            ),
+        )
+        scheduled_sampling_metrics = (
+            previous_validation_by_curriculum.get(structural_stage)
+            if curriculum_mode
+            else (
+                history[-1].get("validation")
+                if history and isinstance(history[-1].get("validation"), dict)
+                else None
+            )
+        )
+        epoch_scheduled_sampling = adaptive_scheduled_sampling_probability(
+            train_config,
+            epoch,
+            scheduled_sampling_metrics,
+        )
         training_metrics = train_epoch(
             model,
             train_loader,
@@ -2206,6 +3537,8 @@ def train_from_data_dir(
             train_config=train_config,
             ema=ema,
             collect_curriculum_metrics=curriculum_mode,
+            semantic_memory_bank=semantic_memory_bank,
+            scheduled_sampling_override=epoch_scheduled_sampling,
         )
         training_by_curriculum = (
             dict(training_metrics.pop("by_curriculum", {}))
@@ -2217,8 +3550,9 @@ def train_from_data_dir(
             enabled=show_progress,
         )
         if curriculum_mode:
-            ordinary_validation_by_curriculum = {
-                level: evaluate_epoch(
+            ordinary_validation_by_curriculum = {}
+            for level in CURRICULUM_LEVELS:
+                level_metrics = evaluate_epoch(
                     model,
                     validation_loaders[level],
                     device,
@@ -2228,14 +3562,26 @@ def train_from_data_dir(
                     progress_desc=f"Epoch {epoch} {level} validation",
                     compute_discovery_metrics=True,
                 )
-                for level in CURRICULUM_LEVELS
-            }
+                ordinary_validation_by_curriculum[level] = attach_validation_audit(
+                    model,
+                    validation_loaders[level],
+                    level_metrics,
+                    curriculum=level,
+                    epoch=epoch,
+                    train_config=train_config,
+                    device=device,
+                    cache_dir=Path(checkpoint_path).parent
+                    / "validation_cache"
+                    / level,
+                    stage_transition=stage_transition,
+                    show_progress=show_progress,
+                )
             ordinary_validation_metrics = ordinary_validation_by_curriculum[
                 structural_stage
             ]
         else:
             ordinary_validation_by_curriculum = {}
-            ordinary_validation_metrics = evaluate_epoch(
+            ordinary_epoch_metrics = evaluate_epoch(
                 model,
                 validation_loader,
                 device,
@@ -2244,13 +3590,30 @@ def train_from_data_dir(
                 show_progress=show_progress,
                 compute_discovery_metrics=True,
             )
+            ordinary_validation_metrics = attach_validation_audit(
+                model,
+                validation_loader,
+                ordinary_epoch_metrics,
+                curriculum=str(
+                    validation_loader.dataset.samples[0].complexity_level
+                    or synthetic_config.complexity_level
+                    or "complex"
+                ),
+                epoch=epoch,
+                train_config=train_config,
+                device=device,
+                cache_dir=Path(checkpoint_path).parent / "validation_cache",
+                stage_transition=stage_transition,
+                show_progress=show_progress,
+            )
         ema_validation_metrics: dict[str, float] | None = None
         validation_weights = "ordinary"
         if ema is not None and ema.initialized:
             with ema.average_parameters(model):
                 if curriculum_mode:
-                    ema_validation_by_curriculum = {
-                        level: evaluate_epoch(
+                    ema_validation_by_curriculum = {}
+                    for level in CURRICULUM_LEVELS:
+                        level_metrics = evaluate_epoch(
                             model,
                             validation_loaders[level],
                             device,
@@ -2260,14 +3623,26 @@ def train_from_data_dir(
                             progress_desc=f"Epoch {epoch} EMA {level} validation",
                             compute_discovery_metrics=True,
                         )
-                        for level in CURRICULUM_LEVELS
-                    }
+                        ema_validation_by_curriculum[level] = attach_validation_audit(
+                            model,
+                            validation_loaders[level],
+                            level_metrics,
+                            curriculum=level,
+                            epoch=epoch,
+                            train_config=train_config,
+                            device=device,
+                            cache_dir=Path(checkpoint_path).parent
+                            / "validation_cache"
+                            / level,
+                            stage_transition=stage_transition,
+                            show_progress=show_progress,
+                        )
                     ema_validation_metrics = ema_validation_by_curriculum[
                         structural_stage
                     ]
                 else:
                     ema_validation_by_curriculum = {}
-                    ema_validation_metrics = evaluate_epoch(
+                    ema_epoch_metrics = evaluate_epoch(
                         model,
                         validation_loader,
                         device,
@@ -2277,19 +3652,26 @@ def train_from_data_dir(
                         progress_desc=f"Epoch {epoch} EMA validation",
                         compute_discovery_metrics=True,
                     )
-            ordinary_monitor = scheduler_monitor_value(
+                    ema_validation_metrics = attach_validation_audit(
+                        model,
+                        validation_loader,
+                        ema_epoch_metrics,
+                        curriculum=str(
+                            validation_loader.dataset.samples[0].complexity_level
+                            or synthetic_config.complexity_level
+                            or "complex"
+                        ),
+                        epoch=epoch,
+                        train_config=train_config,
+                        device=device,
+                        cache_dir=Path(checkpoint_path).parent / "validation_cache",
+                        stage_transition=stage_transition,
+                        show_progress=show_progress,
+                    )
+            validation_metrics, validation_weights = select_validation_candidate(
                 ordinary_validation_metrics,
-                train_config.scheduler_monitor,
-            )
-            ema_monitor = scheduler_monitor_value(
                 ema_validation_metrics,
-                train_config.scheduler_monitor,
             )
-            if ema_monitor < ordinary_monitor:
-                validation_metrics = ema_validation_metrics
-                validation_weights = "ema"
-            else:
-                validation_metrics = ordinary_validation_metrics
         else:
             ema_validation_by_curriculum = {}
             validation_metrics = ordinary_validation_metrics
@@ -2301,6 +3683,10 @@ def train_from_data_dir(
             )
             validation_macro = macro_average_metrics(validation_by_curriculum)
             validation_worst_case = worst_case_metrics(validation_by_curriculum)
+            if curriculum_stage_baseline is None:
+                curriculum_stage_baseline = dict(
+                    validation_by_curriculum[structural_stage]
+                )
         else:
             validation_by_curriculum = {}
             validation_macro = {}
@@ -2344,24 +3730,26 @@ def train_from_data_dir(
                 train_config.latent_dim,
             )
         current_lr = optimizer.param_groups[0]["lr"]
-        validation_score = validation_metrics["checkpoint_selection_score"]
+        validation_score = float(
+            balanced_validation_components(validation_metrics)["balanced_score"]
+        )
         monitor_value = scheduler_monitor_value(
             validation_metrics,
             train_config.scheduler_monitor,
         )
         structural_stage_improved = (
             curriculum_mode
-            and monitor_value < best_structural_stage_metrics[structural_stage]
+            and monitor_value > best_structural_stage_metrics[structural_stage]
         )
         if structural_stage_improved:
             best_structural_stage_metrics[structural_stage] = monitor_value
         curriculum_regression_from_stage_best = (
             {
-                level: scheduler_monitor_value(
+                level: best_structural_stage_metrics[level]
+                - scheduler_monitor_value(
                     validation_by_curriculum[level],
                     train_config.scheduler_monitor,
                 )
-                - best_structural_stage_metrics[level]
                 for level in ("simple", "medium")
                 if curriculum_mode
                 and math.isfinite(best_structural_stage_metrics[level])
@@ -2378,26 +3766,10 @@ def train_from_data_dir(
             )
 
         validation_key = checkpoint_selection_key(validation_metrics)
-        ordinary_objectives = checkpoint_objective_values(
-            ordinary_validation_metrics
-        )
-        ema_objectives = (
-            None
-            if ema_validation_metrics is None
-            else checkpoint_objective_values(ema_validation_metrics)
-        )
-        objective_values: dict[str, float | tuple[float, ...]] = {}
-        objective_candidate_weights: dict[str, str] = {}
-        for name, ordinary_value in ordinary_objectives.items():
-            if (
-                ema_objectives is not None
-                and objective_is_better(name, ema_objectives[name], ordinary_value)
-            ):
-                objective_values[name] = ema_objectives[name]
-                objective_candidate_weights[name] = "ema"
-            else:
-                objective_values[name] = ordinary_value
-                objective_candidate_weights[name] = "ordinary"
+        objective_values = checkpoint_objective_values(validation_metrics)
+        objective_candidate_weights = {
+            name: validation_weights for name in objective_values
+        }
         objective_improvements = {
             name: objective_is_better(name, value, best_objectives[name]["value"])
             for name, value in objective_values.items()
@@ -2409,26 +3781,34 @@ def train_from_data_dir(
                     "epoch": epoch,
                     "weights": objective_candidate_weights[name],
                 }
-        improved = objective_improvements["loss"]
+        improved = objective_improvements["balanced"]
         final_checkpoint_selection_key: tuple[float, ...] | None = None
         final_checkpoint_improved = improved
         if curriculum_mode and structural_stage == "complex":
             final_checkpoint_selection_key = final_curriculum_checkpoint_key(
                 validation_by_curriculum["complex"],
                 validation_macro,
+                validation_worst_case,
+                regression_within_tolerance=all(
+                    regression
+                    <= train_config.curriculum_regression_tolerance
+                    for regression in curriculum_regression_from_stage_best.values()
+                ),
             )
             final_checkpoint_improved = (
                 final_checkpoint_selection_key > best_final_curriculum_key
             )
             if final_checkpoint_improved:
                 best_final_curriculum_key = final_checkpoint_selection_key
-        if improved:
-            best_validation_loss = float(objective_values["loss"])
+        best_validation_loss = min(
+            best_validation_loss,
+            float(validation_metrics["loss"]),
+        )
         if validation_key > best_validation_key:
             best_validation_key = validation_key
             best_validation_score = validation_score
         early_stopping_improved = (
-            monitor_value < best_early_stopping_metric - train_config.min_delta
+            monitor_value > best_early_stopping_metric + train_config.min_delta
         )
         if early_stopping_improved:
             best_early_stopping_metric = monitor_value
@@ -2451,6 +3831,7 @@ def train_from_data_dir(
             "training": training_metrics,
             "structural_curriculum_stage": structural_stage,
             "curriculum_sampling_weights": dict(curriculum_state["weights"]),
+            "curriculum_competence": curriculum_competence,
             "training_by_curriculum": training_by_curriculum,
             "validation_by_curriculum": validation_by_curriculum,
             "validation_macro": validation_macro,
@@ -2487,6 +3868,7 @@ def train_from_data_dir(
             "epochs_without_improvement": epochs_without_improvement,
             "stage_acceptance": acceptance,
             "loss_weights": asdict(epoch_weights),
+            "scheduled_sampling_probability": epoch_scheduled_sampling,
         }
         if stage_metrics is not None and run_stage_gate:
             row["stage_metrics"] = stage_metrics
@@ -2496,6 +3878,7 @@ def train_from_data_dir(
                 for name, values in resume_policy_overrides.items()
             }
         history.append(row)
+        previous_validation_by_curriculum = validation_by_curriculum
         previous_structural_stage = structural_stage
         save_checkpoint(
             checkpoint_path=checkpoint_path,
@@ -2542,7 +3925,11 @@ def train_from_data_dir(
                     ema=ema,
                 )
         for objective, objective_improved in objective_improvements.items():
-            if not objective_improved:
+            if not objective_improved or (
+                objective == "balanced"
+                and curriculum_mode
+                and structural_stage == "complex"
+            ):
                 continue
             best_weight_context = (
                 ema.average_parameters(model)
@@ -2569,7 +3956,7 @@ def train_from_data_dir(
                     device=device,
                     ema=ema,
                 )
-                if objective == "loss" and not (
+                if objective == "balanced" and not (
                     curriculum_mode and structural_stage == "complex"
                 ):
                     save_checkpoint(
@@ -2584,7 +3971,7 @@ def train_from_data_dir(
                         best_validation_key=best_validation_key,
                         best_objectives=best_objectives,
                         is_best=True,
-                        checkpoint_objective="loss",
+                        checkpoint_objective="balanced",
                         optimizer=optimizer,
                         scheduler=scheduler,
                         train_loader=train_loader,
@@ -2614,7 +4001,28 @@ def train_from_data_dir(
                     best_validation_key=best_validation_key,
                     best_objectives=best_objectives,
                     is_best=True,
-                    checkpoint_objective="complex_primary_macro_tiebreak",
+                    checkpoint_objective="balanced_robust_curriculum",
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    train_loader=train_loader,
+                    device=device,
+                    ema=ema,
+                )
+                # Keep the historical .best alias byte-for-byte equivalent in
+                # selection semantics to the named balanced checkpoint.
+                save_checkpoint(
+                    checkpoint_path=objective_checkpoint_paths["balanced"],
+                    model=model,
+                    train_config=train_config,
+                    synthetic_config=synthetic_config,
+                    history=history,
+                    epoch=epoch,
+                    best_validation_loss=best_validation_loss,
+                    best_validation_score=best_validation_score,
+                    best_validation_key=best_validation_key,
+                    best_objectives=best_objectives,
+                    is_best=True,
+                    checkpoint_objective="balanced_robust_curriculum",
                     optimizer=optimizer,
                     scheduler=scheduler,
                     train_loader=train_loader,
@@ -2728,15 +4136,102 @@ def stage_acceptance_report(
             >= 0.90,
         }
     else:
+        components = balanced_validation_components(metrics)
+        retrieval = metrics.get("cross_modal_retrieval", {})
+        retrieval_rows = (
+            list(retrieval.values()) if isinstance(retrieval, dict) else []
+        )
+        exact_retrieval = _mean_scores(
+            [
+                float(row["top1_accuracy"])
+                for row in retrieval_rows
+                if isinstance(row, dict)
+                and isinstance(row.get("top1_accuracy"), (int, float))
+            ]
+        )
+        partial_retrieval = _mean_scores(
+            [
+                float(row["partial_order_recall_at_1"])
+                for row in retrieval_rows
+                if isinstance(row, dict)
+                and isinstance(row.get("partial_order_recall_at_1"), (int, float))
+            ]
+        )
+        equivalence = metrics.get("equivalence_families", {})
+        equivalence_methods = (
+            equivalence.get("methods", {})
+            if isinstance(equivalence, dict)
+            else {}
+        )
+        fused_equivalence = (
+            equivalence_methods.get("proc_rosetta_fused_mu", {})
+            if isinstance(equivalence_methods, dict)
+            else {}
+        )
+        family_margin = float(
+            fused_equivalence.get("equivalence_margin", -2.0)
+        ) if isinstance(fused_equivalence, dict) else -2.0
+        family_top1 = float(
+            fused_equivalence.get("behavior_id_retrieval_top1", 0.0)
+        ) if isinstance(fused_equivalence, dict) else 0.0
+        raw_decode = metrics.get("decode_quality", {})
+        raw_methods = raw_decode.get("methods", {}) if isinstance(raw_decode, dict) else {}
+        termination = _mean_scores(
+            [
+                float(row["terminated_rate"])
+                for row in raw_methods.values()
+                if isinstance(row, dict)
+                and isinstance(row.get("terminated_rate"), (int, float))
+            ]
+        ) if isinstance(raw_methods, dict) else 0.0
+        validity = _mean_scores(
+            [
+                float(row["valid_tree_rate"])
+                for row in raw_methods.values()
+                if isinstance(row, dict)
+                and isinstance(row.get("valid_tree_rate"), (int, float))
+            ]
+        ) if isinstance(raw_methods, dict) else 0.0
+        observation = metrics.get("metrics_by_observation_quality", {})
+        observation_scores = [
+            float(row.get("canonical_exact_rate", 0.0))
+            for row in observation.values()
+            if isinstance(row, dict)
+        ] if isinstance(observation, dict) else []
+        worst_observation_regression = (
+            max(observation_scores) - min(observation_scores)
+            if observation_scores
+            else 1.0
+        )
         measurements = {
-            "trace_canonical_exact": metrics.get("trace_canonical_exact", 0.0),
-            "behavior_distance_spearman": metrics.get(
-                "behavior_distance_spearman", 0.0
+            "fused_behavior_geometry": float(components["geometry_score"]),
+            "fused_geometry_advantage": float(
+                components["fused_geometry_advantage"]
             ),
+            "exact_retrieval": exact_retrieval,
+            "partial_order_retrieval": partial_retrieval,
+            "family_margin": family_margin,
+            "family_top1": family_top1,
+            "raw_termination": termination,
+            "raw_validity": validity,
+            "worst_observation_regression": worst_observation_regression,
         }
         checks = {
-            "discovery_metrics_present": "trace_canonical_exact" in metrics,
-            "behavior_geometry_measured": "behavior_distance_spearman" in metrics,
+            "fused_behavior_geometry_finite": math.isfinite(
+                measurements["fused_behavior_geometry"]
+            ),
+            "nearest_neighbor_geometry_not_worse_than_all_baselines": (
+                measurements["fused_geometry_advantage"] >= 0.0
+            ),
+            "exact_retrieval_nonzero": exact_retrieval > 0.0,
+            "partial_order_retrieval_nonzero": partial_retrieval > 0.0,
+            "family_margin_positive": family_margin > 0.0,
+            "family_top1_nonzero": family_top1 > 0.0,
+            "raw_termination_gate": termination >= 0.95,
+            "raw_validity_gate": validity >= 0.95,
+            "worst_observation_regression_bounded": (
+                worst_observation_regression <= 0.10
+            ),
         }
     return {
         "stage": stage,
@@ -2855,9 +4350,17 @@ def format_metrics(metrics: dict[str, float]) -> str:
     return ", ".join(f"{name}={metrics[name]:.4f}" for name in names if name in metrics)
 
 
-def metric_gaps(training_metrics: dict[str, float], validation_metrics: dict[str, float]) -> dict[str, float]:
+def metric_gaps(
+    training_metrics: dict[str, object],
+    validation_metrics: dict[str, object],
+) -> dict[str, float]:
     keys = sorted(set(training_metrics) & set(validation_metrics))
-    return {key: validation_metrics[key] - training_metrics[key] for key in keys}
+    return {
+        key: float(validation_metrics[key]) - float(training_metrics[key])
+        for key in keys
+        if isinstance(training_metrics[key], (int, float))
+        and isinstance(validation_metrics[key], (int, float))
+    }
 
 
 def best_checkpoint_for(
@@ -2872,17 +4375,15 @@ def best_checkpoint_for(
 
 
 def checkpoint_objective_values(
-    metrics: dict[str, float],
+    metrics: dict[str, object],
 ) -> dict[str, float | tuple[float, ...]]:
+    components = balanced_validation_components(metrics)
     return {
-        "loss": metrics["loss"],
-        "trace": metrics["trace_to_tree"],
-        "edit": metrics.get("trace_normalized_tree_edit", float("inf")),
-        "latent": (
-            metrics.get("exact_behavior_recall_at_1", float("-inf")),
-            metrics.get("behavior_distance_spearman", float("-inf")),
-            metrics.get("effective_rank", float("-inf")),
-        ),
+        "balanced": checkpoint_selection_key(metrics),
+        "decode": float(components["decode_score"]),
+        "retrieval": float(components["retrieval_score"]),
+        "geometry": float(components["geometry_score"]),
+        "discovery": float(components["discovery_score"]),
     }
 
 
@@ -2891,19 +4392,20 @@ def objective_is_better(
     value: float | tuple[float, ...],
     best: float | tuple[float, ...],
 ) -> bool:
-    if objective in {"loss", "trace", "edit"}:
-        return float(value) < float(best)
-    return tuple(value) > tuple(best)
+    if isinstance(value, tuple) or isinstance(best, tuple):
+        return tuple(value) > tuple(best)
+    return float(value) > float(best)
 
 
 def best_objectives_from_history(
     history: list[dict[str, object]],
 ) -> dict[str, dict[str, object]]:
     best: dict[str, dict[str, object]] = {
-        "loss": {"value": float("inf"), "epoch": 0},
-        "trace": {"value": float("inf"), "epoch": 0},
-        "edit": {"value": float("inf"), "epoch": 0},
-        "latent": {"value": (float("-inf"),) * 3, "epoch": 0},
+        "balanced": {"value": (float("-inf"),) * 4, "epoch": 0},
+        "decode": {"value": float("-inf"), "epoch": 0},
+        "retrieval": {"value": float("-inf"), "epoch": 0},
+        "geometry": {"value": float("-inf"), "epoch": 0},
+        "discovery": {"value": float("-inf"), "epoch": 0},
     }
     if history:
         stored = history[-1].get("best_objectives")
@@ -2914,7 +4416,7 @@ def best_objectives_from_history(
                 if not isinstance(details, dict) or "value" not in details:
                     break
                 value = details["value"]
-                if objective == "latent" and isinstance(value, list):
+                if objective == "balanced" and isinstance(value, list):
                     value = tuple(float(item) for item in value)
                 restored[objective] = {**details, "value": value}
             if len(restored) == len(best):
@@ -2947,13 +4449,27 @@ CSV_METRIC_NAMES = (
     "tree_reconstruction",
     "trace_to_tree",
     "petri_to_tree",
+    "fused_to_tree",
+    "fused_subset_to_tree",
+    "deployment_to_tree",
     "tree_complexity",
     "duplicate_activity",
     "latent_alignment",
     "contrastive",
     "exact_contrastive",
     "within_modality_contrastive",
+    "semantic_exact_contrastive",
+    "semantic_memory_contrastive",
+    "hierarchical_metric",
+    "observation_view_consistency",
     "soft_behavior_geometry",
+    "observed_behavior_regression",
+    "observed_behavior_ranking",
+    "beam_minimum_risk",
+    "eos_calibration",
+    "generated_length",
+    "unresolved_open_slots",
+    "completion_feasibility",
     "variance",
     "covariance",
     "effective_rank",
@@ -2976,16 +4492,33 @@ CSV_METRIC_NAMES = (
     "checkpoint_selection_recall_at_1",
     "checkpoint_selection_spearman",
     "checkpoint_selection_score",
+    "beam_top1_exact",
+    "beam_oracle_exact",
+    "beam_top1_edit",
+    "beam_oracle_edit",
+    "beam_top1_behavior_l1",
+    "beam_oracle_behavior_l1",
+    "pcgrad_reconstruction_metric_cosine",
+    "pcgrad_projection_applied",
     *(
         f"{kind}_{modality}"
         for modality in ("tree", "trace", "petri")
         for kind in (
             "reconstruction_gradient_norm",
             "metric_gradient_norm",
+            "source_reconstruction_gradient_norm",
+            "fused_reconstruction_gradient_norm",
+            "semantic_retrieval_gradient_norm",
+            "observed_geometry_gradient_norm",
+            "beam_risk_gradient_norm",
             "metric_to_reconstruction_gradient_ratio",
             "reconstruction_exact_gradient_cosine",
             "reconstruction_soft_geometry_gradient_cosine",
             "exact_soft_geometry_gradient_cosine",
+            "reconstruction_semantic_gradient_cosine",
+            "reconstruction_observed_geometry_gradient_cosine",
+            "semantic_observed_geometry_gradient_cosine",
+            "reconstruction_beam_risk_gradient_cosine",
         )
     ),
 )
@@ -3005,6 +4538,7 @@ def metrics_csv_columns() -> list[str]:
         "best_early_stopping_metric",
         "is_best",
         "epochs_without_improvement",
+        "scheduled_sampling_probability",
     ]
     for prefix in ("training", "validation", "gap"):
         columns.extend(f"{prefix}_{name}" for name in CSV_METRIC_NAMES)
@@ -3059,6 +4593,9 @@ def flatten_epoch_row(row: dict[str, object]) -> dict[str, object]:
         "best_early_stopping_metric": row.get("best_early_stopping_metric", ""),
         "is_best": row["is_best"],
         "epochs_without_improvement": row["epochs_without_improvement"],
+        "scheduled_sampling_probability": row.get(
+            "scheduled_sampling_probability", ""
+        ),
     }
     for name in CSV_METRIC_NAMES:
         flat[f"training_{name}"] = training.get(name, "")
@@ -3226,6 +4763,10 @@ def train_config_from_checkpoint(
 ) -> TrainConfig:
     train_config_data = asdict(TrainConfig())
     train_config_data.update(dict(checkpoint["train_config"]))
+    if int(checkpoint.get("version", 0)) < 7:
+        # Format-v7 unifies scheduling, stopping, EMA comparison, and default
+        # checkpoint selection on the balanced validation objective.
+        train_config_data["scheduler_monitor"] = "balanced"
     train_config_data["device"] = str(device)
     return TrainConfig(**train_config_data)
 
@@ -3321,16 +4862,22 @@ def restore_training_loader_state(
 def replay_scheduler_history(
     scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau,
     history: list[dict[str, object]],
-    scheduler_monitor: str = "loss",
+    scheduler_monitor: str = "balanced",
+    *,
+    use_stored_metric: bool = True,
 ) -> None:
     for row in history:
         validation = row.get("validation")
         if isinstance(validation, dict):
             scheduler.step(
                 float(
-                    row.get(
-                        "lr_scheduler_metric",
-                        scheduler_monitor_value(validation, scheduler_monitor),
+                    (
+                        row.get(
+                            "lr_scheduler_metric",
+                            scheduler_monitor_value(validation, scheduler_monitor),
+                        )
+                        if use_stored_metric
+                        else scheduler_monitor_value(validation, scheduler_monitor)
                     )
                 )
             )
@@ -3355,7 +4902,12 @@ def restore_training_state(
         raise ValueError("checkpoint contains incomplete optimizer/scheduler resume state")
 
     if optimizer_state is None:
-        replay_scheduler_history(scheduler, history, scheduler_monitor)
+        replay_scheduler_history(
+            scheduler,
+            history,
+            scheduler_monitor,
+            use_stored_metric=int(checkpoint.get("version", 0)) >= 7,
+        )
         batch_sampler = getattr(train_loader, "batch_sampler", None)
         if hasattr(batch_sampler, "epoch"):
             batch_sampler.epoch = completed_epoch
@@ -3378,7 +4930,12 @@ def restore_training_state(
         # mode="max" discovery-score scheduler. Replaying loss history avoids
         # silently restoring that conflicting objective while preserving the
         # optimizer, RNG, and loader continuation state.
-        replay_scheduler_history(scheduler, history, scheduler_monitor)
+        replay_scheduler_history(
+            scheduler,
+            history,
+            scheduler_monitor,
+            use_stored_metric=int(checkpoint.get("version", 0)) >= 7,
+        )
         scheduler_restored = False
     rng_state = checkpoint.get("rng_state")
     loader_state = checkpoint.get("training_loader_state")

@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import math
 import sys
+import hashlib
+import json
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
 from typing import Hashable, Iterable, Sequence
 
@@ -20,18 +23,49 @@ from proc_rosetta.data import (
 )
 from proc_rosetta.devices import resolve_device
 from proc_rosetta.pm4py_bridge import (
+    fold_process_tree,
     petri_graph_to_net,
     simulate_traces,
     to_pm4py_tree,
     tree_to_petri_net,
 )
-from proc_rosetta.synthetic import ProcessSample
+from proc_rosetta.synthetic import ProcessSample, decoder_target_trees_for_sample
+from proc_rosetta.tree import ProcessTreeNode, sanitize_activity_labels
 from proc_rosetta.training import evaluate_samples_from_checkpoint, load_checkpoint
 
 
 Trace = Sequence[str]
 FeatureDict = dict[Hashable, float]
 CONFORMANCE_METHODS = ("token_based_replay", "footprints")
+
+
+@dataclass(frozen=True)
+class ValidationAuditConfig:
+    decode_interval: int = 2
+    full_interval: int = 10
+    decode_family_count: int = 64
+    discovery_family_count: int = 32
+    beam_size: int = 5
+    max_decode_length: int = 512
+    cache_dir: str | None = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "decode_interval",
+            "full_interval",
+            "decode_family_count",
+            "discovery_family_count",
+            "beam_size",
+            "max_decode_length",
+        ):
+            if int(getattr(self, name)) < 1:
+                raise ValueError(f"{name} must be positive")
+
+
+_VALIDATION_BASELINE_CACHE: dict[str, dict[str, np.ndarray]] = {}
+_VALIDATION_INDUCTIVE_CACHE: dict[
+    tuple[str, str], list[dict[str, object]]
+] = {}
 
 
 @dataclass(frozen=True)
@@ -244,8 +278,10 @@ def rich_test_report(
     strata = trace_decode.get("strata", {})
     assert isinstance(strata, dict)
     report["metrics_by_motif"] = _strata_with_prefix(strata, "motif:")
-    report["metrics_by_observation_quality"] = _strata_with_prefix(
-        strata, "observation:"
+    report["metrics_by_observation_quality"] = observation_quality_report(
+        samples,
+        neural_embeddings,
+        _strata_with_prefix(strata, "observation:"),
     )
     report["metrics_by_tree_size_quantile"] = _strata_with_prefix(
         strata, "tree_size_bin:"
@@ -287,6 +323,311 @@ def rich_test_report(
     return report
 
 
+def validation_audit_level(
+    epoch: int,
+    config: ValidationAuditConfig,
+    *,
+    stage_transition: bool = False,
+) -> str:
+    if stage_transition or epoch % config.full_interval == 0:
+        return "full"
+    if epoch % config.decode_interval == 0:
+        return "decode"
+    return "semantic"
+
+
+def fixed_validation_family_subset(
+    samples: Sequence[ProcessSample],
+    family_count: int,
+) -> list[ProcessSample]:
+    """Choose a deterministic family-complete, stratum-interleaved subset."""
+
+    grouped: dict[str, list[ProcessSample]] = {}
+    strata: dict[str, str] = {}
+    for sample in samples:
+        family_id = str(sample.equivalence_id)
+        grouped.setdefault(family_id, []).append(sample)
+        strata.setdefault(
+            family_id,
+            "|".join(
+                (
+                    str(sample.complexity_level),
+                    str(sample.metadata.get("motif", "ordinary_tree")),
+                    str(sample.metadata.get("observation_quality", "unknown")),
+                )
+            ),
+        )
+    by_stratum: dict[str, list[str]] = {}
+    for family_id, stratum in strata.items():
+        by_stratum.setdefault(stratum, []).append(family_id)
+    for family_ids in by_stratum.values():
+        family_ids.sort(
+            key=lambda value: hashlib.sha256(value.encode("utf-8")).hexdigest()
+        )
+    selected: list[str] = []
+    stratum_names = sorted(by_stratum)
+    while len(selected) < min(family_count, len(grouped)):
+        progressed = False
+        for stratum in stratum_names:
+            family_ids = by_stratum[stratum]
+            if family_ids:
+                selected.append(family_ids.pop(0))
+                progressed = True
+                if len(selected) >= min(family_count, len(grouped)):
+                    break
+        if not progressed:
+            break
+    selected_set = set(selected)
+    return [sample for sample in samples if str(sample.equivalence_id) in selected_set]
+
+
+def _cached_validation_baselines(
+    samples: Sequence[ProcessSample],
+    *,
+    show_progress: bool,
+) -> dict[str, np.ndarray]:
+    key = validation_split_hash(samples)
+    if key not in _VALIDATION_BASELINE_CACHE:
+        _VALIDATION_BASELINE_CACHE[key] = deterministic_baseline_embeddings(
+            samples,
+            show_progress=show_progress,
+        )
+    return {
+        name: values.copy()
+        for name, values in _VALIDATION_BASELINE_CACHE[key].items()
+    }
+
+
+def _cached_inductive_rows(
+    samples: Sequence[ProcessSample],
+    conformance_method: str,
+) -> list[dict[str, object]]:
+    key = (validation_split_hash(samples), conformance_method)
+    if key not in _VALIDATION_INDUCTIVE_CACHE:
+        _VALIDATION_INDUCTIVE_CACHE[key] = [
+            evaluate_inductive_miner_discovery(
+                sample,
+                conformance_method=conformance_method,
+            )
+            for sample in samples
+        ]
+    return [dict(row) for row in _VALIDATION_INDUCTIVE_CACHE[key]]
+
+
+def validation_audit_report(
+    model,
+    samples: Sequence[ProcessSample],
+    curriculum: str,
+    *,
+    loss_metrics: dict[str, float],
+    epoch: int,
+    config: ValidationAuditConfig | None = None,
+    batch_size: int = 16,
+    device: str | None = None,
+    show_progress: bool = False,
+    stage_transition: bool = False,
+    conformance_method: str = "token_based_replay",
+) -> dict[str, object]:
+    """Run test-equivalent learned metrics without resolving a checkpoint/path."""
+
+    config = config or ValidationAuditConfig()
+    level = validation_audit_level(
+        epoch,
+        config,
+        stage_transition=stage_transition,
+    )
+    mismatches = [
+        sample.complexity_level
+        for sample in samples
+        if sample.complexity_level not in {None, curriculum}
+    ]
+    if mismatches:
+        raise ValueError(
+            f"validation samples contain complexity levels other than {curriculum!r}"
+        )
+    if not samples:
+        raise ValueError("validation audit requires at least one sample")
+    decode_family_count = (
+        config.decode_family_count
+        if level in {"decode", "full"}
+        else max(1, config.decode_family_count // 4)
+    )
+    decode_samples = fixed_validation_family_subset(samples, decode_family_count)
+    discovery_samples = fixed_validation_family_subset(
+        samples,
+        config.discovery_family_count,
+    )
+    device_name = str(resolve_device(device))
+    neural_embeddings = proc_rosetta_embeddings(
+        model,
+        samples,
+        batch_size=batch_size,
+        device=device_name,
+        show_progress=show_progress,
+    )
+    decode_quality = decode_quality_report(
+        model,
+        decode_samples,
+        batch_size=batch_size,
+        device=device_name,
+        max_decode_length=config.max_decode_length,
+        show_progress=show_progress,
+        completion_policy="prefix_only",
+        beam_size=config.beam_size,
+    )
+    deployment_decode_quality = decode_quality_report(
+        model,
+        decode_samples,
+        batch_size=batch_size,
+        device=device_name,
+        max_decode_length=config.max_decode_length,
+        show_progress=show_progress,
+        completion_policy="bounded",
+        beam_size=config.beam_size,
+    )
+    if level == "full":
+        discovery_quality = discovery_quality_report(
+            model,
+            discovery_samples,
+            batch_size=batch_size,
+            device=device_name,
+            max_decode_length=config.max_decode_length,
+            show_progress=show_progress,
+            conformance_method=conformance_method,
+            inductive_rows=_cached_inductive_rows(
+                discovery_samples,
+                conformance_method,
+            ),
+        )
+    else:
+        discovery_quality = {
+            "description": (
+                f"Periodic full validation discovery audit is not due at epoch {epoch}."
+            ),
+            "conformance_method": conformance_method,
+            "max_decode_length": int(config.max_decode_length),
+            "methods": {
+                name: summarize_discovery_quality(
+                    [],
+                    conformance_method=conformance_method,
+                )
+                for name in ("proc_rosetta_trace_mu", "inductive_miner")
+            },
+        }
+    behavior = behavior_matrices(
+        samples,
+        show_progress=show_progress,
+        cache_dir=config.cache_dir,
+    )
+    methods: dict[str, dict[str, object]] = {}
+    method_embeddings: dict[str, np.ndarray] = {}
+    for name, matrix in neural_embeddings.items():
+        method_embeddings[name] = matrix
+        methods[name] = evaluate_embedding_method(matrix, behavior["mean_l1"])
+        methods[name]["kind"] = "learned_proc_rosetta_latent"
+    baselines = _cached_validation_baselines(samples, show_progress=show_progress)
+    for name, matrix in baselines.items():
+        method_embeddings[name] = matrix
+        methods[name] = evaluate_embedding_method(matrix, behavior["mean_l1"])
+        methods[name]["kind"] = "deterministic_baseline"
+    retrieval = cross_modal_retrieval(
+        neural_embeddings,
+        exact_behavior_ids=[
+            sample.strong_behavior_id or sample.exact_behavior_id
+            for sample in samples
+        ],
+        partial_order_ids=[sample.partial_order_id for sample in samples],
+        behavior_signatures=[sample.behavior_signature for sample in samples],
+    )
+    equivalence = equivalence_family_embedding_report(
+        samples,
+        neural_embeddings,
+        show_progress=show_progress,
+    )
+    report: dict[str, object] = {
+        "split": "validation",
+        "curriculum": curriculum,
+        "sample_count": len(samples),
+        "behavior_family_count": len({sample.equivalence_id for sample in samples}),
+        "dataset_statistics": sample_statistics(samples),
+        "loss_metrics": round_float_dict(loss_metrics),
+        "behavioral_distance_summary": summarize_distance_matrix(behavior["mean_l1"]),
+        "behavioral_component_summaries": {
+            key: summarize_distance_matrix(value)
+            for key, value in behavior.items()
+            if key != "mean_l1"
+        },
+        "decode_quality": decode_quality,
+        "deployment_decode_quality": deployment_decode_quality,
+        "discovery_quality": discovery_quality,
+        "cross_modal_retrieval": retrieval,
+        "equivalence_families": equivalence,
+        "embedding_methods": methods,
+        "method_ranking": rank_embedding_methods(methods),
+        "method_comparisons_against_proc_rosetta_fused_mu": compare_methods_against_reference(
+            method_embeddings,
+            methods,
+            reference_name="proc_rosetta_fused_mu",
+        ),
+        "references": {
+            "pm4py_colonna_petri_node2vec": (
+                "Not rerun during validation checkpoint selection."
+            ),
+            "pm4py_log_case_features_mean_std": (
+                "pm4py.extract_features_dataframe aggregated per log"
+            ),
+        },
+    }
+    trace_decode = decode_quality["methods"]["proc_rosetta_trace_mu"]
+    assert isinstance(trace_decode, dict)
+    strata = trace_decode.get("strata", {})
+    assert isinstance(strata, dict)
+    report["metrics_by_motif"] = _strata_with_prefix(strata, "motif:")
+    report["metrics_by_observation_quality"] = observation_quality_report(
+        samples,
+        neural_embeddings,
+        _strata_with_prefix(strata, "observation:"),
+    )
+    report["metrics_by_tree_size_quantile"] = _strata_with_prefix(
+        strata, "tree_size_bin:"
+    )
+    report["metrics_by_loop_presence"] = _strata_with_prefix(strata, "loop:")
+    strong_ids = [
+        sample.strong_behavior_id or sample.exact_behavior_id
+        for sample in samples
+    ]
+    retrieval_rows = cross_modal_top1_rows(
+        neural_embeddings["proc_rosetta_trace_mu"],
+        neural_embeddings["proc_rosetta_tree_mu"],
+        strong_ids,
+        [sample.equivalence_id for sample in samples],
+    )
+    report["family_bootstrap_95_intervals"] = {
+        "exact_tree_match_rate": trace_decode["family_bootstrap_95_intervals"][
+            "exact_tree_match_rate"
+        ],
+        "normalized_edit_distance": trace_decode["family_bootstrap_95_intervals"][
+            "normalized_tree_edit_distance"
+        ],
+        "discovery_f1": (
+            discovery_quality["methods"]["proc_rosetta_trace_mu"][
+                "family_bootstrap_95_intervals"
+            ]["discovery_f1"]
+            if level == "full"
+            else {"family_count": 0, "estimate": 0.0, "lower": 0.0, "upper": 0.0}
+        ),
+        "cross_modal_recall_at_1": family_bootstrap_interval(
+            retrieval_rows, "hit", boolean=True
+        ),
+        "behavior_distance_spearman": family_bootstrap_spearman_interval(
+            neural_embeddings["proc_rosetta_fused_mu"],
+            behavior["mean_l1"],
+            [sample.equivalence_id for sample in samples],
+        ),
+    }
+    return report
+
+
 def _strata_with_prefix(
     strata: dict[str, object],
     prefix: str,
@@ -296,6 +637,97 @@ def _strata_with_prefix(
         for name, values in strata.items()
         if name.startswith(prefix)
     }
+
+
+def observation_quality_report(
+    samples: Sequence[ProcessSample],
+    embeddings: dict[str, np.ndarray],
+    decode_strata: dict[str, object],
+) -> dict[str, object]:
+    qualities = [
+        str(
+            sample.metadata.get(
+                "observation_quality",
+                sample.metadata.get("sampling_mode", "unknown"),
+            )
+        )
+        for sample in samples
+    ]
+    exact_ids = [
+        sample.strong_behavior_id or sample.exact_behavior_id for sample in samples
+    ]
+    family_ids = [
+        str(getattr(sample, "equivalence_id", exact_ids[index]))
+        for index, sample in enumerate(samples)
+    ]
+    trace = np.asarray(embeddings["proc_rosetta_trace_mu"], dtype=float)
+    tree = np.asarray(embeddings["proc_rosetta_tree_mu"], dtype=float)
+    trace_normalized = trace / np.maximum(
+        np.linalg.norm(trace, axis=1, keepdims=True),
+        1e-12,
+    )
+    clean_indices = [
+        index
+        for index, quality in enumerate(qualities)
+        if quality.lower() in {"clean", "full", "uniform", "resampled"}
+    ]
+    if not clean_indices:
+        clean_indices = list(range(len(samples)))
+    report: dict[str, object] = {}
+    for quality in sorted(set(qualities)):
+        indices = [index for index, value in enumerate(qualities) if value == quality]
+        retrieval = retrieval_metrics(
+            trace[indices],
+            tree,
+            query_labels=[exact_ids[index] for index in indices],
+            candidate_labels=exact_ids,
+        )
+        values = dict(decode_strata.get(quality, {}))
+        clean_cosines: list[float] = []
+        family_margins: list[float] = []
+        for index in indices:
+            clean_positives = [
+                candidate
+                for candidate in clean_indices
+                if candidate != index and family_ids[candidate] == family_ids[index]
+            ]
+            if clean_positives:
+                clean_cosines.append(
+                    max(
+                        float(trace_normalized[index] @ trace_normalized[candidate])
+                        for candidate in clean_positives
+                    )
+                )
+            positives = [
+                candidate
+                for candidate in range(len(samples))
+                if candidate != index and family_ids[candidate] == family_ids[index]
+            ]
+            negatives = [
+                candidate
+                for candidate in range(len(samples))
+                if family_ids[candidate] != family_ids[index]
+            ]
+            if positives and negatives:
+                family_margins.append(
+                    max(
+                        float(trace_normalized[index] @ trace_normalized[candidate])
+                        for candidate in positives
+                    )
+                    - max(
+                        float(trace_normalized[index] @ trace_normalized[candidate])
+                        for candidate in negatives
+                    )
+                )
+        values.update(
+            exact_retrieval_recall_at_1=retrieval["top1_accuracy"],
+            exact_retrieval_recall_at_5=retrieval["recall_at_5"],
+            exact_retrieval_mrr=retrieval["mrr"],
+            clean_view_semantic_cosine=round_float(mean(clean_cosines)),
+            worst_view_family_margin=round_float(mean(family_margins)),
+        )
+        report[quality] = values
+    return report
 
 
 def test_debug(message: str, enabled: bool = True) -> None:
@@ -399,8 +831,11 @@ def discovery_quality_report(
     max_decode_length: int = 512,
     show_progress: bool = False,
     conformance_method: str = "token_based_replay",
+    inductive_rows: Sequence[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     validate_conformance_method(conformance_method)
+    if inductive_rows is not None and len(inductive_rows) != len(samples):
+        raise ValueError("cached Inductive Miner rows must match the selected samples")
     model.eval()
     torch_device = resolve_device(device)
     model.to(torch_device)
@@ -428,14 +863,18 @@ def discovery_quality_report(
             batch = _move_batch_to_device(collator(batch_samples), torch_device)
             trace_dist = model.encode_traces(batch["traces"])
             source_masks = batch.get("source_activity_masks", {})
-            decoded_rows = decode_trace_with_conformance_reranking(
-                model,
-                trace_dist,
-                batch_samples,
-                max_length=max_decode_length,
-                allowed_activity_mask=source_masks.get("trace"),
+            decoded_rows, beam_candidate_rows = (
+                decode_trace_candidates_with_conformance_reranking(
+                    model,
+                    trace_dist,
+                    batch_samples,
+                    max_length=max_decode_length,
+                    allowed_activity_mask=source_masks.get("trace"),
+                )
             )
-            for sample, token_ids in zip(batch_samples, decoded_rows):
+            for offset, (sample, token_ids, beam_candidates) in enumerate(
+                zip(batch_samples, decoded_rows, beam_candidate_rows)
+            ):
                 proc_rosetta_row = evaluate_proc_rosetta_discovery(
                     model,
                     sample,
@@ -450,6 +889,45 @@ def discovery_quality_report(
                 proc_rosetta_row["observation_quality"] = str(
                     metadata.get("observation_quality", "unknown")
                 )
+                candidate_quality = [proc_rosetta_row]
+                selected_key = tuple(int(token_id) for token_id in token_ids)
+                seen = {selected_key}
+                for candidate_ids in beam_candidates:
+                    candidate_key = tuple(int(token_id) for token_id in candidate_ids)
+                    if candidate_key in seen:
+                        continue
+                    seen.add(candidate_key)
+                    candidate_quality.append(
+                        evaluate_proc_rosetta_discovery(
+                            model,
+                            sample,
+                            candidate_ids,
+                            conformance_method=conformance_method,
+                        )
+                    )
+                oracle = max(
+                    candidate_quality,
+                    key=lambda value: (
+                        float(value["f1"])
+                        if isinstance(value.get("f1"), (int, float))
+                        else -1.0
+                    ),
+                )
+                reranked_f1 = proc_rosetta_row.get("f1")
+                oracle_f1 = oracle.get("f1")
+                proc_rosetta_row.update(
+                    beam_candidate_count=len(seen),
+                    beam_reranked_f1=reranked_f1,
+                    beam_oracle_fitness=oracle.get("fitness"),
+                    beam_oracle_precision=oracle.get("precision"),
+                    beam_oracle_f1=oracle_f1,
+                    beam_oracle_f1_gap=(
+                        round_float(float(oracle_f1) - float(reranked_f1))
+                        if isinstance(oracle_f1, (int, float))
+                        and isinstance(reranked_f1, (int, float))
+                        else None
+                    ),
+                )
                 rows["proc_rosetta_trace_mu"].append(proc_rosetta_row)
                 conformance_successes += int(proc_rosetta_row["conformance_evaluable"])
                 completed_models += 1
@@ -461,9 +939,14 @@ def discovery_quality_report(
                     remaining=total_models - completed_models,
                 )
 
-                inductive_miner_row = evaluate_inductive_miner_discovery(
-                    sample,
-                    conformance_method=conformance_method,
+                cached_index = start + offset
+                inductive_miner_row = (
+                    dict(inductive_rows[cached_index])
+                    if inductive_rows is not None
+                    else evaluate_inductive_miner_discovery(
+                        sample,
+                        conformance_method=conformance_method,
+                    )
                 )
                 inductive_miner_row["equivalence_id"] = str(
                     getattr(sample, "equivalence_id", start)
@@ -788,6 +1271,8 @@ def summarize_discovery_quality(
     fitness_values = numeric_row_values(rows, "fitness")
     precision_values = numeric_row_values(rows, "precision")
     f1_values = numeric_row_values(rows, "f1")
+    oracle_f1_values = numeric_row_values(rows, "beam_oracle_f1")
+    oracle_f1_gaps = numeric_row_values(rows, "beam_oracle_f1_gap")
     first_error = next((str(row["error"]) for row in rows if row.get("error")), None)
     evaluable_count = sum(1 for row in rows if conformance_row_evaluable(row))
     evaluable_rate = round_float(evaluable_count / len(rows)) if rows else 0.0
@@ -800,6 +1285,8 @@ def summarize_discovery_quality(
         "mean_precision": round_float(mean(precision_values)),
         "mean_f1": round_float(mean(f1_values)),
         "median_f1": round_float(float(np.median(f1_values))) if f1_values else 0.0,
+        "mean_beam_oracle_f1": round_float(mean(oracle_f1_values)),
+        "mean_beam_oracle_f1_gap": round_float(mean(oracle_f1_gaps)),
         "conformance_error_count": error_count,
         "first_error": first_error,
     }
@@ -898,6 +1385,8 @@ def decode_quality_report(
     behavior_traces_per_sample: int = 128,
     show_progress: bool = False,
     completion_policy: str = "prefix_only",
+    beam_size: int = 5,
+    include_beam_oracle: bool = True,
 ) -> dict[str, object]:
     model.eval()
     torch_device = resolve_device(device)
@@ -942,22 +1431,90 @@ def decode_quality_report(
                     | source_masks["petri"]
                 ),
             }
+            source_names = {
+                "proc_rosetta_tree_mu": "tree",
+                "proc_rosetta_trace_mu": "trace",
+                "proc_rosetta_petri_mu": "petri",
+                "proc_rosetta_fused_mu": "fused",
+            }
+            duplicate_free = completion_policy != "prefix_only"
 
             for name, latent in latents.items():
-                decoded = decode_with_beam(
-                    model.tree_decoder,
-                    latent,
-                    max_length=max_decode_length,
-                    allowed_activity_mask=allowed_masks[name],
-                    completion_policy=completion_policy,
-                )
-                for sample, token_ids in zip(batch_samples, decoded.detach().cpu().tolist()):
+                if include_beam_oracle and hasattr(
+                    model.tree_decoder, "decode_beam_candidates"
+                ):
+                    candidate_rows = model.tree_decoder.decode_beam_candidates(
+                        latent,
+                        max_length=max_decode_length,
+                        beam_size=beam_size,
+                        length_penalty=0.7,
+                        allowed_activity_mask=allowed_masks[name],
+                        completion_policy=completion_policy,
+                        avoid_duplicate_activity_labels=duplicate_free,
+                    )
+                else:
+                    decoded = decode_with_beam(
+                        model.tree_decoder,
+                        latent,
+                        max_length=max_decode_length,
+                        beam_size=beam_size,
+                        allowed_activity_mask=allowed_masks[name],
+                        completion_policy=completion_policy,
+                        avoid_duplicate_activity_labels=duplicate_free,
+                    )
+                    candidate_rows = [
+                        [(token_ids, 0.0)]
+                        for token_ids in decoded.detach().cpu().tolist()
+                    ]
+                for sample, candidates in zip(batch_samples, candidate_rows):
+                    token_ids = candidates[0][0]
+                    source_name = source_names[name]
+                    target_tree = decode_target_tree(
+                        sample,
+                        source_name,
+                        avoid_duplicates=duplicate_free,
+                    )
                     row = evaluate_single_decode(
                         model,
                         sample,
                         token_ids,
+                        source_name=source_name,
+                        target_tree=target_tree,
                         behavior_traces_per_sample=behavior_traces_per_sample,
                         completion_policy=completion_policy,
+                    )
+                    candidate_evaluations = [row]
+                    for candidate_ids, _ in candidates[1:]:
+                        candidate_evaluations.append(
+                            evaluate_single_decode(
+                                model,
+                                sample,
+                                candidate_ids,
+                                source_name=source_name,
+                                target_tree=target_tree,
+                                behavior_traces_per_sample=(
+                                    behavior_traces_per_sample
+                                ),
+                                completion_policy=completion_policy,
+                            )
+                        )
+                    behavior_values = [
+                        float(value["behavior_l1"])
+                        for value in candidate_evaluations
+                        if isinstance(value.get("behavior_l1"), (int, float))
+                    ]
+                    row.update(
+                        beam_any_exact=any(
+                            bool(value["exact_tree_match"])
+                            for value in candidate_evaluations
+                        ),
+                        beam_best_normalized_token_edit_distance=min(
+                            float(value["normalized_token_edit_distance"])
+                            for value in candidate_evaluations
+                        ),
+                        beam_best_behavior_l1=(
+                            min(behavior_values) if behavior_values else None
+                        ),
                     )
                     rows[name].append(row)
                     successful_decodes += int(row["behavior_evaluable"])
@@ -975,11 +1532,13 @@ def decode_quality_report(
             "measured by converting the decoded process tree to a Petri net."
         ),
         "evaluation_scope": (
-            "raw_model_quality"
+            "raw_semantic_decoding"
             if completion_policy == "prefix_only"
-            else "deployment_system_quality"
+            else "deployment_duplicate_free_decoding"
         ),
         "max_decode_length": int(max_decode_length),
+        "beam_size": int(beam_size),
+        "beam_oracle_diagnostics": bool(include_beam_oracle),
         "completion_policy": completion_policy,
         "behavior_traces_per_sample": int(behavior_traces_per_sample),
         "methods": {name: summarize_decode_quality(values) for name, values in rows.items()},
@@ -994,6 +1553,7 @@ def decode_with_beam(
     beam_size: int = 5,
     allowed_activity_mask: torch.Tensor | None = None,
     completion_policy: str = "prefix_only",
+    avoid_duplicate_activity_labels: bool = False,
 ):
     if hasattr(decoder, "decode_beam"):
         return decoder.decode_beam(
@@ -1003,6 +1563,7 @@ def decode_with_beam(
             length_penalty=0.7,
             allowed_activity_mask=allowed_activity_mask,
             completion_policy=completion_policy,
+            avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
         )
     return decoder.decode_greedy(
         source.mu if hasattr(source, "mu") else source,
@@ -1010,10 +1571,53 @@ def decode_with_beam(
         apply_grammar_mask=True,
         allowed_activity_mask=allowed_activity_mask,
         completion_policy=completion_policy,
+        avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
     )
 
 
-def decode_trace_with_conformance_reranking(
+def decode_target_tree(
+    sample: ProcessSample,
+    source_name: str,
+    *,
+    avoid_duplicates: bool,
+) -> ProcessTreeNode:
+    """Return the source- and decoding-policy-specific evaluation target."""
+
+    if source_name not in {"tree", "trace", "petri", "fused"}:
+        raise ValueError(f"unknown decode source {source_name!r}")
+    if source_name == "fused":
+        # Construct this explicitly from every fused source rather than relying
+        # on the current fact that the tree alphabet subsumes the other two.
+        union_alphabet = set(sample.tree.activity_labels())
+        union_alphabet.update(label for trace in sample.traces for label in trace)
+        union_alphabet.update(
+            label
+            for label in sample.petri_graph.transition_labels
+            if label is not None
+        )
+        target = fold_process_tree(
+            sanitize_activity_labels(
+                sample.tree,
+                allowed_labels=union_alphabet,
+            ).tree
+        )
+    else:
+        targets = sample.decoder_target_trees
+        if set(targets) != {"tree", "trace", "petri"}:
+            targets = decoder_target_trees_for_sample(
+                sample.tree,
+                sample.traces,
+                sample.petri_graph,
+            )
+        target = targets[source_name]
+    if avoid_duplicates:
+        target = fold_process_tree(
+            sanitize_activity_labels(target, avoid_duplicates=True).tree
+        )
+    return target
+
+
+def decode_trace_candidates_with_conformance_reranking(
     model,
     source,
     samples: Sequence[ProcessSample],
@@ -1024,7 +1628,7 @@ def decode_trace_with_conformance_reranking(
     footprint_precision_weight: float = 0.25,
     allowed_activity_mask: torch.Tensor | None = None,
     completion_policy: str = "bounded",
-) -> list[list[int]]:
+) -> tuple[list[list[int]], list[list[list[int]]]]:
     decoder = model.tree_decoder
     if not hasattr(decoder, "decode_beam_candidates"):
         decoded = decode_with_beam(
@@ -1034,8 +1638,10 @@ def decode_trace_with_conformance_reranking(
             beam_size=beam_size,
             allowed_activity_mask=allowed_activity_mask,
             completion_policy=completion_policy,
+            avoid_duplicate_activity_labels=True,
         )
-        return decoded.detach().cpu().tolist()
+        selected = decoded.detach().cpu().tolist()
+        return selected, [[row] for row in selected]
     candidate_rows = decoder.decode_beam_candidates(
         source,
         max_length=max_length,
@@ -1043,8 +1649,10 @@ def decode_trace_with_conformance_reranking(
         length_penalty=0.7,
         allowed_activity_mask=allowed_activity_mask,
         completion_policy=completion_policy,
+        avoid_duplicate_activity_labels=True,
     )
     selected: list[list[int]] = []
+    all_candidates: list[list[list[int]]] = []
     for sample, candidates in zip(samples, candidate_rows):
         scored: list[tuple[float, list[int]]] = []
         for token_ids, log_probability in candidates:
@@ -1067,6 +1675,35 @@ def decode_trace_with_conformance_reranking(
                 score -= 1.0
             scored.append((score, token_ids))
         selected.append(max(scored, key=lambda item: item[0])[1])
+        all_candidates.append([token_ids for token_ids, _ in candidates])
+    return selected, all_candidates
+
+
+def decode_trace_with_conformance_reranking(
+    model,
+    source,
+    samples: Sequence[ProcessSample],
+    *,
+    max_length: int,
+    beam_size: int = 5,
+    fitness_weight: float = 0.25,
+    footprint_precision_weight: float = 0.25,
+    allowed_activity_mask: torch.Tensor | None = None,
+    completion_policy: str = "bounded",
+) -> list[list[int]]:
+    """Return reranked beam winners while retaining the historical public API."""
+
+    selected, _ = decode_trace_candidates_with_conformance_reranking(
+        model,
+        source,
+        samples,
+        max_length=max_length,
+        beam_size=beam_size,
+        fitness_weight=fitness_weight,
+        footprint_precision_weight=footprint_precision_weight,
+        allowed_activity_mask=allowed_activity_mask,
+        completion_policy=completion_policy,
+    )
     return selected
 
 
@@ -1074,13 +1711,17 @@ def evaluate_single_decode(
     model,
     sample: ProcessSample,
     token_ids: Sequence[int],
+    *,
+    source_name: str,
+    target_tree: ProcessTreeNode,
     behavior_traces_per_sample: int = 128,
     completion_policy: str = "prefix_only",
+    include_original_tree_metrics: bool = False,
 ) -> dict[str, object]:
     tokenizer = model.tree_tokenizer
     decoded_tokens = trim_tree_token_sequence(token_ids, tokenizer)
     # Match the collator: targets keep the stored first-seen labels.
-    target_tokens = tokenizer.encode_tree(sample.tree, canonicalize=False)
+    target_tokens = tokenizer.encode_tree(target_tree, canonicalize=False)
     normalized_denominator = max(len(target_tokens), len(decoded_tokens), 1)
     token_edit_distance = levenshtein_distance(target_tokens, decoded_tokens)
     decoded_names = [
@@ -1103,12 +1744,18 @@ def evaluate_single_decode(
     except Exception:
         pass
     row: dict[str, object] = {
+        "source_name": source_name,
+        "target_policy": (
+            "semantic"
+            if completion_policy == "prefix_only"
+            else "deployment_duplicate_free"
+        ),
         "equivalence_id": sample.equivalence_id,
         "motif": str(sample.metadata.get("motif", "ordinary_tree")),
-        "contains_loop": tree_contains_loop(sample.tree),
-        "tree_size": sample.tree.size(),
-        "tree_depth": sample.tree.max_depth(),
-        "activity_count": len(sample.tree.unique_activity_labels()),
+        "contains_loop": tree_contains_loop(target_tree),
+        "tree_size": target_tree.size(),
+        "tree_depth": target_tree.max_depth(),
+        "activity_count": len(target_tree.unique_activity_labels()),
         "observation_quality": str(
             sample.metadata.get(
                 "observation_quality",
@@ -1132,6 +1779,18 @@ def evaluate_single_decode(
         "error": None,
     }
 
+    if include_original_tree_metrics:
+        original_tokens = tokenizer.encode_tree(sample.tree, canonicalize=False)
+        original_edit = levenshtein_distance(original_tokens, decoded_tokens)
+        row.update(
+            original_tree_token_edit_distance=original_edit,
+            original_tree_normalized_token_edit_distance=(
+                original_edit / max(len(original_tokens), len(decoded_tokens), 1)
+            ),
+            original_tree_exact_match=False,
+            original_tree_behavior_l1=None,
+        )
+
     try:
         decoded_tree = tokenizer.decode_tree(token_ids)
         row["valid_tree"] = True
@@ -1141,6 +1800,10 @@ def evaluate_single_decode(
 
     target_tree = tokenizer.decode_tree(target_tokens)
     row["exact_tree_match"] = decoded_tree.to_dict() == target_tree.to_dict()
+    if include_original_tree_metrics:
+        row["original_tree_exact_match"] = (
+            decoded_tree.to_dict() == sample.tree.to_dict()
+        )
 
     try:
         tree_to_petri_net(decoded_tree)
@@ -1150,9 +1813,15 @@ def evaluate_single_decode(
 
     try:
         trace_count = max(1, min(len(sample.traces), behavior_traces_per_sample))
+        target_traces = simulate_traces(target_tree, num_traces=trace_count)
         decoded_traces = simulate_traces(decoded_tree, num_traces=trace_count)
-        row["behavior_l1"] = behavioral_distance(sample.traces, decoded_traces)["mean_l1"]
+        row["behavior_l1"] = behavioral_distance(target_traces, decoded_traces)["mean_l1"]
         row["behavior_evaluable"] = True
+        if include_original_tree_metrics:
+            row["original_tree_behavior_l1"] = behavioral_distance(
+                sample.traces,
+                decoded_traces,
+            )["mean_l1"]
     except Exception as exc:
         if row["error"] is None:
             row["error"] = f"behavior:{type(exc).__name__}: {exc}"
@@ -1195,6 +1864,37 @@ def summarize_decode_quality(rows: Sequence[dict[str, object]]) -> dict[str, obj
         "behavior_error_count": count_false(rows, "behavior_evaluable"),
         "first_error": first_error,
     }
+    oracle_behavior = [
+        float(row["beam_best_behavior_l1"])
+        for row in rows
+        if isinstance(row.get("beam_best_behavior_l1"), (int, float))
+    ]
+    summary.update(
+        beam_oracle_exact_rate=rate(rows, "beam_any_exact"),
+        beam_oracle_mean_normalized_token_edit_distance=round_float(
+            mean(
+                row.get(
+                    "beam_best_normalized_token_edit_distance",
+                    row["normalized_token_edit_distance"],
+                )
+                for row in rows
+            )
+        ),
+        beam_oracle_mean_behavior_l1=round_float(mean(oracle_behavior)),
+        beam_exact_ranking_gap=round_float(
+            rate(rows, "beam_any_exact") - rate(rows, "exact_tree_match")
+        ),
+        beam_edit_ranking_gap=round_float(
+            mean(row["normalized_token_edit_distance"] for row in rows)
+            - mean(
+                row.get(
+                    "beam_best_normalized_token_edit_distance",
+                    row["normalized_token_edit_distance"],
+                )
+                for row in rows
+            )
+        ),
+    )
     summary["strata"] = decode_quality_strata(rows)
     summary["family_bootstrap_95_intervals"] = {
         "exact_tree_match_rate": family_bootstrap_interval(
@@ -1243,6 +1943,13 @@ def decode_quality_strata(
             ),
             "mean_normalized_tree_edit": round_float(
                 mean(float(row["normalized_token_edit_distance"]) for row in selected)
+            ),
+            "mean_behavior_l1": round_float(
+                mean(
+                    row["behavior_l1"]
+                    for row in selected
+                    if isinstance(row.get("behavior_l1"), (int, float))
+                )
             ),
             "behavior_eval_success_rate": round_float(
                 sum(bool(row.get("behavior_evaluable")) for row in selected)
@@ -1399,10 +2106,32 @@ def mean(values: Iterable[object]) -> float:
     return float(np.mean(numeric))
 
 
+def validation_split_hash(samples: Sequence[ProcessSample]) -> str:
+    digest = hashlib.sha256()
+    for sample in samples:
+        digest.update(
+            json.dumps(
+                sample.to_dict(),
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def behavior_matrices(
     samples: Sequence[ProcessSample],
     show_progress: bool = False,
+    *,
+    cache_dir: str | Path | None = None,
 ) -> dict[str, np.ndarray]:
+    cache_path: Path | None = None
+    if cache_dir is not None:
+        cache_path = Path(cache_dir) / f"behavior-{validation_split_hash(samples)}.npz"
+        if cache_path.exists():
+            with np.load(cache_path) as cached:
+                return {name: cached[name].copy() for name in cached.files}
     n = len(samples)
     matrices = {
         "mean_l1": np.zeros((n, n), dtype=float),
@@ -1422,6 +2151,11 @@ def behavior_matrices(
                 for key, matrix in matrices.items():
                     matrix[i, j] = matrix[j, i] = float(distance[key])
                 progress.update()
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = cache_path.with_suffix(".tmp.npz")
+        np.savez_compressed(temporary, **matrices)
+        temporary.replace(cache_path)
     return matrices
 
 

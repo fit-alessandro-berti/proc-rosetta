@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+import hashlib
 import json
 import os
 import random
@@ -14,6 +15,7 @@ import numpy as np
 from torch.utils.data import Dataset
 
 from proc_rosetta.pm4py_bridge import PetriGraph
+from proc_rosetta.behavior import behavioral_distance
 from proc_rosetta.synthetic import (
     CURRICULUM_LEVELS,
     COMPLEXITY_PROFILES,
@@ -21,6 +23,7 @@ from proc_rosetta.synthetic import (
     SyntheticConfig,
     config_for_curriculum,
     decoder_target_trees_for_sample,
+    fused_decoder_target_tree_for_sample,
     generate_samples,
 )
 from proc_rosetta.tokenizers import ActivityTokenizer, TreeTokenizer
@@ -29,6 +32,25 @@ SPLIT_NAMES = ("training", "validation", "test")
 SAMPLES_FILENAME = "samples.jsonl"
 METADATA_FILENAME = "metadata.json"
 CURRICULUM_MANIFEST_FILENAME = "curriculum_manifest.json"
+_OBSERVED_BEHAVIOR_DISTANCE_CACHE: dict[tuple[str, str], float] = {}
+
+
+def _cached_observed_behavior_distance(
+    left: ProcessSample,
+    right: ProcessSample,
+) -> float:
+    left_key = hashlib.sha256(
+        json.dumps(left.traces, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    right_key = hashlib.sha256(
+        json.dumps(right.traces, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    pair_key = (left_key, right_key) if left_key <= right_key else (right_key, left_key)
+    if pair_key not in _OBSERVED_BEHAVIOR_DISTANCE_CACHE:
+        _OBSERVED_BEHAVIOR_DISTANCE_CACHE[pair_key] = float(
+            behavioral_distance(left.traces, right.traces)["mean_l1"]
+        )
+    return _OBSERVED_BEHAVIOR_DISTANCE_CACHE[pair_key]
 
 
 @dataclass(frozen=True)
@@ -125,6 +147,16 @@ class ProcessBatchCollator:
             sample.strong_behavior_id or sample.exact_behavior_id for sample in samples
         ]
         partial_order_ids = [sample.partial_order_id for sample in samples]
+        observation_quality = [
+            str(
+                sample.metadata.get(
+                    "observation_quality",
+                    sample.metadata.get("sampling_mode", "unknown"),
+                )
+            )
+            for sample in samples
+        ]
+        equivalence_numeric = self._categorical_ids(equivalence_ids)
         signatures = self._behavior_signatures(samples)
         exact_ids = self._categorical_ids(strong_behavior_ids)
         partial_ids = self._categorical_ids(partial_order_ids)
@@ -132,6 +164,9 @@ class ProcessBatchCollator:
         partial_valid = partial_ids.ge(0)
         same_exact = exact_ids[:, None].eq(exact_ids[None, :])
         same_partial = partial_ids[:, None].eq(partial_ids[None, :])
+        same_family = equivalence_numeric[:, None].eq(equivalence_numeric[None, :])
+        observation_ids = self._categorical_ids(observation_quality)
+        different_observation = ~observation_ids[:, None].eq(observation_ids[None, :])
         valid_exact_pair = exact_valid[:, None] & exact_valid[None, :]
         positive_mask = (
             valid_exact_pair
@@ -164,12 +199,60 @@ class ProcessBatchCollator:
             "structural_motif_ids": [sample.structural_motif_id for sample in samples],
             "behavior_signatures": signatures,
             "positive_mask": positive_mask,
+            "strong_positive_mask": positive_mask,
+            "exact_positive_mask": valid_exact_pair & same_exact,
+            "family_positive_mask": same_family & ~same_exact,
+            "negative_mask": ~same_family & (~valid_exact_pair | ~same_exact),
+            "observation_view_mask": same_family & different_observation,
+            "observation_quality": observation_quality,
             "contrastive_candidate_mask": contrastive_candidate_mask,
             "analogy_mask": valid_exact_pair & same_exact & ~same_partial,
             "samples": list(samples),
         }
+        observed_distances, observed_mask = self._observed_behavior_pairs(
+            samples,
+            same_family=same_family,
+            same_exact=valid_exact_pair & same_exact,
+        )
+        batch["observed_behavior_distances"] = observed_distances
+        batch["observed_behavior_pair_mask"] = observed_mask
         self._remap_activity_ids(batch, equivalence_ids)
         return batch
+
+    @staticmethod
+    def _observed_behavior_pairs(
+        samples: Sequence[ProcessSample],
+        *,
+        same_family: torch.Tensor,
+        same_exact: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute exact test-distance targets for a sparse, relation-rich set."""
+
+        count = len(samples)
+        distances = torch.zeros((count, count), dtype=torch.float32)
+        mask = torch.zeros((count, count), dtype=torch.bool)
+        for left in range(count):
+            unrelated = 0
+            for right in range(left + 1, count):
+                relation_pair = bool(same_family[left, right] or same_exact[left, right])
+                # Retain up to three deterministic unrelated distances per
+                # anchor, spanning near/medium/far candidates in shuffled
+                # relation-aware batches without an O(batch^2) hot path.
+                selected_unrelated = (
+                    not relation_pair
+                    and unrelated < 3
+                    and (right - left - 1) % max(1, count // 3) == 0
+                )
+                if not relation_pair and selected_unrelated:
+                    unrelated += 1
+                if not (relation_pair or selected_unrelated):
+                    continue
+                value = _cached_observed_behavior_distance(
+                    samples[left], samples[right]
+                )
+                distances[left, right] = distances[right, left] = value
+                mask[left, right] = mask[right, left] = True
+        return distances, mask
 
     @staticmethod
     def _behavior_signatures(samples: Sequence[ProcessSample]) -> torch.Tensor | None:
@@ -287,18 +370,58 @@ class ProcessBatchCollator:
         self,
         samples: Sequence[ProcessSample],
     ) -> dict[str, torch.Tensor]:
-        target_rows: dict[str, list[list[int]]] = {name: [] for name in ("tree", "trace", "petri")}
+        fusion_sources = {
+            "tree_trace": ("tree", "trace"),
+            "tree_petri": ("tree", "petri"),
+            "trace_petri": ("trace", "petri"),
+            "fused": ("tree", "trace", "petri"),
+        }
+        target_rows: dict[str, list[list[int]]] = {
+            name: []
+            for name in (
+                "tree",
+                "trace",
+                "petri",
+                *fusion_sources,
+                *(
+                    f"deployment_{name}"
+                    for name in ("tree", "trace", "petri", *fusion_sources)
+                ),
+            )
+        }
         for sample in samples:
             targets = sample.decoder_target_trees
-            if set(targets) != set(target_rows):
+            if set(targets) != {"tree", "trace", "petri"}:
                 targets = decoder_target_trees_for_sample(
                     sample.tree,
                     sample.traces,
                     sample.petri_graph,
                 )
-            for name in target_rows:
+            semantic_targets = {
+                name: targets[name] for name in ("tree", "trace", "petri")
+            }
+            for name, source_names in fusion_sources.items():
+                semantic_targets[name] = fused_decoder_target_tree_for_sample(
+                    sample.tree,
+                    sample.traces,
+                    sample.petri_graph,
+                    source_names,
+                )
+            from proc_rosetta.pm4py_bridge import fold_process_tree
+            from proc_rosetta.tree import sanitize_activity_labels
+
+            for name, target in semantic_targets.items():
                 target_rows[name].append(
-                    self.tree_tokenizer.encode_tree(targets[name], canonicalize=False)
+                    self.tree_tokenizer.encode_tree(target, canonicalize=False)
+                )
+                deployment_target = fold_process_tree(
+                    sanitize_activity_labels(target, avoid_duplicates=True).tree
+                )
+                target_rows[f"deployment_{name}"].append(
+                    self.tree_tokenizer.encode_tree(
+                        deployment_target,
+                        canonicalize=False,
+                    )
                 )
         longest = max(len(row) for rows in target_rows.values() for row in rows)
         if self.config.strict_tree_tokens and longest > self.config.max_tree_tokens:
@@ -331,7 +454,15 @@ class ProcessBatchCollator:
                 (len(samples), self.tree_tokenizer.max_activities),
                 dtype=torch.bool,
             )
-            for name in ("tree", "trace", "petri")
+            for name in (
+                "tree",
+                "trace",
+                "petri",
+                "tree_trace",
+                "tree_petri",
+                "trace_petri",
+                "fused",
+            )
         }
         for row, sample in enumerate(samples):
             labels = {
@@ -347,6 +478,12 @@ class ProcessBatchCollator:
                         index = int(label[1:])
                         if 0 <= index < self.tree_tokenizer.max_activities:
                             masks[name][row, index] = True
+            masks["tree_trace"][row] = masks["tree"][row] | masks["trace"][row]
+            masks["tree_petri"][row] = masks["tree"][row] | masks["petri"][row]
+            masks["trace_petri"][row] = masks["trace"][row] | masks["petri"][row]
+            masks["fused"][row] = (
+                masks["tree"][row] | masks["trace"][row] | masks["petri"][row]
+            )
         return masks
 
     def _trace_tokens(self, samples: Sequence[ProcessSample]) -> dict[str, torch.Tensor]:

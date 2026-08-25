@@ -715,6 +715,39 @@ def decoder_target_trees_for_sample(
     }
 
 
+def fused_decoder_target_tree_for_sample(
+    tree: ProcessTreeNode,
+    traces: Sequence[Sequence[str]],
+    petri_graph: PetriGraph,
+    source_names: Sequence[str] = ("tree", "trace", "petri"),
+    *,
+    avoid_duplicates: bool = False,
+) -> ProcessTreeNode:
+    """Build the target legal under the union alphabet of fused sources."""
+
+    from proc_rosetta.pm4py_bridge import fold_process_tree
+    from proc_rosetta.tree import sanitize_activity_labels
+
+    alphabets = {
+        "tree": set(tree.activity_labels()),
+        "trace": {label for trace in traces for label in trace},
+        "petri": {
+            label for label in petri_graph.transition_labels if label is not None
+        },
+    }
+    unknown = set(source_names) - set(alphabets)
+    if unknown:
+        raise ValueError(f"unknown fused sources: {sorted(unknown)}")
+    allowed = set().union(*(alphabets[name] for name in source_names))
+    return fold_process_tree(
+        sanitize_activity_labels(
+            tree,
+            allowed_labels=allowed,
+            avoid_duplicates=avoid_duplicates,
+        ).tree
+    )
+
+
 def generate_process_tree(
     config: SyntheticConfig,
     rng: random.Random | None = None,

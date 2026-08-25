@@ -1674,6 +1674,8 @@ class ProcRosettaModel(nn.Module):
         deterministic: bool = True,
         input_token_dropout: float = 0.0,
         scheduled_sampling_probability: float = 0.0,
+        modality_subset_fusion_probability: float = 0.0,
+        deployment_policy_probability: float = 0.0,
     ) -> dict[str, object]:
         tree_tokens = batch.get("tree_encoder_tokens", batch["tree_tokens"])
         decoder_targets = batch.get("decoder_targets")
@@ -1694,6 +1696,35 @@ class ProcRosettaModel(nn.Module):
             }
         assert isinstance(decoder_targets, dict)
         assert isinstance(source_activity_masks, dict)
+        decoder_targets = dict(decoder_targets)
+        for fusion_name in ("tree_trace", "tree_petri", "trace_petri", "fused"):
+            decoder_targets.setdefault(fusion_name, decoder_targets["tree"])
+        for name in (
+            "tree",
+            "trace",
+            "petri",
+            "tree_trace",
+            "tree_petri",
+            "trace_petri",
+            "fused",
+        ):
+            decoder_targets.setdefault(f"deployment_{name}", decoder_targets[name])
+        source_activity_masks = dict(source_activity_masks)
+        fusion_modalities = {
+            "tree_trace": ("tree", "trace"),
+            "tree_petri": ("tree", "petri"),
+            "trace_petri": ("trace", "petri"),
+            "fused": ("tree", "trace", "petri"),
+        }
+        for fusion_name, modalities in fusion_modalities.items():
+            if fusion_name in source_activity_masks:
+                continue
+            values = [source_activity_masks.get(name) for name in modalities]
+            source_activity_masks[fusion_name] = (
+                None
+                if any(value is None for value in values)
+                else torch.stack(values, dim=0).any(dim=0)
+            )
         dists = {
             "tree": self.encode_tree(
                 tree_tokens,
@@ -1703,6 +1734,14 @@ class ProcRosettaModel(nn.Module):
             "petri": self.encode_petri(petri),
         }
         names = ("tree", "trace", "petri")
+        fused_mu = torch.stack(
+            [dists[name].mu for name in names],
+            dim=0,
+        ).mean(dim=0)
+        dists["fused"] = LatentDistribution(
+            mu=fused_mu,
+            logvar=torch.zeros_like(fused_mu),
+        )
         batch_size = tree_tokens.shape[0]
         stacked_distribution = _stack_latent_distributions([dists[name] for name in names])
         stacked_input = torch.cat(
@@ -1715,7 +1754,7 @@ class ProcRosettaModel(nn.Module):
             if any(value is None for value in allowed_rows)
             else torch.cat(allowed_rows, dim=0)
         )
-        decoder_loss_targets = decoder_targets
+        decoder_loss_targets = dict(decoder_targets)
         if self.training and scheduled_sampling_probability > 0:
             stacked_targets = torch.cat(
                 [decoder_targets[name] for name in names],
@@ -1741,9 +1780,120 @@ class ProcRosettaModel(nn.Module):
         logits = dict(zip(names, split_logits))
         split_inputs = stacked_input.split(batch_size, dim=0)
         decoder_inputs = dict(zip(names, split_inputs))
+        fused_input = decoder_targets["fused"][:, :-1]
+        fused_loss_target = decoder_targets["fused"]
+        fused_allowed = source_activity_masks.get("fused")
+        if self.training and scheduled_sampling_probability > 0:
+            fused_input, fused_loss_target = self._scheduled_sampling_inputs(
+                fused_mu,
+                fused_input,
+                fused_allowed,
+                stacked_targets=decoder_targets["fused"],
+                probability=scheduled_sampling_probability,
+                input_token_dropout=input_token_dropout,
+            )
+        # Deliberately pass the tensor, not a LatentDistribution: evaluation
+        # supplies exactly this raw mean and has no modality/copy memory.
+        logits["fused"] = self.tree_decoder(
+            fused_mu,
+            fused_input,
+            allowed_activity_mask=fused_allowed,
+            input_token_dropout=input_token_dropout,
+        )
+        decoder_inputs["fused"] = fused_input
+        decoder_loss_targets["fused"] = fused_loss_target
+
+        fusion_subset_name: str | None = None
+        if (
+            self.training
+            and modality_subset_fusion_probability > 0.0
+            and bool(
+                torch.rand((), device=fused_mu.device)
+                < modality_subset_fusion_probability
+            )
+        ):
+            subset_names = (
+                ("tree_trace", ("tree", "trace")),
+                ("tree_petri", ("tree", "petri")),
+                ("trace_petri", ("trace", "petri")),
+            )
+            subset_index = int(
+                torch.randint(len(subset_names), (), device=fused_mu.device).item()
+            )
+            fusion_subset_name, modalities = subset_names[subset_index]
+            subset_mu = torch.stack(
+                [dists[name].mu for name in modalities],
+                dim=0,
+            ).mean(dim=0)
+            subset_input = decoder_targets[fusion_subset_name][:, :-1]
+            subset_loss_target = decoder_targets[fusion_subset_name]
+            subset_allowed = source_activity_masks.get(fusion_subset_name)
+            if scheduled_sampling_probability > 0:
+                subset_input, subset_loss_target = self._scheduled_sampling_inputs(
+                    subset_mu,
+                    subset_input,
+                    subset_allowed,
+                    stacked_targets=decoder_targets[fusion_subset_name],
+                    probability=scheduled_sampling_probability,
+                    input_token_dropout=input_token_dropout,
+                )
+            logits["fused_subset"] = self.tree_decoder(
+                subset_mu,
+                subset_input,
+                allowed_activity_mask=subset_allowed,
+                input_token_dropout=input_token_dropout,
+            )
+            decoder_inputs["fused_subset"] = subset_input
+            decoder_loss_targets["fused_subset"] = subset_loss_target
+        deployment_source_name: str | None = None
+        if (
+            self.training
+            and deployment_policy_probability > 0.0
+            and bool(
+                torch.rand((), device=fused_mu.device) < deployment_policy_probability
+            )
+        ):
+            deployment_sources = ("tree", "trace", "petri", "fused")
+            deployment_source_name = deployment_sources[
+                int(
+                    torch.randint(
+                        len(deployment_sources),
+                        (),
+                        device=fused_mu.device,
+                    ).item()
+                )
+            ]
+            deployment_source = (
+                fused_mu
+                if deployment_source_name == "fused"
+                else dists[deployment_source_name]
+            )
+            deployment_target_name = f"deployment_{deployment_source_name}"
+            deployment_input = decoder_targets[deployment_target_name][:, :-1]
+            remaining_tokens = torch.arange(
+                deployment_input.shape[1],
+                0,
+                -1,
+                device=deployment_input.device,
+            ).unsqueeze(0).expand(deployment_input.shape[0], -1)
+            logits["deployment"] = self.tree_decoder(
+                deployment_source,
+                deployment_input,
+                allowed_activity_mask=source_activity_masks.get(
+                    deployment_source_name
+                ),
+                avoid_duplicate_activity_labels=True,
+                completion_policy="bounded",
+                remaining_tokens=remaining_tokens,
+                input_token_dropout=input_token_dropout,
+            )
+            decoder_inputs["deployment"] = deployment_input
+            decoder_loss_targets["deployment"] = decoder_targets[
+                deployment_target_name
+            ]
         contrastive_embeddings = {
             name: F.normalize(self.contrastive_head(dists[name].mu), dim=-1)
-            for name in names
+            for name in (*names, "fused")
         }
         return {
             "dists": dists,
@@ -1753,12 +1903,15 @@ class ProcRosettaModel(nn.Module):
             "decoder_targets": decoder_targets,
             "decoder_loss_targets": decoder_loss_targets,
             "decoder_inputs": decoder_inputs,
+            "fused_decoder_source": fused_mu,
+            "fusion_subset_name": fusion_subset_name,
+            "deployment_source_name": deployment_source_name,
         }
 
     @torch.no_grad()
     def _scheduled_sampling_inputs(
         self,
-        source: LatentDistribution,
+        source: LatentDistribution | torch.Tensor,
         teacher_input: torch.Tensor,
         allowed_activity_mask: torch.Tensor | None,
         *,
@@ -1782,7 +1935,11 @@ class ProcRosettaModel(nn.Module):
         loss_targets[:, 0] = stacked_targets[:, 0]
 
         memory, activity_mask = self.tree_decoder.source_memory(source)
-        activity_memory = source.activity_memory
+        activity_memory = (
+            source.activity_memory
+            if isinstance(source, LatentDistribution)
+            else None
+        )
         batch_size = teacher_input.shape[0]
         row_ids = torch.arange(batch_size, device=teacher_input.device)
         row_ids = row_ids[
