@@ -476,11 +476,7 @@ def test_resume_allows_and_reports_scheduled_sampling_policy_overrides():
 
     overrides = validate_resume_configuration(
         checkpoint,
-        replace(
-            requested,
-            loader_num_workers=0,
-            loader_pin_memory=not requested.loader_pin_memory,
-        ),
+        requested,
         synthetic_config,
     )
 
@@ -843,15 +839,7 @@ def test_lr_scheduler_tracks_validation_loss_instead_of_discovery_score():
 
 
 def test_train_synthetic_smoke():
-    train_config = TrainConfig(
-        samples=4,
-        epochs=1,
-        batch_size=2,
-        latent_dim=8,
-        hidden_dim=16,
-        seed=11,
-        loader_num_workers=0,
-    )
+    train_config = TrainConfig(samples=4, epochs=1, batch_size=2, latent_dim=8, hidden_dim=16, seed=11)
     synthetic_config = SyntheticConfig(max_depth=2, max_activities=4, traces_per_sample=2)
 
     _, history = train_synthetic(train_config=train_config, synthetic_config=synthetic_config)
@@ -875,7 +863,6 @@ def test_train_from_data_dir_restores_best_weights_before_return(tmp_path, monke
             class_coverage_mode="best_effort",
         ),
         show_progress=False,
-        use_multiprocessing=False,
     )
 
     def fake_train_epoch(model, *args, epoch=None, **kwargs):

@@ -5,7 +5,6 @@ from collections import defaultdict
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
 from dataclasses import dataclass
-import math
 from pathlib import Path
 import random
 import shutil
@@ -22,11 +21,10 @@ from proc_rosetta.data import (
     ProcessBatchCollator,
     SyntheticProcessDataset,
     load_data_metadata,
-    multiprocessing_worker_count,
     sample_statistics,
     split_samples_path,
 )
-from proc_rosetta.devices import default_training_device, resolve_device
+from proc_rosetta.devices import default_device, resolve_device
 from proc_rosetta.losses import LossWeights, multimodal_tree_loss
 from proc_rosetta.models import LatentDistribution, ProcRosettaModel
 from proc_rosetta.pm4py_bridge import TREE_NORMALIZATION_VERSION
@@ -54,7 +52,7 @@ class TrainConfig:
     latent_dim: int = 96
     hidden_dim: int = 192
     seed: int = 13
-    device: str = default_training_device()
+    device: str = default_device()
     semantic_latent_mode: str = "deterministic"
     # ``dropout`` is a deprecated compatibility override; new runs should use
     # the modality-specific controls below.
@@ -114,8 +112,8 @@ class TrainConfig:
     training_stage: str = "full"
     stage_gate_interval: int = 5
     gradient_diagnostics_interval: int = 0
-    loader_num_workers: int = multiprocessing_worker_count()
-    loader_pin_memory: bool = False
+    loader_num_workers: int = 0
+    loader_pin_memory: bool = True
     loader_persistent_workers: bool = True
     loader_prefetch_factor: int = 2
 
@@ -1198,23 +1196,12 @@ def build_synthetic_dataloader(
     seed: int,
     batch_config: BatchConfig | None = None,
     activity_remap_probability: float = 0.0,
-    num_workers: int | None = None,
+    num_workers: int = 0,
     pin_memory: bool = False,
     persistent_workers: bool = False,
     prefetch_factor: int = 2,
 ) -> DataLoader:
-    requested_workers = (
-        multiprocessing_worker_count() if num_workers is None else max(0, num_workers)
-    )
-    batch_count = math.ceil(samples / max(batch_size, 1))
-    workers = min(requested_workers, batch_count) if batch_count else 0
-    workers = workers if workers > 1 else 0
-    dataset = SyntheticProcessDataset(
-        samples,
-        config=synthetic_config,
-        seed=seed,
-        num_workers=workers or None,
-    )
+    dataset = SyntheticProcessDataset(samples, config=synthetic_config, seed=seed)
     collator = ProcessBatchCollator(
         tree_tokenizer,
         activity_tokenizer,
@@ -1229,7 +1216,7 @@ def build_synthetic_dataloader(
         collate_fn=collator,
         **_loader_worker_options(
             collator,
-            num_workers=workers,
+            num_workers=num_workers,
             pin_memory=pin_memory,
             persistent_workers=persistent_workers,
             prefetch_factor=prefetch_factor,
@@ -1249,18 +1236,12 @@ def build_jsonl_dataloader(
     views_per_family: int = 2,
     seed: int = 13,
     activity_remap_probability: float = 0.0,
-    num_workers: int | None = None,
+    num_workers: int = 0,
     pin_memory: bool = False,
     persistent_workers: bool = False,
     prefetch_factor: int = 2,
 ) -> DataLoader:
     dataset = JsonlProcessDataset(sample_path, show_progress=show_progress)
-    requested_workers = (
-        multiprocessing_worker_count() if num_workers is None else max(0, num_workers)
-    )
-    batch_count = math.ceil(len(dataset) / max(batch_size, 1))
-    workers = min(requested_workers, batch_count) if batch_count else 0
-    workers = workers if workers > 1 else 0
     collator = ProcessBatchCollator(
         tree_tokenizer,
         activity_tokenizer,
@@ -1282,7 +1263,7 @@ def build_jsonl_dataloader(
             collate_fn=collator,
             **_loader_worker_options(
                 collator,
-                num_workers=workers,
+                num_workers=num_workers,
                 pin_memory=pin_memory,
                 persistent_workers=persistent_workers,
                 prefetch_factor=prefetch_factor,
@@ -1295,7 +1276,7 @@ def build_jsonl_dataloader(
         collate_fn=collator,
         **_loader_worker_options(
             collator,
-            num_workers=workers,
+            num_workers=num_workers,
             pin_memory=pin_memory,
             persistent_workers=persistent_workers,
             prefetch_factor=prefetch_factor,
@@ -1676,8 +1657,7 @@ def train_from_data_dir(
         f"{train_config.projection_dropout}, "
         f"weight_decay={train_config.weight_decay}, label_smoothing={train_config.label_smoothing}, "
         f"activity_remap_probability={train_config.activity_remap_probability}, "
-        f"early_stopping_patience={train_config.early_stopping_patience}, device={device}, "
-        f"loader_workers={train_config.loader_num_workers}",
+        f"early_stopping_patience={train_config.early_stopping_patience}, device={device}",
         enabled=show_progress,
     )
     debug(
@@ -2238,7 +2218,6 @@ def evaluate_split_from_checkpoint(
     batch_size: int = 16,
     device: str | None = None,
     show_progress: bool = False,
-    num_workers: int | None = None,
 ) -> dict[str, float]:
     torch_device = resolve_device(device)
     model, checkpoint = load_checkpoint(checkpoint_path, torch_device)
@@ -2249,8 +2228,6 @@ def evaluate_split_from_checkpoint(
         model.activity_tokenizer,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        persistent_workers=True,
     )
     return evaluate_epoch(
         model,
@@ -2656,10 +2633,6 @@ def validate_resume_configuration(
             "epochs",
             "device",
             "restore_best_weights",
-            "loader_num_workers",
-            "loader_pin_memory",
-            "loader_persistent_workers",
-            "loader_prefetch_factor",
             *RESUME_POLICY_OVERRIDE_FIELDS,
         }
         and checkpoint_values[name] != requested_values[name]

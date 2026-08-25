@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--device",
         default=default_device(),
-        help="Torch device; defaults to cpu (pass cuda or mps explicitly to override).",
+        help="Torch device; defaults to cuda or mps when available, otherwise cpu.",
     )
     parser.add_argument("--max-petri-nodes", type=int, default=512)
     parser.add_argument("--max-decode-length", type=int, default=512)

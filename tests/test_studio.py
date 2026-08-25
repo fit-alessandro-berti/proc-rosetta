@@ -286,7 +286,6 @@ def test_neural_loss_iterator_yields_batch_updates(tmp_path):
             str(sample_path),
             batch_size=1,
             max_batches=1,
-            num_workers=0,
         )
     )
     assert len(updates) == 1

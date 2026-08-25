@@ -3,14 +3,8 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 import json
-import os
 from pathlib import Path
 import sys
-import tempfile
-
-_MATPLOTLIB_CACHE = Path(tempfile.gettempdir()) / "proc-rosetta-matplotlib"
-_MATPLOTLIB_CACHE.mkdir(parents=True, exist_ok=True)
-os.environ.setdefault("MPLCONFIGDIR", str(_MATPLOTLIB_CACHE))
 
 from proc_rosetta.benchmarks import (
     CONFORMANCE_METHODS,
@@ -18,13 +12,9 @@ from proc_rosetta.benchmarks import (
     format_human_test_report,
     rich_test_report,
 )
-from proc_rosetta.data import (
-    SplitCounts,
-    multiprocessing_worker_count,
-    recreate_data_splits,
-)
+from proc_rosetta.data import SplitCounts, recreate_data_splits
 from proc_rosetta.data import read_samples_jsonl, split_samples_path
-from proc_rosetta.devices import default_device, default_training_device
+from proc_rosetta.devices import default_device
 from proc_rosetta.synthetic import DEFAULT_MAX_ACTIVITIES, SyntheticConfig
 from proc_rosetta.training import (
     TrainConfig,
@@ -149,12 +139,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sample.add_argument(
         "--multiprocessing",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "generate samples in parallel with all but one available CPU core "
-            "(default: enabled)"
-        ),
+        action="store_true",
+        help="generate samples in parallel with all but one available CPU core",
     )
     sample.add_argument("--quiet", action="store_true", help="disable generation progress bars")
 
@@ -214,16 +200,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="epochs between expensive gradient diagnostics; <=0 disables them",
     )
     train.add_argument("--seed", type=int, default=13)
-    train.add_argument(
-        "--loader-num-workers",
-        type=int,
-        default=multiprocessing_worker_count(),
-        help="data-loader worker processes; defaults to all but one logical CPU (0 disables)",
-    )
+    train.add_argument("--loader-num-workers", type=int, default=0)
     train.add_argument(
         "--loader-pin-memory",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=True,
     )
     train.add_argument(
         "--loader-persistent-workers",
@@ -233,8 +214,8 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--loader-prefetch-factor", type=int, default=2)
     train.add_argument(
         "--device",
-        default=default_training_device(),
-        help="Torch device; defaults to cuda, then mps, then cpu based on availability.",
+        default=default_device(),
+        help="Torch device; defaults to cuda or mps when available, otherwise cpu.",
     )
     train.add_argument("--quiet", action="store_true", help="disable stderr debug messages and progress bars")
     train.add_argument("--views-per-family", type=int, default=2)
@@ -335,18 +316,9 @@ def build_parser() -> argparse.ArgumentParser:
     test.add_argument("--batch-size", type=int, default=16)
     test.add_argument("--max-decode-length", type=int, default=512)
     test.add_argument(
-        "--num-workers",
-        type=int,
-        default=multiprocessing_worker_count(),
-        help=(
-            "worker processes for data loading and independent CPU benchmarks; "
-            "defaults to all but one logical CPU (0 disables)"
-        ),
-    )
-    test.add_argument(
         "--device",
         default=default_device(),
-        help="Torch device; defaults to cpu (pass cuda or mps explicitly to override).",
+        help="Torch device; defaults to cuda or mps when available, otherwise cpu.",
     )
     test.add_argument("--skip-pm4py-petri-embedding", action="store_true")
     test.add_argument("--petri-embedding-dim", type=int, default=256)
@@ -576,7 +548,6 @@ def run_test(args: argparse.Namespace) -> int:
     )
     test_debug(
         f"Plan: {sample_count} {sample_label}, batch_size={args.batch_size}, device={args.device}; "
-        f"workers={max(0, args.num_workers)}; "
         f"{2 * sample_count} {conformance_label} conformance evaluations, "
         f"{8 * sample_count} matched raw/deployment decodes, "
         f"{sample_count * (sample_count - 1) // 2} behavioral pairs, "
@@ -601,7 +572,6 @@ def run_test(args: argparse.Namespace) -> int:
         show_progress=show_progress,
         conformance_method=args.conformance_method,
         max_decode_length=max(2, args.max_decode_length),
-        num_workers=max(0, args.num_workers),
     )
     if args.json:
         print(json.dumps(report, sort_keys=True))

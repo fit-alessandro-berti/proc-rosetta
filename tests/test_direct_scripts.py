@@ -1,17 +1,10 @@
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SUBPROCESS_ENV = {
-    **os.environ,
-    "OMP_NUM_THREADS": "2",
-    "MKL_NUM_THREADS": "2",
-    "OPENBLAS_NUM_THREADS": "2",
-}
 
 
 def test_sample_script_runs_without_install_bootstrap():
@@ -24,7 +17,6 @@ def test_sample_script_runs_without_install_bootstrap():
         [
             sys.executable,
             str(ROOT / "sample.py"),
-            "--no-multiprocessing",
             "--data-dir",
             str(data_dir),
             "--train-count",
@@ -44,7 +36,6 @@ def test_sample_script_runs_without_install_bootstrap():
         check=True,
         capture_output=True,
         text=True,
-        env=SUBPROCESS_ENV,
     )
 
     metadata = json.loads(result.stdout.strip().splitlines()[-1])
@@ -67,7 +58,6 @@ def test_train_script_runs_without_install_bootstrap():
         [
             sys.executable,
             str(ROOT / "sample.py"),
-            "--no-multiprocessing",
             "--data-dir",
             str(data_dir),
             "--train-count",
@@ -89,14 +79,11 @@ def test_train_script_runs_without_install_bootstrap():
         check=True,
         capture_output=True,
         text=True,
-        env=SUBPROCESS_ENV,
     )
     result = subprocess.run(
         [
             sys.executable,
             str(ROOT / "train.py"),
-            "--loader-num-workers",
-            "0",
             "--data-dir",
             str(data_dir),
             "--checkpoint",
@@ -116,7 +103,6 @@ def test_train_script_runs_without_install_bootstrap():
         check=True,
         capture_output=True,
         text=True,
-        env=SUBPROCESS_ENV,
     )
 
     row = json.loads(result.stdout.strip().splitlines()[-1])
@@ -131,8 +117,6 @@ def test_train_script_runs_without_install_bootstrap():
         [
             sys.executable,
             str(ROOT / "test.py"),
-            "--num-workers",
-            "0",
             "--data-dir",
             str(data_dir),
             "--checkpoint",
@@ -157,7 +141,6 @@ def test_train_script_runs_without_install_bootstrap():
         check=True,
         capture_output=True,
         text=True,
-        env=SUBPROCESS_ENV,
     )
     test_row = json.loads(result.stdout.strip().splitlines()[-1])
     assert test_row["split"] == "test"

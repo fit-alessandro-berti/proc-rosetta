@@ -6,10 +6,8 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from itertools import repeat
 import math
-import multiprocessing as mp
 from typing import Callable, Sequence
 
-from proc_rosetta.devices import configure_cpu_worker
 from proc_rosetta.pm4py_bridge import (
     PetriGraph,
     prepare_tree_for_model,
@@ -732,11 +730,7 @@ def generate_samples(
         if num_workers is not None:
             if num_workers < 1:
                 raise ValueError("num_workers must be positive")
-            with ProcessPoolExecutor(
-                max_workers=min(num_workers, count),
-                mp_context=mp.get_context("spawn"),
-                initializer=configure_cpu_worker,
-            ) as executor:
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
                 samples = list(
                     executor.map(
                         _generate_isolated_sample,

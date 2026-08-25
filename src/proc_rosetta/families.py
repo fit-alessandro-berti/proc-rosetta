@@ -6,11 +6,9 @@ from dataclasses import dataclass, replace
 from hashlib import blake2b, sha256
 from itertools import repeat
 import math
-import multiprocessing as mp
 import random
 from typing import Any, Callable, Sequence
 
-from proc_rosetta.devices import configure_cpu_worker
 from proc_rosetta.pm4py_bridge import (
     PetriGraph,
     fold_process_tree,
@@ -805,11 +803,7 @@ def _generate_family_samples_parallel(
     attempts = 0
     max_attempts = max(100, count * 20)
 
-    with ProcessPoolExecutor(
-        max_workers=min(num_workers, len(motif_plan)),
-        mp_context=mp.get_context("spawn"),
-        initializer=configure_cpu_worker,
-    ) as executor:
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
         while unresolved and attempts < max_attempts:
             batch_size = min(len(unresolved), max_attempts - attempts)
             slots = unresolved[:batch_size]
