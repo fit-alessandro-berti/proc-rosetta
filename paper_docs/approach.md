@@ -210,8 +210,8 @@ The default collation limits are:
 | Batch limit | Default |
 |---|---:|
 | `max_tree_tokens` | 512 |
-| `max_traces` | 128 |
-| `max_trace_length` | 128 |
+| `max_traces` | 32 during training; 64 during validation |
+| `max_trace_length` | 64 during training; 128 during validation |
 | `max_petri_nodes` | 512 |
 
 Each mini-batch contains:

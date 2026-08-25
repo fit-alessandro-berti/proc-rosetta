@@ -281,7 +281,7 @@ def rich_test_report(
     assert isinstance(strata, dict)
     report["metrics_by_motif"] = _strata_with_prefix(strata, "motif:")
     report["metrics_by_observation_quality"] = observation_quality_report(
-        audit_samples,
+        samples,
         neural_embeddings,
         _strata_with_prefix(strata, "observation:"),
     )
@@ -291,13 +291,13 @@ def rich_test_report(
     report["metrics_by_loop_presence"] = _strata_with_prefix(strata, "loop:")
     strong_ids = [
         sample.strong_behavior_id or sample.exact_behavior_id
-        for sample in audit_samples
+        for sample in samples
     ]
     retrieval_rows = cross_modal_top1_rows(
         neural_embeddings["proc_rosetta_trace_mu"],
         neural_embeddings["proc_rosetta_tree_mu"],
         strong_ids,
-        [sample.equivalence_id for sample in audit_samples],
+        [sample.equivalence_id for sample in samples],
     )
     report["family_bootstrap_95_intervals"] = {
         "exact_tree_match_rate": trace_decode["family_bootstrap_95_intervals"][
@@ -315,7 +315,7 @@ def rich_test_report(
         "behavior_distance_spearman": family_bootstrap_spearman_interval(
             neural_embeddings["proc_rosetta_fused_mu"],
             behavior["mean_l1"],
-            [sample.equivalence_id for sample in audit_samples],
+            [sample.equivalence_id for sample in samples],
         ),
     }
     test_debug(
@@ -602,7 +602,7 @@ def validation_audit_report(
     assert isinstance(strata, dict)
     report["metrics_by_motif"] = _strata_with_prefix(strata, "motif:")
     report["metrics_by_observation_quality"] = observation_quality_report(
-        samples,
+        audit_samples,
         neural_embeddings,
         _strata_with_prefix(strata, "observation:"),
     )
@@ -612,13 +612,13 @@ def validation_audit_report(
     report["metrics_by_loop_presence"] = _strata_with_prefix(strata, "loop:")
     strong_ids = [
         sample.strong_behavior_id or sample.exact_behavior_id
-        for sample in samples
+        for sample in audit_samples
     ]
     retrieval_rows = cross_modal_top1_rows(
         neural_embeddings["proc_rosetta_trace_mu"],
         neural_embeddings["proc_rosetta_tree_mu"],
         strong_ids,
-        [sample.equivalence_id for sample in samples],
+        [sample.equivalence_id for sample in audit_samples],
     )
     report["family_bootstrap_95_intervals"] = {
         "exact_tree_match_rate": trace_decode["family_bootstrap_95_intervals"][
@@ -640,7 +640,7 @@ def validation_audit_report(
         "behavior_distance_spearman": family_bootstrap_spearman_interval(
             neural_embeddings["proc_rosetta_fused_mu"],
             behavior["mean_l1"],
-            [sample.equivalence_id for sample in samples],
+            [sample.equivalence_id for sample in audit_samples],
         ),
     }
     return report

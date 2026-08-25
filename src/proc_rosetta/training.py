@@ -495,6 +495,10 @@ class TrainConfig:
     validation_discovery_family_count: int = 32
     validation_beam_size: int = 5
     validation_max_decode_length: int = 512
+    training_max_traces: int = 32
+    training_max_trace_length: int = 64
+    validation_max_traces: int = 64
+    validation_max_trace_length: int = 128
     loader_num_workers: int = 0
     loader_pin_memory: bool = True
     loader_persistent_workers: bool = True
@@ -542,6 +546,10 @@ class TrainConfig:
             "beam_risk_start_epoch",
             "beam_risk_size",
             "beam_risk_max_decode_length",
+            "training_max_traces",
+            "training_max_trace_length",
+            "validation_max_traces",
+            "validation_max_trace_length",
         ):
             if int(getattr(self, name)) < 1:
                 raise ValueError(f"{name} must be positive")
@@ -3106,6 +3114,12 @@ def train_synthetic(
     device = resolve_device(train_config.device)
 
     model = build_model(train_config, synthetic_config, device)
+    training_batch_config = BatchConfig(
+        max_traces=train_config.training_max_traces,
+        max_trace_length=train_config.training_max_trace_length,
+        strict_trace_lengths=False,
+        random_trace_subsampling=True,
+    )
     dataloader = build_synthetic_dataloader(
         samples=train_config.samples,
         synthetic_config=synthetic_config,
@@ -3113,6 +3127,7 @@ def train_synthetic(
         activity_tokenizer=model.activity_tokenizer,
         batch_size=train_config.batch_size,
         seed=train_config.seed,
+        batch_config=training_batch_config,
         activity_remap_probability=train_config.activity_remap_probability,
         num_workers=train_config.loader_num_workers,
         pin_memory=train_config.loader_pin_memory,
@@ -3171,7 +3186,10 @@ def train_from_data_dir(
         f"{train_config.projection_dropout}, "
         f"weight_decay={train_config.weight_decay}, label_smoothing={train_config.label_smoothing}, "
         f"activity_remap_probability={train_config.activity_remap_probability}, "
-        f"early_stopping_patience={train_config.early_stopping_patience}, device={device}",
+        f"early_stopping_patience={train_config.early_stopping_patience}, "
+        f"training_trace_budget={train_config.training_max_traces}x"
+        f"{train_config.training_max_trace_length}, "
+        f"loader_workers={train_config.loader_num_workers}, device={device}",
         enabled=show_progress,
     )
     debug(
@@ -3202,6 +3220,17 @@ def train_from_data_dir(
             )
     else:
         model = build_model(train_config, synthetic_config, device)
+    training_batch_config = BatchConfig(
+        max_traces=train_config.training_max_traces,
+        max_trace_length=train_config.training_max_trace_length,
+        strict_trace_lengths=False,
+        random_trace_subsampling=True,
+    )
+    validation_batch_config = BatchConfig(
+        max_traces=train_config.validation_max_traces,
+        max_trace_length=train_config.validation_max_trace_length,
+        strict_trace_lengths=False,
+    )
     if curriculum_mode:
         batch_sizes = {
             "simple": train_config.simple_batch_size or train_config.batch_size,
@@ -3217,6 +3246,7 @@ def train_from_data_dir(
                 model.tree_tokenizer,
                 model.activity_tokenizer,
                 batch_size=batch_sizes[level],
+                batch_config=training_batch_config,
                 shuffle=True,
                 show_progress=show_progress,
                 group_aware=train_config.group_aware_batches,
@@ -3237,6 +3267,7 @@ def train_from_data_dir(
                 model.tree_tokenizer,
                 model.activity_tokenizer,
                 batch_size=batch_sizes[level],
+                batch_config=validation_batch_config,
                 shuffle=False,
                 show_progress=show_progress,
                 num_workers=train_config.loader_num_workers,
@@ -3261,6 +3292,7 @@ def train_from_data_dir(
             model.tree_tokenizer,
             model.activity_tokenizer,
             batch_size=train_config.batch_size,
+            batch_config=training_batch_config,
             shuffle=True,
             show_progress=show_progress,
             group_aware=train_config.group_aware_batches,
@@ -3278,6 +3310,7 @@ def train_from_data_dir(
             model.tree_tokenizer,
             model.activity_tokenizer,
             batch_size=train_config.batch_size,
+            batch_config=validation_batch_config,
             shuffle=False,
             show_progress=show_progress,
             num_workers=train_config.loader_num_workers,
@@ -3295,6 +3328,7 @@ def train_from_data_dir(
             model.tree_tokenizer,
             model.activity_tokenizer,
             batch_size=train_config.batch_size,
+            batch_config=training_batch_config,
             shuffle=False,
             show_progress=False,
             num_workers=train_config.loader_num_workers,

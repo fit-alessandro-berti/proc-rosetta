@@ -121,32 +121,32 @@ def semantic_memory_contrastive_loss(
         candidates = memory_bank.embeddings.to(first.device)
         queue_exact = memory_bank.exact_ids
         queue_family = memory_bank.family_ids
+        positive_rows = [
+            [
+                exact_id is not None and exact_id == candidate_id
+                for candidate_id in queue_exact
+            ]
+            for exact_id in exact_ids
+        ]
+        positive = torch.tensor(
+            positive_rows,
+            dtype=torch.bool,
+            device=first.device,
+        )
+        candidate = torch.tensor(
+            [
+                [
+                    is_positive or family_ids[row] != queue_family[column]
+                    for column, is_positive in enumerate(positive_row)
+                ]
+                for row, positive_row in enumerate(positive_rows)
+            ],
+            dtype=torch.bool,
+            device=first.device,
+        )
         for distribution in dists.values():
             anchors = F.normalize(distribution.mu, dim=-1)
             logits = anchors @ candidates.T / temperature
-            positive = torch.tensor(
-                [
-                    [
-                        exact_id is not None and exact_id == candidate_id
-                        for candidate_id in queue_exact
-                    ]
-                    for exact_id in exact_ids
-                ],
-                dtype=torch.bool,
-                device=logits.device,
-            )
-            candidate = torch.tensor(
-                [
-                    [
-                        bool(positive[row, column])
-                        or family_ids[row] != queue_family[column]
-                        for column in range(len(queue_family))
-                    ]
-                    for row in range(len(family_ids))
-                ],
-                dtype=torch.bool,
-                device=logits.device,
-            )
             if positive.any():
                 total = total + all_positive_supcon(logits, positive, candidate)
                 directions += 1
@@ -484,27 +484,28 @@ def sequence_policy_feasibility_losses(
             unresolved_values.append(F.relu(expected_open_slots[eos_positions]).mean())
 
         inputs = decoder_inputs[name]
-        for row in range(inputs.shape[0]):
-            width = int(active[row].sum().item())
-            if width <= 0:
-                continue
-            prefix = inputs[row : row + 1, :width]
-            budget = torch.arange(
-                width,
-                0,
-                -1,
+        widths = active.sum(dim=1)
+        valid_rows = widths.gt(0)
+        if valid_rows.any():
+            positions = torch.arange(
+                inputs.shape[1],
                 dtype=torch.long,
                 device=inputs.device,
-            ).unsqueeze(0)
-            prefix_legal = tokenizer.valid_next_token_masks(prefix)
+            )
+            budget = widths.unsqueeze(1) - positions.unsqueeze(0)
+            prefix_legal = tokenizer.valid_next_token_masks(inputs)
             bounded_legal = tokenizer.valid_next_token_masks(
-                prefix,
+                inputs,
                 remaining_tokens=budget,
             )
-            infeasible = prefix_legal & ~bounded_legal
-            feasibility_values.append(
-                (probabilities[row : row + 1, :width] * infeasible).sum(dim=-1).mean()
+            infeasible_probability = (
+                probabilities * (prefix_legal & ~bounded_legal)
+            ).sum(dim=-1)
+            per_row = (
+                (infeasible_probability * active).sum(dim=-1)
+                / widths.clamp_min(1).to(infeasible_probability.dtype)
             )
+            feasibility_values.append(per_row[valid_rows].mean())
 
     zero = first.sum() * 0.0
     unresolved = torch.stack(unresolved_values).mean() if unresolved_values else zero
@@ -819,6 +820,7 @@ def multimodal_tree_loss(
     assert isinstance(logits, dict)
     assert isinstance(dists, dict)
     token_weight_tensor = None if tokenizer is None else tree_token_weights(tokenizer)
+    zero = next(iter(logits.values())).sum() * 0.0
 
     def reconstruction(name: str) -> torch.Tensor:
         return sequence_cross_entropy(
@@ -849,53 +851,93 @@ def multimodal_tree_loss(
     )
     contrastive_embeddings = outputs.get("contrastive_embeddings", dists)
     assert isinstance(contrastive_embeddings, dict)
-    exact = cross_modal_contrastive_loss(
-        contrastive_embeddings,
-        temperature=weights.contrastive_temperature,
-        positive_mask=positive_mask,
-        candidate_mask=contrastive_candidate_mask,
+    exact = (
+        cross_modal_contrastive_loss(
+            contrastive_embeddings,
+            temperature=weights.contrastive_temperature,
+            positive_mask=positive_mask,
+            candidate_mask=contrastive_candidate_mask,
+        )
+        if weights.exact_contrastive > 0.0
+        else zero
     )
-    within = within_modality_contrastive_loss(
-        contrastive_embeddings,
-        positive_mask,
-        contrastive_candidate_mask,
-        temperature=weights.contrastive_temperature,
+    within = (
+        within_modality_contrastive_loss(
+            contrastive_embeddings,
+            positive_mask,
+            contrastive_candidate_mask,
+            temperature=weights.contrastive_temperature,
+        )
+        if weights.within_modality_contrastive > 0.0
+        else zero
     )
-    semantic_exact = semantic_exact_contrastive_loss(
-        dists,
-        exact_positive_mask if exact_positive_mask is not None else positive_mask,
-        contrastive_candidate_mask,
-        temperature=weights.contrastive_temperature,
+    semantic_exact = (
+        semantic_exact_contrastive_loss(
+            dists,
+            exact_positive_mask if exact_positive_mask is not None else positive_mask,
+            contrastive_candidate_mask,
+            temperature=weights.contrastive_temperature,
+        )
+        if weights.semantic_exact_contrastive > 0.0
+        else zero
     )
-    semantic_memory = semantic_memory_contrastive_loss(
-        dists,
-        semantic_memory_bank,
-        strong_behavior_ids,
-        equivalence_ids,
-        temperature=weights.contrastive_temperature,
+    if weights.semantic_memory_contrastive > 0.0:
+        semantic_memory = semantic_memory_contrastive_loss(
+            dists,
+            semantic_memory_bank,
+            strong_behavior_ids,
+            equivalence_ids,
+            temperature=weights.contrastive_temperature,
+        )
+    else:
+        semantic_memory = zero
+        if (
+            semantic_memory_bank is not None
+            and strong_behavior_ids is not None
+            and equivalence_ids is not None
+        ):
+            semantic_memory_bank.enqueue(
+                dists["fused"].mu,
+                strong_behavior_ids,
+                equivalence_ids,
+            )
+    hierarchical = (
+        hierarchical_metric_loss(
+            dists,
+            positive_mask,
+            analogy_mask,
+            family_positive_mask,
+            negative_mask,
+        )
+        if weights.hierarchical_metric > 0.0
+        else zero
     )
-    hierarchical = hierarchical_metric_loss(
-        dists,
-        positive_mask,
-        analogy_mask,
-        family_positive_mask,
-        negative_mask,
+    observation_consistency = (
+        observation_view_consistency_loss(dists, observation_view_mask)
+        if weights.observation_view_consistency > 0.0
+        else zero
     )
-    observation_consistency = observation_view_consistency_loss(
-        dists,
-        observation_view_mask,
+    soft = (
+        soft_behavior_geometry_loss(
+            dists,
+            behavior_signatures,
+            behavior_temperature=weights.behavior_temperature,
+            latent_temperature=weights.latent_temperature,
+        )
+        if weights.soft_behavior_geometry > 0.0
+        else zero
     )
-    soft = soft_behavior_geometry_loss(
-        dists,
-        behavior_signatures,
-        behavior_temperature=weights.behavior_temperature,
-        latent_temperature=weights.latent_temperature,
-    )
-    observed_regression, observed_ranking = observed_behavior_geometry_loss(
-        dists,
-        observed_behavior_distances,
-        observed_behavior_pair_mask,
-    )
+    if (
+        weights.observed_behavior_regression > 0.0
+        or weights.observed_behavior_ranking > 0.0
+    ):
+        observed_regression, observed_ranking = observed_behavior_geometry_loss(
+            dists,
+            observed_behavior_distances,
+            observed_behavior_pair_mask,
+        )
+    else:
+        observed_regression, observed_ranking = zero, zero
     eos_calibration, generated_length = (
         sequence_termination_losses(logits, decoder_loss_targets, tokenizer)
         if tokenizer is not None
@@ -911,34 +953,49 @@ def multimodal_tree_loss(
         if tokenizer is not None
         else (rec_tree.sum() * 0.0, rec_tree.sum() * 0.0)
     )
-    variance, covariance = variance_covariance_loss(dists)
-    latent_alignment = positive_latent_alignment_loss(dists, positive_mask)
+    if weights.variance > 0.0 or weights.covariance > 0.0:
+        variance, covariance = variance_covariance_loss(dists)
+    else:
+        variance, covariance = zero, zero
+    latent_alignment = (
+        positive_latent_alignment_loss(dists, positive_mask)
+        if weights.latent_alignment > 0.0
+        else zero
+    )
     if tokenizer is None:
         zero_auxiliary = rec_tree.sum() * 0.0
         tree_complexity = zero_auxiliary
         duplicate_activity = zero_auxiliary
     else:
-        tree_complexity = torch.stack(
-            [
-                expected_tree_complexity_loss(
-                    logits[name],
-                    decoder_targets[name],
-                    tokenizer,
-                )
-                for name in ("tree", "trace", "petri")
-            ]
-        ).mean()
-        duplicate_activity = torch.stack(
-            [
-                duplicate_activity_probability_loss(
-                    logits[name],
-                    decoder_inputs[name],
-                    decoder_targets[name],
-                    tokenizer,
-                )
-                for name in ("tree", "trace", "petri")
-            ]
-        ).mean()
+        tree_complexity = (
+            torch.stack(
+                [
+                    expected_tree_complexity_loss(
+                        logits[name],
+                        decoder_targets[name],
+                        tokenizer,
+                    )
+                    for name in ("tree", "trace", "petri")
+                ]
+            ).mean()
+            if weights.tree_complexity > 0.0
+            else zero
+        )
+        duplicate_activity = (
+            torch.stack(
+                [
+                    duplicate_activity_probability_loss(
+                        logits[name],
+                        decoder_inputs[name],
+                        decoder_targets[name],
+                        tokenizer,
+                    )
+                    for name in ("tree", "trace", "petri")
+                ]
+            ).mean()
+            if weights.duplicate_activity > 0.0
+            else zero
+        )
     total = (
         weights.tree_reconstruction * rec_tree
         + weights.trace_to_tree * trace_to_tree
@@ -968,7 +1025,7 @@ def multimodal_tree_loss(
     ranks = torch.stack(
         [effective_rank(distribution.mu.detach()) for distribution in dists.values()]
     )
-    zero = total.detach() * 0.0
+    report_zero = total.detach() * 0.0
     return {
         "loss": total,
         "tree_reconstruction": rec_tree,
@@ -999,5 +1056,5 @@ def multimodal_tree_loss(
         # objectives for old CSV/UI consumers.
         "contrastive": exact,
         "latent_alignment": latent_alignment,
-        "kl": zero,
+        "kl": report_zero,
     }

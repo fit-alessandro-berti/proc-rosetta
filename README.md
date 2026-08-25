@@ -396,9 +396,15 @@ Useful training controls:
 ./train.py --tree-encoder-dropout 0.12 --petri-encoder-dropout 0.12
 ./train.py --weight-decay 5e-4 --label-smoothing 0.04
 ./train.py --activity-remap-probability 0.5 --views-per-family 2
+./train.py --training-max-traces 32 --training-max-trace-length 64
 ./train.py --training-stage a  # disables metric objectives for the tiny overfit gate
 ./train.py --no-group-aware-batches
 ```
+
+Training uses CUDA automatically when available and keeps data collation in the
+main process by default (`--loader-num-workers 0`). Each presentation randomly
+selects 32 of the 128 stored traces, capped at 64 events; later epochs resample
+the log rather than permanently discarding the remaining traces.
 
 Training, testing, and external-file scripts default to `cuda` when available,
 then `mps` when available, and otherwise `cpu`. Pass `--device cpu` to force CPU.

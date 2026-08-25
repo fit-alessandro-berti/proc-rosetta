@@ -179,6 +179,15 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--simple-batch-size", type=int, default=None)
     train.add_argument("--medium-batch-size", type=int, default=None)
     train.add_argument("--complex-batch-size", type=int, default=None)
+    train.add_argument(
+        "--training-max-traces",
+        type=int,
+        default=32,
+        help="randomly sampled traces per training log and batch",
+    )
+    train.add_argument("--training-max-trace-length", type=int, default=64)
+    train.add_argument("--validation-max-traces", type=int, default=64)
+    train.add_argument("--validation-max-trace-length", type=int, default=128)
     train.add_argument("--min-complex-stage-epochs", type=int, default=5)
     train.add_argument("--learning-rate", type=float, default=3e-4)
     train.add_argument("--latent-dim", type=int, default=96)
@@ -642,6 +651,10 @@ def run_train(args: argparse.Namespace) -> int:
         ),
         validation_beam_size=args.validation_beam_size,
         validation_max_decode_length=args.validation_max_decode_length,
+        training_max_traces=args.training_max_traces,
+        training_max_trace_length=args.training_max_trace_length,
+        validation_max_traces=args.validation_max_traces,
+        validation_max_trace_length=args.validation_max_trace_length,
         loader_num_workers=max(0, args.loader_num_workers),
         loader_pin_memory=args.loader_pin_memory,
         loader_persistent_workers=args.loader_persistent_workers,

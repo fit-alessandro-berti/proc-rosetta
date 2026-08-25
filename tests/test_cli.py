@@ -53,6 +53,11 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert not sample_args.quiet
     assert train_args.epochs == 100
     assert train_args.batch_size == 128
+    assert train_args.training_max_traces == 32
+    assert train_args.training_max_trace_length == 64
+    assert train_args.validation_max_traces == 64
+    assert train_args.validation_max_trace_length == 128
+    assert train_args.loader_num_workers == 0
     assert train_args.latent_dim == 96
     assert train_args.device == default_device()
     assert train_args.hidden_dim == 192

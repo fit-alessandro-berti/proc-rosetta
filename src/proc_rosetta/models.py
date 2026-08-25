@@ -462,7 +462,13 @@ class PetriGraphEncoder(nn.Module):
             messages = self_layer(h)
             if edge_index is not None and edge_types is not None:
                 flat_h = h.reshape(-1, h.shape[-1])
-                flat_aggregation = torch.zeros_like(flat_h)
+                # Linear layers run in the autocast dtype while embeddings may
+                # keep ``h`` in float32.  Match the message dtype so the
+                # in-place sparse accumulation remains AMP-compatible.
+                flat_aggregation = torch.zeros_like(
+                    flat_h,
+                    dtype=messages.dtype,
+                )
                 for edge_type in range(len(edge_layers) // 2):
                     selected = edge_types.eq(edge_type)
                     sources = edge_index[0, selected]

@@ -62,6 +62,7 @@ class BatchConfig:
     strict_trace_lengths: bool = True
     strict_tree_tokens: bool = True
     strict_petri_nodes: bool = True
+    random_trace_subsampling: bool = False
 
 
 @dataclass(frozen=True)
@@ -299,49 +300,69 @@ class ProcessBatchCollator:
         assert isinstance(trace_tokens, torch.Tensor)
         assert isinstance(transition_label_ids, torch.Tensor)
 
-        family_permutations: dict[str, list[int] | None] = {}
         activity_count = min(
             self.tree_tokenizer.max_activities,
             self.activity_tokenizer.max_activities,
         )
-        for row, equivalence_id in enumerate(equivalence_ids):
+        identity = list(range(activity_count))
+        family_permutations: dict[str, list[int]] = {}
+        row_permutations: list[list[int]] = []
+        for equivalence_id in equivalence_ids:
             if equivalence_id not in family_permutations:
                 family_permutations[equivalence_id] = (
                     self.rng.sample(range(activity_count), activity_count)
                     if self.rng.random() < self.activity_remap_probability
-                    else None
+                    else identity
                 )
-            permutation = family_permutations[equivalence_id]
-            if permutation is None:
-                continue
+            row_permutations.append(family_permutations[equivalence_id])
 
-            original_tree = tree_tokens[row].clone()
-            original_targets = {
-                name: value[row].clone() for name, value in decoder_targets.items()
-            }
-            original_source_masks = {
-                name: value[row].clone() for name, value in source_activity_masks.items()
-            }
-            original_traces = trace_tokens[row].clone()
-            original_petri = transition_label_ids[row].clone()
-            for source_index, target_index in enumerate(permutation):
-                source_name = f"A{source_index}"
-                target_name = f"A{target_index}"
-                source_tree_id = self.tree_tokenizer.token_to_id[source_name]
-                target_tree_id = self.tree_tokenizer.token_to_id[target_name]
-                source_activity_id = self.activity_tokenizer.token_to_id[source_name]
-                target_activity_id = self.activity_tokenizer.token_to_id[target_name]
-                tree_tokens[row][original_tree == source_tree_id] = target_tree_id
-                for name, target_tokens in decoder_targets.items():
-                    target_tokens[row][
-                        original_targets[name] == source_tree_id
-                    ] = target_tree_id
-                for name, source_mask in source_activity_masks.items():
-                    source_mask[row, target_index] = original_source_masks[name][source_index]
-                trace_tokens[row][original_traces == source_activity_id] = target_activity_id
-                transition_label_ids[row][
-                    original_petri == source_activity_id
-                ] = target_activity_id
+        permutation = torch.tensor(row_permutations, dtype=torch.long)
+        rows = torch.arange(len(equivalence_ids), dtype=torch.long).unsqueeze(1)
+        source_tree_ids = torch.tensor(
+            [
+                self.tree_tokenizer.token_to_id[f"A{index}"]
+                for index in range(activity_count)
+            ],
+            dtype=torch.long,
+        )
+        target_tree_ids = source_tree_ids[permutation]
+        tree_lookup = torch.arange(
+            self.tree_tokenizer.vocab_size,
+            dtype=torch.long,
+        ).unsqueeze(0).expand(len(equivalence_ids), -1).clone()
+        tree_lookup[rows, source_tree_ids.unsqueeze(0)] = target_tree_ids
+        batch["tree_tokens"] = tree_lookup.gather(1, tree_tokens)
+        batch["tree_encoder_tokens"] = batch["tree_tokens"]
+        for name, target_tokens in decoder_targets.items():
+            decoder_targets[name] = tree_lookup.gather(1, target_tokens)
+        for name, source_mask in source_activity_masks.items():
+            remapped = torch.zeros_like(source_mask)
+            remapped.scatter_(1, permutation, source_mask)
+            source_activity_masks[name] = remapped
+
+        source_activity_ids = torch.tensor(
+            [
+                self.activity_tokenizer.token_to_id[f"A{index}"]
+                for index in range(activity_count)
+            ],
+            dtype=torch.long,
+        )
+        target_activity_ids = source_activity_ids[permutation]
+        activity_lookup = torch.arange(
+            self.activity_tokenizer.vocab_size,
+            dtype=torch.long,
+        ).unsqueeze(0).expand(len(equivalence_ids), -1).clone()
+        activity_lookup[rows, source_activity_ids.unsqueeze(0)] = target_activity_ids
+        trace_lookup = activity_lookup[:, None, :].expand(
+            -1,
+            trace_tokens.shape[1],
+            -1,
+        )
+        traces["tokens"] = trace_lookup.gather(2, trace_tokens)
+        petri["transition_label_ids"] = activity_lookup.gather(
+            1,
+            transition_label_ids,
+        )
 
     def _tree_tokens(self, samples: Sequence[ProcessSample]) -> torch.Tensor:
         # Keep the stored first-seen labels: canonicalizing here would restore
@@ -385,7 +406,7 @@ class ProcessBatchCollator:
                 *fusion_sources,
                 *(
                     f"deployment_{name}"
-                    for name in ("tree", "trace", "petri", *fusion_sources)
+                    for name in ("tree", "trace", "petri", "fused")
                 ),
             )
         }
@@ -414,15 +435,16 @@ class ProcessBatchCollator:
                 target_rows[name].append(
                     self.tree_tokenizer.encode_tree(target, canonicalize=False)
                 )
-                deployment_target = fold_process_tree(
-                    sanitize_activity_labels(target, avoid_duplicates=True).tree
-                )
-                target_rows[f"deployment_{name}"].append(
-                    self.tree_tokenizer.encode_tree(
-                        deployment_target,
-                        canonicalize=False,
+                if name in {"tree", "trace", "petri", "fused"}:
+                    deployment_target = fold_process_tree(
+                        sanitize_activity_labels(target, avoid_duplicates=True).tree
                     )
-                )
+                    target_rows[f"deployment_{name}"].append(
+                        self.tree_tokenizer.encode_tree(
+                            deployment_target,
+                            canonicalize=False,
+                        )
+                    )
         longest = max(len(row) for rows in target_rows.values() for row in rows)
         if self.config.strict_tree_tokens and longest > self.config.max_tree_tokens:
             raise ValueError(
@@ -519,7 +541,20 @@ class ProcessBatchCollator:
         original_lengths = torch.zeros((len(samples), max_traces), dtype=torch.long)
         was_truncated = torch.zeros((len(samples), max_traces), dtype=torch.bool)
         for batch_idx, sample in enumerate(samples):
-            for trace_idx, trace in enumerate(sample.traces[:max_traces]):
+            selected_traces = sample.traces
+            if (
+                self.config.random_trace_subsampling
+                and len(selected_traces) > max_traces
+            ):
+                selected_indices = sorted(
+                    self.rng.sample(range(len(selected_traces)), max_traces)
+                )
+                selected_traces = tuple(
+                    selected_traces[index] for index in selected_indices
+                )
+            else:
+                selected_traces = selected_traces[:max_traces]
+            for trace_idx, trace in enumerate(selected_traces):
                 encoded = self.activity_tokenizer.encode_trace(trace[:max_trace_length])
                 if encoded:
                     tokens[batch_idx, trace_idx, : len(encoded)] = torch.tensor(encoded, dtype=torch.long)
