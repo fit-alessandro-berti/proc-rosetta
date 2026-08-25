@@ -220,13 +220,14 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument(
         "--gradient-diagnostics-interval",
         type=int,
-        default=1,
-        help="epochs between expensive gradient diagnostics; <=0 disables them",
+        default=0,
+        help="epochs between expensive gradient diagnostics; disabled by default",
     )
     train.add_argument(
         "--use-pcgrad",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
+        help="use three-pass PCGrad conflict projection instead of standard backpropagation",
     )
     train.add_argument("--seed", type=int, default=13)
     train.add_argument("--loader-num-workers", type=int, default=0)

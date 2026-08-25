@@ -881,8 +881,11 @@ def test_incremental_decoder_cache_matches_full_prefix_evaluation():
         assert torch.allclose(incremental, full, atol=1e-6)
 
 
-def test_gradient_diagnostics_are_enabled_by_default():
-    assert TrainConfig().gradient_diagnostics_interval == 1
+def test_expensive_gradient_instrumentation_is_opt_in():
+    config = TrainConfig()
+
+    assert config.gradient_diagnostics_interval == 0
+    assert not config.use_pcgrad
 
 
 def test_gradient_diagnostics_do_not_change_optimizer_updates():

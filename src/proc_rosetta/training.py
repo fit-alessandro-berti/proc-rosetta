@@ -486,8 +486,8 @@ class TrainConfig:
     ema_decay: float = 0.995
     training_stage: str = "full"
     stage_gate_interval: int = 5
-    gradient_diagnostics_interval: int = 1
-    use_pcgrad: bool = True
+    gradient_diagnostics_interval: int = 0
+    use_pcgrad: bool = False
     validation_audit_enabled: bool = True
     validation_decode_interval: int = 2
     validation_full_interval: int = 10
@@ -2808,35 +2808,98 @@ class BehaviorFamilyBatchSampler(Sampler[list[int]]):
             for sample in self.samples
         ]
         if not signatures or not signatures[0] or len({len(row) for row in signatures}) != 1:
-            return [
-                next(
-                    (
-                        other
-                        for other in range(self.sample_count)
-                        if self.family_ids[other] != self.family_ids[index]
-                    ),
-                    None,
-                )
-                for index in range(self.sample_count)
-            ]
-        matrix = np.asarray(signatures, dtype=float)
+            return self._fallback_negative_indices()
+
+        # A full cosine matrix is quadratic: the default 16,384-row split used
+        # to allocate a 2 GiB float64 matrix here, three times at startup, then
+        # scan all 268 million entries in Python.  Random-projection neighbors
+        # provide a small deterministic candidate set, after which cosine
+        # similarity is still evaluated in the original signature space.
+        matrix = np.asarray(signatures, dtype=np.float32)
         norms = np.linalg.norm(matrix, axis=1, keepdims=True)
         normalized = matrix / np.maximum(norms, 1e-12)
-        distances = 1.0 - normalized @ normalized.T
-        result: list[int | None] = []
-        for index in range(self.sample_count):
-            candidates = [
-                other
-                for other in range(self.sample_count)
-                if self.family_ids[other] != self.family_ids[index]
-            ]
-            result.append(
-                min(candidates, key=lambda other: distances[index, other])
-                if candidates
-                else None
-            )
-        return result
+        projection_count = min(4, normalized.shape[1])
+        rng = np.random.default_rng(self.seed)
+        directions = rng.standard_normal(
+            (normalized.shape[1], projection_count),
+            dtype=np.float32,
+        )
+        directions /= np.maximum(
+            np.linalg.norm(directions, axis=0, keepdims=True),
+            1e-12,
+        )
+        projected = normalized @ directions
+        orders = np.argsort(projected, axis=0, kind="stable")
+        ranks = np.empty_like(orders)
+        row_numbers = np.arange(self.sample_count, dtype=orders.dtype)
+        for projection in range(projection_count):
+            ranks[orders[:, projection], projection] = row_numbers
 
+        neighbor_window = 8
+        offsets = np.concatenate(
+            (
+                np.arange(-neighbor_window, 0),
+                np.arange(1, neighbor_window + 1),
+            )
+        )
+        candidates = np.empty(
+            (self.sample_count, projection_count * len(offsets)),
+            dtype=orders.dtype,
+        )
+        for projection in range(projection_count):
+            positions = np.clip(
+                ranks[:, projection, None] + offsets[None, :],
+                0,
+                self.sample_count - 1,
+            )
+            start = projection * len(offsets)
+            candidates[:, start : start + len(offsets)] = orders[
+                positions,
+                projection,
+            ]
+
+        family_number_by_id = {
+            name: number
+            for number, name in enumerate(dict.fromkeys(self.family_ids))
+        }
+        family_numbers = np.fromiter(
+            (family_number_by_id[family] for family in self.family_ids),
+            dtype=np.int64,
+            count=self.sample_count,
+        )
+        best_indices = np.full(self.sample_count, -1, dtype=np.int64)
+        best_similarities = np.full(self.sample_count, -np.inf, dtype=np.float32)
+        for column in range(candidates.shape[1]):
+            candidate_indices = candidates[:, column]
+            valid = family_numbers[candidate_indices] != family_numbers
+            similarities = np.einsum(
+                "nd,nd->n",
+                normalized,
+                normalized[candidate_indices],
+                optimize=True,
+            )
+            improved = valid & (similarities > best_similarities)
+            best_similarities[improved] = similarities[improved]
+            best_indices[improved] = candidate_indices[improved]
+
+        fallback = self._fallback_negative_indices()
+        return [
+            fallback[index] if candidate < 0 else int(candidate)
+            for index, candidate in enumerate(best_indices)
+        ]
+
+    def _fallback_negative_indices(self) -> list[int | None]:
+        representatives: dict[str, int] = {}
+        for index, family_id in enumerate(self.family_ids):
+            representatives.setdefault(family_id, index)
+        first_two = list(representatives.items())[:2]
+        if len(first_two) < 2:
+            return [None] * self.sample_count
+        (first_family, first_index), (_, second_index) = first_two
+        return [
+            second_index if family_id == first_family else first_index
+            for family_id in self.family_ids
+        ]
 
 def build_model(
     train_config: TrainConfig,
@@ -3552,7 +3615,9 @@ def train_from_data_dir(
                     epoch=epoch,
                     show_progress=show_progress,
                     progress_desc=f"Epoch {epoch} {level} validation",
-                    compute_discovery_metrics=True,
+                    compute_discovery_metrics=(
+                        not train_config.validation_audit_enabled
+                    ),
                 )
                 ordinary_validation_by_curriculum[level] = attach_validation_audit(
                     model,
@@ -3580,7 +3645,9 @@ def train_from_data_dir(
                 weights=evaluation_weights,
                 epoch=epoch,
                 show_progress=show_progress,
-                compute_discovery_metrics=True,
+                compute_discovery_metrics=(
+                    not train_config.validation_audit_enabled
+                ),
             )
             ordinary_validation_metrics = attach_validation_audit(
                 model,
@@ -3613,7 +3680,9 @@ def train_from_data_dir(
                             epoch=epoch,
                             show_progress=show_progress,
                             progress_desc=f"Epoch {epoch} EMA {level} validation",
-                            compute_discovery_metrics=True,
+                            compute_discovery_metrics=(
+                                not train_config.validation_audit_enabled
+                            ),
                         )
                         ema_validation_by_curriculum[level] = attach_validation_audit(
                             model,
@@ -3642,7 +3711,9 @@ def train_from_data_dir(
                         epoch=epoch,
                         show_progress=show_progress,
                         progress_desc=f"Epoch {epoch} EMA validation",
-                        compute_discovery_metrics=True,
+                        compute_discovery_metrics=(
+                            not train_config.validation_audit_enabled
+                        ),
                     )
                     ema_validation_metrics = attach_validation_audit(
                         model,

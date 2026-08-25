@@ -354,10 +354,10 @@ also retained. `train_from_data_dir()` restores `.best.pt` before returning;
 `--no-restore-best-weights` disables that return-time step without changing the
 latest resume checkpoint.
 
-Each epoch runs an in-memory, test-equivalent validation audit without touching
-the test split. Deterministic baselines and O(n²) behavior matrices are cached;
-decode audits use fixed family-balanced subsets, and full PM4Py Inductive Miner
-audits run periodically and at stage transitions.
+Each epoch runs an in-memory validation audit without touching the test split.
+Losses cover each validation curriculum, while decoding, retrieval, geometry,
+and cached behavior matrices use fixed family-balanced subsets. Full PM4Py
+Inductive Miner audits run periodically and at stage transitions.
 
 An EMA starts at epoch 3 with decay 0.995. Ordinary and EMA validation metrics
 are both recorded, and the better scheduler-monitor result supplies the epoch's
@@ -417,11 +417,10 @@ The staged run sequence is intentionally gated:
    `stage_d_observation_curriculum` / `--training-stage d` (six views including
    the two clean baselines).
 
-Per-encoder gradient diagnostics run every epoch by default. Inspect metric /
-reconstruction norm ratios and the recorded reconstruction/exact,
-reconstruction/geometry, and exact/geometry gradient cosines for every encoder.
-PCGrad is enabled by default for conflicting reconstruction and metric groups;
-use `--no-use-pcgrad` for an ablation.
+Per-encoder gradient diagnostics and PCGrad are opt-in because they require many
+additional backward traversals. Use `--gradient-diagnostics-interval 1` when
+inspecting gradient norm ratios and cosines, and `--use-pcgrad` when explicitly
+testing conflict projection between reconstruction and metric objectives.
 
 By default, reconstruction trains alone for epochs 1–2, exact/hierarchical
 semantic objectives ramp across epochs 3–6, and observed behavior geometry

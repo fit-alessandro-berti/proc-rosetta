@@ -281,7 +281,7 @@ def rich_test_report(
     assert isinstance(strata, dict)
     report["metrics_by_motif"] = _strata_with_prefix(strata, "motif:")
     report["metrics_by_observation_quality"] = observation_quality_report(
-        samples,
+        audit_samples,
         neural_embeddings,
         _strata_with_prefix(strata, "observation:"),
     )
@@ -291,13 +291,13 @@ def rich_test_report(
     report["metrics_by_loop_presence"] = _strata_with_prefix(strata, "loop:")
     strong_ids = [
         sample.strong_behavior_id or sample.exact_behavior_id
-        for sample in samples
+        for sample in audit_samples
     ]
     retrieval_rows = cross_modal_top1_rows(
         neural_embeddings["proc_rosetta_trace_mu"],
         neural_embeddings["proc_rosetta_tree_mu"],
         strong_ids,
-        [sample.equivalence_id for sample in samples],
+        [sample.equivalence_id for sample in audit_samples],
     )
     report["family_bootstrap_95_intervals"] = {
         "exact_tree_match_rate": trace_decode["family_bootstrap_95_intervals"][
@@ -315,7 +315,7 @@ def rich_test_report(
         "behavior_distance_spearman": family_bootstrap_spearman_interval(
             neural_embeddings["proc_rosetta_fused_mu"],
             behavior["mean_l1"],
-            [sample.equivalence_id for sample in samples],
+            [sample.equivalence_id for sample in audit_samples],
         ),
     }
     test_debug(
@@ -454,15 +454,23 @@ def validation_audit_report(
         if level in {"decode", "full"}
         else max(1, config.decode_family_count // 4)
     )
-    decode_samples = fixed_validation_family_subset(samples, decode_family_count)
+    audit_family_count = max(
+        config.decode_family_count,
+        config.discovery_family_count,
+    )
+    audit_samples = fixed_validation_family_subset(samples, audit_family_count)
+    decode_samples = fixed_validation_family_subset(
+        audit_samples,
+        decode_family_count,
+    )
     discovery_samples = fixed_validation_family_subset(
-        samples,
+        audit_samples,
         config.discovery_family_count,
     )
     device_name = str(resolve_device(device))
     neural_embeddings = proc_rosetta_embeddings(
         model,
-        samples,
+        audit_samples,
         batch_size=batch_size,
         device=device_name,
         show_progress=show_progress,
@@ -517,7 +525,7 @@ def validation_audit_report(
             },
         }
     behavior = behavior_matrices(
-        samples,
+        audit_samples,
         show_progress=show_progress,
         cache_dir=config.cache_dir,
     )
@@ -527,7 +535,10 @@ def validation_audit_report(
         method_embeddings[name] = matrix
         methods[name] = evaluate_embedding_method(matrix, behavior["mean_l1"])
         methods[name]["kind"] = "learned_proc_rosetta_latent"
-    baselines = _cached_validation_baselines(samples, show_progress=show_progress)
+    baselines = _cached_validation_baselines(
+        audit_samples,
+        show_progress=show_progress,
+    )
     for name, matrix in baselines.items():
         method_embeddings[name] = matrix
         methods[name] = evaluate_embedding_method(matrix, behavior["mean_l1"])
@@ -536,22 +547,25 @@ def validation_audit_report(
         neural_embeddings,
         exact_behavior_ids=[
             sample.strong_behavior_id or sample.exact_behavior_id
-            for sample in samples
+            for sample in audit_samples
         ],
-        partial_order_ids=[sample.partial_order_id for sample in samples],
-        behavior_signatures=[sample.behavior_signature for sample in samples],
+        partial_order_ids=[sample.partial_order_id for sample in audit_samples],
+        behavior_signatures=[sample.behavior_signature for sample in audit_samples],
     )
     equivalence = equivalence_family_embedding_report(
-        samples,
+        audit_samples,
         neural_embeddings,
         show_progress=show_progress,
     )
     report: dict[str, object] = {
         "split": "validation",
         "curriculum": curriculum,
-        "sample_count": len(samples),
-        "behavior_family_count": len({sample.equivalence_id for sample in samples}),
-        "dataset_statistics": sample_statistics(samples),
+        "sample_count": len(audit_samples),
+        "total_validation_sample_count": len(samples),
+        "behavior_family_count": len(
+            {sample.equivalence_id for sample in audit_samples}
+        ),
+        "dataset_statistics": sample_statistics(audit_samples),
         "loss_metrics": round_float_dict(loss_metrics),
         "behavioral_distance_summary": summarize_distance_matrix(behavior["mean_l1"]),
         "behavioral_component_summaries": {

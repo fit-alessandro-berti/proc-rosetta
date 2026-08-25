@@ -1429,6 +1429,33 @@ def test_relation_aware_sampler_length_matches_expanded_batches():
     assert all(1 <= len(batch) <= 5 for batch in batches)
 
 
+def test_signature_hard_negative_search_scales_without_quadratic_matrix():
+    samples = [
+        SimpleNamespace(
+            equivalence_id=f"family-{index // 4}",
+            behavior_signature=tuple(
+                ((index * 17 + dimension * 13) % 101) / 101.0
+                for dimension in range(16)
+            ),
+        )
+        for index in range(4096)
+    ]
+
+    sampler = BehaviorFamilyBatchSampler(
+        samples,
+        batch_size=128,
+        views_per_family=2,
+        shuffle=False,
+    )
+
+    assert len(sampler.hard_negatives) == len(samples)
+    assert all(
+        negative is not None
+        and samples[index].equivalence_id != samples[negative].equivalence_id
+        for index, negative in enumerate(sampler.hard_negatives)
+    )
+
+
 def test_source_ablation_deranges_adjacent_views_of_the_same_behavior():
     identifiers = [f"behavior-{family}" for family in range(4) for _ in range(2)]
 

@@ -64,6 +64,8 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert train_args.weight_decay == 5e-4
     assert train_args.label_smoothing == 0.04
     assert train_args.early_stopping_patience == 6
+    assert train_args.gradient_diagnostics_interval == 0
+    assert not train_args.use_pcgrad
     assert train_args.activity_remap_probability == 0.5
     assert train_args.tree_complexity_weight == 0.0
     assert train_args.duplicate_activity_weight == 0.0
