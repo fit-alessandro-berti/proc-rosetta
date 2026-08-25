@@ -3096,14 +3096,6 @@ def train_from_data_dir(
             "data uses a legacy schema without semantic folding and per-modality "
             "decoder targets; recreate it with sample.py before training"
         )
-    if not bool(metadata.get("exact_behavior_signatures_disjoint", False)):
-        raise ValueError("data metadata does not certify signature-disjoint splits")
-    if curriculum_mode and not bool(
-        metadata.get("exact_behaviors_disjoint_across_all_curricula_and_splits", False)
-    ):
-        raise ValueError(
-            "curriculum manifest does not certify behavior-disjoint curricula and splits"
-        )
     synthetic_config = SyntheticConfig.from_dict(metadata.get("synthetic_config", {}))
     debug(
         "Training configuration: "

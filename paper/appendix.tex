@@ -820,7 +820,8 @@ and trace measures, together with loop/nested-loop prevalence. For each split
 the metadata also records planned and actual motif quotas, representation-slot
 coverage, raw operator draws and post-fold operator counts, strict-coverage
 deficits, and the coverage result. Exact behavior identifiers and canonical-tree
-hashes are checked for disjointness across all nine curriculum/split combinations.
+hashes are reported for auditing but may recur because families are sampled
+independently across all nine curriculum/split combinations.
 The tables can be rendered from the manifest with
 \texttt{scripts/render\_curriculum\_tables.py}, avoiding a second handwritten
 source of profile values. During generation, \texttt{sample.py} reports

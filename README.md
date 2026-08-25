@@ -66,8 +66,8 @@ Each sample contains:
 tree:        canonical process tree
 traces:      tuple of activity-label traces
 petri_graph: typed Petri-net graph with markings
-equivalence_id: behavior ID shared by every equivalent row
-exact_behavior_id / exact_trace_language_id: SHA-256 of certified normalized language
+equivalence_id: split/index-scoped family ID shared by that family's rows
+exact_behavior_id / exact_trace_language_id: SHA-256 of certified normalized language (may recur)
 partial_order_id / structural_motif_id
 behavior_signature: bounded 128-D language and footprint signature
 model_variant_id / representation_kind / log_view_id
@@ -305,9 +305,10 @@ structural statistics, and exact/bounded language certificates.
 Log modes include uniform, resampled, long-tail, sparse, incomplete, and noisy;
 noisy logs retain exact edit provenance.
 The default corpus creates two independent clean views (`uniform_variants` and
-`resampled`) and asserts that exact behavior IDs and canonical tree hashes are
-disjoint across all nine curriculum/split combinations. Training
-collation fails on over-length traces instead of silently truncating them.
+`resampled`). Families are sampled independently; equal exact behaviors or
+canonical trees may therefore recur, while the split/index-scoped family ID
+keeps every family's four aligned rows together. Training collation fails on
+over-length traces instead of silently truncating them.
 
 Train the model:
 

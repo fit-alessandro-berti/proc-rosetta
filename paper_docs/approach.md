@@ -187,7 +187,7 @@ The default split sizes are flattened rows. With four rows per behavior family, 
 | `validation` | 2048 | 512 | Evaluated separately for every curriculum. |
 | `test` | 2048 | 512 | Selected explicitly with `test.py --curriculum`. |
 
-The split generator removes any existing `data/` directory and generates all nine curriculum/split combinations. Exact behavior IDs are globally disjoint; canonical-tree hashes provide a conservative second leakage check for bounded and isomorphic families. Consecutive rows remain alternate representations/log views of one behavior. The strict class-coverage mode enforces deterministic motif quotas.
+The split generator removes any existing `data/` directory and generates all nine curriculum/split combinations. Families are sampled independently, so exact behavior IDs and canonical-tree hashes may recur across families or splits; split/index-scoped family IDs still keep consecutive representation/log-view rows grouped. The strict class-coverage mode enforces deterministic motif quotas.
 
 The root manifest records global invariants and all three profiles. Per-level metadata records family and row counts, distribution quantiles, loop/nested-loop prevalence, Petri/trace sizes, motif and representation coverage, plus raw-draw and folded-operator probability audits.
 
@@ -1073,7 +1073,7 @@ This figure makes clear that the test split is outside the training loop.
 
 ## 10. Concise methods-style summary
 
-Synthetic paired process-mining samples are generated as behavior families under simple, medium, and complex folded-tree profiles. Each family has a canonical process tree target, two sampled event-log views, and two Petri-net representations, including controlled exact-equivalent alternatives. The resulting process tree, event log, Petri graph, explicit complexity label, provenance, and behavior-family identifiers are serialized as aligned rows. Each curriculum contains 16,384 training, 2,048 validation, and 2,048 test rows; exact behavior IDs and canonical-tree hashes are disjoint across all nine combinations.
+Synthetic paired process-mining samples are generated as behavior families under simple, medium, and complex folded-tree profiles. Each family has a canonical process tree target, two sampled event-log views, and two Petri-net representations, including controlled exact-equivalent alternatives. The resulting process tree, event log, Petri graph, explicit complexity label, provenance, and behavior-family identifiers are serialized as aligned rows. Each curriculum contains 16,384 training, 2,048 validation, and 2,048 test rows. Families are sampled independently, and language-derived exact IDs identify semantic recurrences without collapsing their split/index-scoped family IDs.
 
 The model contains three modality-specific encoders: a GRU tree encoder, a hierarchical GRU-plus-attention trace encoder, and a message-passing Petri graph encoder. Each encoder outputs a diagonal Gaussian latent distribution in a shared latent space. A shared GRU decoder, initialized from a sampled or deterministic latent vector, predicts prefix-encoded process-tree tokens under a hand-coded grammar mask.
 

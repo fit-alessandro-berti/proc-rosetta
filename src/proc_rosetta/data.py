@@ -1048,8 +1048,6 @@ def recreate_data_splits(
     if root.exists():
         shutil.rmtree(root)
     root.mkdir(parents=True)
-    reserved_exact_ids: set[str] = set()
-    reserved_tree_hashes: set[str] = set()
     curricula: dict[str, object] = {}
     for level in CURRICULUM_LEVELS:
         level_config = curriculum_configs[level]
@@ -1060,11 +1058,9 @@ def recreate_data_splits(
             seed=seed,
             show_progress=show_progress,
             use_multiprocessing=use_multiprocessing,
-            reserved_exact_behavior_ids=reserved_exact_ids,
-            reserved_canonical_tree_hashes=reserved_tree_hashes,
         )
         level_metadata.update(
-            version=6,
+            version=7,
             schema="proc-rosetta.structural-curriculum-level.v1",
             complexity_level=level,
         )
@@ -1099,7 +1095,7 @@ def recreate_data_splits(
 
     complex_metadata = load_data_metadata(root / "complex")
     manifest: dict[str, object] = {
-        "version": 6,
+        "version": 7,
         "schema": "proc-rosetta.structural-curriculum.v1",
         "sample_format": "jsonl/process-sample.v5",
         "tree_normalization_version": "pm4py-fold-v1",
@@ -1111,12 +1107,13 @@ def recreate_data_splits(
         "reuse_activity_probability": config.reuse_activity_probability,
         "max_arity": config.max_arity,
         "curricula": curricula,
-        "exact_behaviors_disjoint_across_all_curricula_and_splits": True,
-        "canonical_tree_hashes_disjoint_across_all_curricula_and_splits": True,
+        "behavior_overlap_policy": "independently_sampled",
+        "exact_behaviors_disjoint_across_all_curricula_and_splits": False,
+        "canonical_tree_hashes_disjoint_across_all_curricula_and_splits": False,
         # Compatibility fields describe the complex alias only.
         "synthetic_config": complex_metadata["synthetic_config"],
         "splits": complex_metadata["splits"],
-        "exact_behavior_signatures_disjoint": True,
+        "exact_behavior_signatures_disjoint": False,
     }
     for filename in (CURRICULUM_MANIFEST_FILENAME, METADATA_FILENAME):
         with (root / filename).open("w", encoding="utf-8") as handle:
@@ -1132,8 +1129,6 @@ def _recreate_single_data_splits(
     seed: int = 13,
     show_progress: bool = False,
     use_multiprocessing: bool = False,
-    reserved_exact_behavior_ids: set[str] | None = None,
-    reserved_canonical_tree_hashes: set[str] | None = None,
 ) -> dict[str, object]:
     data_dir = Path(data_dir)
     counts = counts or SplitCounts()
@@ -1160,10 +1155,6 @@ def _recreate_single_data_splits(
 
     split_metadata: dict[str, object] = {}
     exact_signatures_by_split: dict[str, set[str]] = {}
-    if reserved_exact_behavior_ids is None:
-        reserved_exact_behavior_ids = set()
-    if reserved_canonical_tree_hashes is None:
-        reserved_canonical_tree_hashes = set()
     worker_processes = multiprocessing_worker_count() if use_multiprocessing else None
     for split, count in counts.items():
         with progress_bar(
@@ -1204,8 +1195,6 @@ def _recreate_single_data_splits(
                     seed,
                     split=split,
                     progress_update=progress.update,
-                    excluded_exact_behavior_ids=reserved_exact_behavior_ids,
-                    excluded_canonical_tree_hashes=reserved_canonical_tree_hashes,
                     num_workers=worker_processes,
                 )
         split_exact_ids = {
@@ -1213,15 +1202,7 @@ def _recreate_single_data_splits(
             for sample in samples
             if sample.exact_behavior_id is not None
         }
-        for prior_split, prior_ids in exact_signatures_by_split.items():
-            overlap = prior_ids & split_exact_ids
-            if overlap:
-                raise RuntimeError(
-                    f"exact behavior signatures overlap between {prior_split} and {split}: "
-                    f"{sorted(overlap)[:3]}"
-                )
         exact_signatures_by_split[split] = split_exact_ids
-        reserved_exact_behavior_ids.update(split_exact_ids)
         path = split_samples_path(data_dir, split)
         write_samples_jsonl(path, samples)
         statistics = sample_statistics(samples)
@@ -1246,7 +1227,8 @@ def _recreate_single_data_splits(
             "worker_processes": worker_processes or 0,
         },
         "synthetic_config": config.to_dict(),
-        "exact_behavior_signatures_disjoint": True,
+        "behavior_overlap_policy": "independently_sampled",
+        "exact_behavior_signatures_disjoint": False,
         "exact_behavior_signature_counts": {
             split: len(values) for split, values in exact_signatures_by_split.items()
         },

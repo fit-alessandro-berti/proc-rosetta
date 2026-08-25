@@ -1,3 +1,4 @@
+from dataclasses import replace
 import random
 
 import pytest
@@ -20,6 +21,7 @@ from proc_rosetta.families import (
     family_generation_plan,
     flatten_behavior_family,
     generate_behavior_family,
+    generate_family_samples,
 )
 from proc_rosetta.data import operator_probability_audit, sample_statistics
 from proc_rosetta.tree import NodeKind, ProcessTreeNode
@@ -348,12 +350,16 @@ def test_exact_behavior_family_motifs_share_language_and_ids():
 
         assert family.equivalence_certificate.status == "exact"
         assert len(family.exact_behavior_id) == 64
-        assert family.behavior_id == family.exact_behavior_id
+        assert family.behavior_id.startswith("test-")
+        assert family.behavior_id != family.exact_behavior_id
         assert len(family.behavior_signature) == 128
         assert family.equivalence_certificate.semantics == "visible_complete_trace_language"
         assert {variant.representation_kind for variant in family.model_variants} == expected_kinds
         assert all(view.traces for view in family.log_views)
-        assert all(variant.variant_id.startswith(family.behavior_id) for variant in family.model_variants)
+        assert all(
+            variant.variant_id.startswith(family.behavior_id)
+            for variant in family.model_variants
+        )
         canonical = tree_to_petri_net(family.canonical_tree.canonicalize_activity_labels())
         canonical_language, completed = enumerate_visible_language(
             canonical.net,
@@ -370,6 +376,38 @@ def test_exact_behavior_family_motifs_share_language_and_ids():
             )
             assert nonfree.structural_statistics["free_choice_violation_count"] > 0
             assert nonfree.structural_statistics["nonblock_reason"] == "non_free_choice_m_pattern"
+
+
+def test_independently_sampled_families_may_share_an_exact_language(monkeypatch):
+    config = config_for_curriculum(
+        SyntheticConfig(
+            traces_per_sample=2,
+            variants_per_behavior=1,
+            log_views_per_behavior=1,
+            motif_weights={"duplicate_vs_silent": 1.0},
+            class_coverage_mode="best_effort",
+        ),
+        "simple",
+    )
+    template = generate_behavior_family(
+        config,
+        0,
+        seed=11,
+        split="training",
+        motif="duplicate_vs_silent",
+    )
+
+    def repeated_family(config, family_index, seed, split, **kwargs):
+        return replace(template, behavior_id=f"{split}-family-{family_index}")
+
+    monkeypatch.setattr(
+        "proc_rosetta.families.generate_behavior_family",
+        repeated_family,
+    )
+    rows = generate_family_samples(2, config, seed=11, split="training")
+
+    assert len({row.equivalence_id for row in rows}) == 2
+    assert len({row.exact_behavior_id for row in rows}) == 1
 
 
 def test_controlled_families_receive_unique_random_structural_contexts():

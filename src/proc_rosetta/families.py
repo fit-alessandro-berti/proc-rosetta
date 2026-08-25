@@ -605,21 +605,19 @@ def generate_behavior_family(
         exact_language_behavior_id(reference_language, tree) if exact else None
     )
     signature = bounded_behavior_signature(reference_language, tree)
-    semantic_behavior_id = exact_behavior_id or behavior_id
     variants = tuple(
         replace(
             variant,
-            variant_id=f"{semantic_behavior_id}:{variant.representation_kind}",
+            variant_id=f"{behavior_id}:{variant.representation_kind}",
         )
         for variant in variants
     )
-    # IDs exposed to learning are behavior-derived whenever equivalence was
-    # completely certified; split/index IDs remain only for bounded families.
-    log_views = _make_log_views(
-        config, trace_pool, semantic_behavior_id, seed_bundle["log_view"]
-    )
+    # The family identifier remains split/index scoped. The language-derived
+    # exact ID is stored separately so independently sampled equal behaviors
+    # are recognized as strong positives without collapsing distinct families.
+    log_views = _make_log_views(config, trace_pool, behavior_id, seed_bundle["log_view"])
     return BehaviorFamily(
-        behavior_id=semantic_behavior_id,
+        behavior_id=behavior_id,
         exact_behavior_id=exact_behavior_id,
         exact_trace_language_id=exact_behavior_id,
         behavior_signature=signature,
@@ -826,8 +824,6 @@ def generate_family_samples(
     seed: int,
     split: str,
     progress_update: Callable[[int], None] | None = None,
-    excluded_exact_behavior_ids: set[str] | None = None,
-    excluded_canonical_tree_hashes: set[str] | None = None,
     num_workers: int | None = None,
 ) -> list[Any]:
     if count < 0:
@@ -857,15 +853,11 @@ def generate_family_samples(
             rows_per_family=rows_per_family,
             num_workers=num_workers,
             progress_update=progress_update,
-            excluded_exact_behavior_ids=excluded_exact_behavior_ids,
-            excluded_canonical_tree_hashes=excluded_canonical_tree_hashes,
         )
     rows: list[Any] = []
-    seen_exact_behavior_ids = set(excluded_exact_behavior_ids or ())
-    seen_tree_hashes = set(excluded_canonical_tree_hashes or ())
     family_index = 0
     attempts = 0
-    max_attempts = max(100, count * 20)
+    max_attempts = max(100, family_count * 20)
     for planned in generation_plan:
         accepted = False
         while not accepted and attempts < max_attempts:
@@ -889,28 +881,12 @@ def generate_family_samples(
                 and family.equivalence_certificate.status not in {"exact", "isomorphic"}
             ):
                 continue
-            if (
-                family.exact_behavior_id is not None
-                and family.exact_behavior_id in seen_exact_behavior_ids
-            ):
-                continue
-            tree_hash = str(family.metadata.get("canonical_tree_hash", ""))
-            if tree_hash and tree_hash in seen_tree_hashes:
-                continue
             family_rows = flatten_behavior_family(
                 family,
                 max_activities=int(getattr(config, "max_activities", 30)),
             )
             accepted_rows = family_rows[: count - len(rows)]
             rows.extend(accepted_rows)
-            if family.exact_behavior_id is not None:
-                seen_exact_behavior_ids.add(family.exact_behavior_id)
-                if excluded_exact_behavior_ids is not None:
-                    excluded_exact_behavior_ids.add(family.exact_behavior_id)
-            if tree_hash:
-                seen_tree_hashes.add(tree_hash)
-                if excluded_canonical_tree_hashes is not None:
-                    excluded_canonical_tree_hashes.add(tree_hash)
             if progress_update is not None:
                 progress_update(len(accepted_rows))
             accepted = True
@@ -931,19 +907,15 @@ def _generate_family_samples_parallel(
     rows_per_family: int,
     num_workers: int,
     progress_update: Callable[[int], None] | None,
-    excluded_exact_behavior_ids: set[str] | None,
-    excluded_canonical_tree_hashes: set[str] | None,
 ) -> list[Any]:
     if num_workers < 1:
         raise ValueError("num_workers must be positive")
 
-    seen_exact_behavior_ids = set(excluded_exact_behavior_ids or ())
-    seen_tree_hashes = set(excluded_canonical_tree_hashes or ())
     accepted_rows: list[list[Any] | None] = [None] * len(generation_plan)
     unresolved = list(range(len(generation_plan)))
     next_family_index = 0
     attempts = 0
-    max_attempts = max(100, count * 20)
+    max_attempts = max(100, len(generation_plan) * 20)
 
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         while unresolved and attempts < max_attempts:
@@ -973,17 +945,6 @@ def _generate_family_samples_parallel(
                 ):
                     retry_slots.append(slot)
                     continue
-                tree_hash = str(family.metadata.get("canonical_tree_hash", ""))
-                if tree_hash and tree_hash in seen_tree_hashes:
-                    retry_slots.append(slot)
-                    continue
-                if (
-                    family.exact_behavior_id is not None
-                    and family.exact_behavior_id in seen_exact_behavior_ids
-                ):
-                    retry_slots.append(slot)
-                    continue
-
                 family_rows = flatten_behavior_family(
                     family,
                     max_activities=int(getattr(config, "max_activities", 30)),
@@ -991,14 +952,6 @@ def _generate_family_samples_parallel(
                 row_offset = slot * rows_per_family
                 rows_for_slot = family_rows[: max(0, min(rows_per_family, count - row_offset))]
                 accepted_rows[slot] = rows_for_slot
-                if family.exact_behavior_id is not None:
-                    seen_exact_behavior_ids.add(family.exact_behavior_id)
-                    if excluded_exact_behavior_ids is not None:
-                        excluded_exact_behavior_ids.add(family.exact_behavior_id)
-                if tree_hash:
-                    seen_tree_hashes.add(tree_hash)
-                    if excluded_canonical_tree_hashes is not None:
-                        excluded_canonical_tree_hashes.add(tree_hash)
                 if progress_update is not None:
                     progress_update(len(rows_for_slot))
             unresolved = retry_slots

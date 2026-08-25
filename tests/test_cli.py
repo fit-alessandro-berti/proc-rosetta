@@ -292,9 +292,10 @@ def test_sample_cli_recreates_data_splits(tmp_path, capsys):
         assert (data_dir / level / "validation" / "samples.jsonl").exists()
         assert (data_dir / level / "test" / "samples.jsonl").exists()
     assert set(metadata["curricula"]) == {"simple", "medium", "complex"}
-    assert metadata["exact_behaviors_disjoint_across_all_curricula_and_splits"]
+    assert metadata["behavior_overlap_policy"] == "independently_sampled"
+    assert metadata["exact_behaviors_disjoint_across_all_curricula_and_splits"] is False
     assert metadata["splits"]["training"]["statistics"]["count"] == 2
-    assert metadata["exact_behavior_signatures_disjoint"] is True
+    assert metadata["exact_behavior_signatures_disjoint"] is False
     assert metadata["synthetic_config"]["logs"]["log_views_per_behavior"] == 2
     coverage = metadata["splits"]["training"]["class_coverage"]
     assert coverage["mode"] == "best_effort"
