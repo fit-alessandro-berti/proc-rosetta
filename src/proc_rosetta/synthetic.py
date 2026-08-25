@@ -927,6 +927,8 @@ def generate_sample(
         for trace in simulate_traces(
             semantic_tree,
             num_traces=config.traces_per_sample,
+            max_trace_length=config.max_trace_length,
+            rng=rng,
         )
     )
     # Store every modality under the labeling external logs receive at

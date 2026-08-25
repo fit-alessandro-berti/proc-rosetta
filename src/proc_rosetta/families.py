@@ -483,8 +483,19 @@ def generate_behavior_family(
             raise ValueError(f"family {behavior_id} contains an unsound structural variant")
 
         playout_count = max(256, int(getattr(config, "traces_per_sample", 128)) * 4)
+        max_trace_length = max(1, int(getattr(config, "max_trace_length", 128)))
         trace_pool = tuple(
-            sorted({tuple(trace) for trace in simulate_traces(tree, num_traces=playout_count)})
+            sorted(
+                {
+                    tuple(trace)
+                    for trace in simulate_traces(
+                        tree,
+                        num_traces=playout_count,
+                        max_trace_length=max_trace_length,
+                        rng=random.Random(seed_bundle["playout"]),
+                    )
+                }
+            )
         )
         if not trace_pool:
             raise ValueError(f"family {behavior_id} has no sampled visible traces")

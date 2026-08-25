@@ -183,7 +183,10 @@ def test_sequence_padding_no_longer_changes_forced_root():
 
 def test_isomorphic_loop_family_has_strong_positive_id():
     config = config_for_curriculum(
-        SyntheticConfig(motif_weights={"ordinary_tree": 1.0}),
+        SyntheticConfig(
+            motif_weights={"ordinary_tree": 1.0},
+            max_trace_length=4,
+        ),
         "simple",
     )
     family = generate_behavior_family(
@@ -197,6 +200,7 @@ def test_isomorphic_loop_family_has_strong_positive_id():
     rows = flatten_behavior_family(family, max_activities=config.max_activities)
     assert family.equivalence_certificate.status == "isomorphic"
     assert all(row.strong_behavior_id == family.behavior_id for row in rows)
+    assert max(map(len, family.clean_trace_pool)) <= config.max_trace_length
 
 
 def test_root_and_non_root_operator_probabilities_are_independent():
@@ -253,6 +257,43 @@ def test_tree_to_petri_net_and_trace_simulation():
 
     restored = petri_graph_to_net(petri.graph)
     assert restored.graph == petri.graph
+
+
+def test_trace_simulation_bounds_loops_even_when_rng_always_continues():
+    class ContinueLoopRandom(random.Random):
+        def random(self):
+            return 0.0
+
+    tree = ProcessTreeNode.loop(
+        ProcessTreeNode.activity("A0"),
+        ProcessTreeNode.activity("A1"),
+    )
+
+    traces = simulate_traces(
+        tree,
+        num_traces=3,
+        max_trace_length=5,
+        rng=ContinueLoopRandom(7),
+    )
+
+    assert traces == [["A0", "A1", "A0", "A1", "A0"]] * 3
+    assert max(map(len, traces)) == 5
+
+
+def test_trace_simulation_is_reproducible_with_a_local_rng():
+    tree = ProcessTreeNode.loop(
+        ProcessTreeNode.xor(
+            ProcessTreeNode.activity("A0"),
+            ProcessTreeNode.activity("A1"),
+        ),
+        ProcessTreeNode.activity("A2"),
+    )
+
+    first = simulate_traces(tree, 20, rng=random.Random(41))
+    second = simulate_traces(tree, 20, rng=random.Random(41))
+
+    assert first == second
+    assert all(len(trace) <= 128 for trace in first)
 
 
 def test_generate_sample_contains_all_modalities():

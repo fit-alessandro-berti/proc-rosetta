@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import random
 from typing import Any
 
 from proc_rosetta.tree import NodeKind, ProcessTreeNode
@@ -195,26 +196,189 @@ def tree_to_petri_net(node: ProcessTreeNode) -> PetriNetBundle:
     return PetriNetBundle(net, initial_marking, final_marking, graph)
 
 
-def simulate_traces(node: ProcessTreeNode, num_traces: int = 100, variant: str = "topbottom") -> list[list[str]]:
-    from pm4py.algo.simulation.playout.process_tree import algorithm as pt_playout
-    from pm4py.algo.simulation.playout.process_tree.variants import basic_playout, topbottom
+class _PlayoutLimitExceeded(RuntimeError):
+    pass
 
-    pm_tree = to_pm4py_tree(node)
+
+def _minimum_visible_length(node: ProcessTreeNode) -> int:
+    if node.kind is NodeKind.ACTIVITY:
+        return 1
+    if node.kind is NodeKind.TAU:
+        return 0
+    if node.kind is NodeKind.XOR:
+        return min(_minimum_visible_length(child) for child in node.children)
+    if node.kind is NodeKind.LOOP:
+        return _minimum_visible_length(node.children[0]) + (
+            _minimum_visible_length(node.children[2])
+            if len(node.children) == 3
+            else 0
+        )
+    return sum(_minimum_visible_length(child) for child in node.children)
+
+
+def _bounded_topbottom_trace(
+    node: ProcessTreeNode,
+    rng: Any,
+    *,
+    max_trace_length: int,
+    max_loop_iterations: int,
+) -> list[str]:
+    """Sample one complete trace without PM4Py's unbounded loop playout."""
+
+    minimum_lengths: dict[int, int] = {}
+
+    def record_minimum_lengths(current: ProcessTreeNode) -> None:
+        minimum_lengths[id(current)] = _minimum_visible_length(current)
+        for child in current.children:
+            record_minimum_lengths(child)
+
+    record_minimum_lengths(node)
+    # This is a second bound for silent/nested loops, where visible length does
+    # not necessarily increase. Ordinary finite trees use far fewer visits.
+    maximum_node_visits = max(256, max_trace_length * 8, node.size() * 8)
+    node_visits = 0
+
+    def visit(current: ProcessTreeNode) -> list[str]:
+        nonlocal node_visits
+        node_visits += 1
+        if node_visits > maximum_node_visits:
+            raise _PlayoutLimitExceeded("playout exceeded its node-visit budget")
+
+        if current.kind is NodeKind.ACTIVITY:
+            assert current.label is not None
+            return [current.label]
+        if current.kind is NodeKind.TAU:
+            return []
+        if current.kind is NodeKind.XOR:
+            result = visit(rng.choice(current.children))
+        elif current.kind is NodeKind.SEQ:
+            result = []
+            for child in current.children:
+                result.extend(visit(child))
+                if len(result) > max_trace_length:
+                    raise _PlayoutLimitExceeded("sampled trace is too long")
+        elif current.kind is NodeKind.AND:
+            child_traces = [visit(child) for child in current.children]
+            if sum(map(len, child_traces)) > max_trace_length:
+                raise _PlayoutLimitExceeded("sampled trace is too long")
+            choices = [
+                child_index
+                for child_index, trace in enumerate(child_traces)
+                for _ in trace
+            ]
+            rng.shuffle(choices)
+            offsets = [0] * len(child_traces)
+            result = []
+            for child_index in choices:
+                result.append(child_traces[child_index][offsets[child_index]])
+                offsets[child_index] += 1
+        elif current.kind is NodeKind.LOOP:
+            body, redo = current.children[:2]
+            exit_node = current.children[2] if len(current.children) == 3 else None
+            result = visit(body)
+            minimum_additional_length = minimum_lengths[id(redo)] + minimum_lengths[id(body)]
+            minimum_exit_length = (
+                minimum_lengths[id(exit_node)] if exit_node is not None else 0
+            )
+            for _ in range(max_loop_iterations - 1):
+                if rng.random() > 0.5:
+                    break
+                # Ending a process-tree loop after its current body execution is
+                # always valid. Stop here when another redo/body pair cannot fit.
+                if (
+                    len(result) + minimum_additional_length + minimum_exit_length
+                    > max_trace_length
+                ):
+                    break
+                result.extend(visit(redo))
+                result.extend(visit(body))
+                if len(result) > max_trace_length:
+                    raise _PlayoutLimitExceeded("sampled trace is too long")
+            if exit_node is not None:
+                result.extend(visit(exit_node))
+        else:  # pragma: no cover - ProcessTreeNode validation prevents this
+            raise ValueError(f"unsupported process-tree kind: {current.kind}")
+
+        if len(result) > max_trace_length:
+            raise _PlayoutLimitExceeded("sampled trace is too long")
+        return result
+
+    return visit(node)
+
+
+def simulate_traces(
+    node: ProcessTreeNode,
+    num_traces: int = 100,
+    variant: str = "topbottom",
+    *,
+    max_trace_length: int = 128,
+    rng: random.Random | None = None,
+    max_loop_iterations: int = 32,
+    max_attempts_per_trace: int = 100,
+) -> list[list[str]]:
+    """Simulate bounded traces from a process tree.
+
+    PM4Py's top-bottom playout continues each loop with a coin flip inside an
+    unbounded ``while``. Nested loops consequently have a heavy-tailed runtime.
+    The local top-bottom implementation retains the same operator semantics but
+    bounds visible length, loop iterations, retries, and silent-node work.
+    """
+
+    if num_traces < 0:
+        raise ValueError("num_traces must be non-negative")
+    if max_trace_length < 1:
+        raise ValueError("max_trace_length must be positive")
+    if max_loop_iterations < 1:
+        raise ValueError("max_loop_iterations must be positive")
+    if max_attempts_per_trace < 1:
+        raise ValueError("max_attempts_per_trace must be positive")
+    if variant not in {"topbottom", "basic"}:
+        raise ValueError("variant must be 'topbottom' or 'basic'")
+
     if variant == "basic":
+        # Retain the explicitly requested PM4Py token-game variant. Data
+        # generation uses the bounded top-bottom path above.
+        from pm4py.algo.simulation.playout.process_tree import algorithm as pt_playout
+        from pm4py.algo.simulation.playout.process_tree.variants import basic_playout
+
         log = pt_playout.apply(
-            pm_tree,
+            to_pm4py_tree(node),
             variant=pt_playout.Variants.BASIC_PLAYOUT,
             parameters={basic_playout.Parameters.NO_TRACES: num_traces},
         )
-    elif variant == "topbottom":
-        log = pt_playout.apply(
-            pm_tree,
-            variant=pt_playout.Variants.TOPBOTTOM,
-            parameters={topbottom.Parameters.NO_TRACES: num_traces},
-        )
-    else:
-        raise ValueError("variant must be 'topbottom' or 'basic'")
-    return event_log_to_traces(log)
+        traces = event_log_to_traces(log)
+        if any(len(trace) > max_trace_length for trace in traces):
+            raise RuntimeError(
+                f"basic playout produced a trace longer than {max_trace_length} events"
+            )
+        return traces
+
+    # Keep the historical global-random behavior for callers that deliberately
+    # bracket this function with random.seed()/setstate(). Data generation
+    # passes a local Random instance so worker scheduling cannot affect it.
+    random_source = rng if rng is not None else random
+    traces: list[list[str]] = []
+    for trace_index in range(num_traces):
+        for _ in range(max_attempts_per_trace):
+            try:
+                traces.append(
+                    _bounded_topbottom_trace(
+                        node,
+                        random_source,
+                        max_trace_length=max_trace_length,
+                        max_loop_iterations=max_loop_iterations,
+                    )
+                )
+                break
+            except _PlayoutLimitExceeded:
+                continue
+        else:
+            raise RuntimeError(
+                f"could not sample trace {trace_index + 1}/{num_traces} within "
+                f"max_trace_length={max_trace_length} after "
+                f"{max_attempts_per_trace} attempts"
+            )
+    return traces
 
 
 def event_log_to_traces(log: Any, activity_key: str = "concept:name") -> list[list[str]]:
