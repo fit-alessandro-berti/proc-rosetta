@@ -1,5 +1,6 @@
 import torch
 import pytest
+from copy import deepcopy
 from dataclasses import asdict, replace
 from torch.utils.data import DataLoader
 
@@ -829,6 +830,53 @@ def test_scheduled_sampling_adapts_to_raw_decode_exposure_gap():
     adapted = adaptive_scheduled_sampling_probability(config, 6, metrics)
 
     assert baseline < adapted <= config.scheduled_sampling_max
+
+
+def test_unbounded_diagnostics_do_not_influence_checkpoint_selection():
+    deployment = {
+        "methods": {
+            "proc_rosetta_trace_mu": {
+                "terminated_rate": 1.0,
+                "valid_tree_rate": 1.0,
+                "exact_tree_match_rate": 0.5,
+                "petri_conversion_rate": 1.0,
+                "behavior_eval_success_rate": 1.0,
+                "mean_behavior_l1": 0.2,
+                "mean_normalized_token_edit_distance": 0.25,
+            }
+        }
+    }
+    poor_diagnostic = {
+        "methods": {
+            "proc_rosetta_trace_mu": {
+                "terminated_rate": 0.0,
+                "valid_tree_rate": 0.0,
+                "exact_tree_match_rate": 0.0,
+                "petri_conversion_rate": 0.0,
+                "behavior_eval_success_rate": 0.0,
+                "mean_behavior_l1": 2.0,
+                "mean_normalized_token_edit_distance": 1.0,
+            }
+        }
+    }
+    strong_diagnostic = deepcopy(deployment)
+
+    poor = balanced_validation_components(
+        {
+            "deployment_decode_quality": deployment,
+            "diagnostic_unbounded_decode_quality": poor_diagnostic,
+        }
+    )
+    strong = balanced_validation_components(
+        {
+            "deployment_decode_quality": deployment,
+            "diagnostic_unbounded_decode_quality": strong_diagnostic,
+        }
+    )
+
+    assert poor["decode_score"] == strong["decode_score"]
+    assert poor["balanced_score"] == strong["balanced_score"]
+    assert poor["all_hard_gates_pass"] == strong["all_hard_gates_pass"]
 
 
 def test_legacy_checkpoint_defaults_new_structure_objectives_to_zero():

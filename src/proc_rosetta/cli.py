@@ -651,6 +651,8 @@ def run_train(args: argparse.Namespace) -> int:
 
 
 def run_test(args: argparse.Namespace) -> int:
+    if args.max_decode_length < 3:
+        raise ValueError("--max-decode-length must be at least 3")
     show_progress = not args.quiet
     checkpoint_path = checkpoint_for_selection(
         args.checkpoint,
@@ -699,7 +701,7 @@ def run_test(args: argparse.Namespace) -> int:
         ),
         show_progress=show_progress,
         conformance_method=args.conformance_method,
-        max_decode_length=max(2, args.max_decode_length),
+        max_decode_length=args.max_decode_length,
         curriculum=args.curriculum,
     )
     if args.json:

@@ -145,7 +145,7 @@ def rich_test_report(
         f"[3/{stage_count}] Evaluating {8 * len(samples)} matched raw/deployment decodes",
         enabled=show_progress,
     )
-    decode_quality = decode_quality_report(
+    diagnostic_unbounded_decode_quality = decode_quality_report(
         model,
         samples,
         batch_size=batch_size,
@@ -239,8 +239,10 @@ def rich_test_report(
             for key, value in behavior.items()
             if key != "mean_l1"
         },
-        "decode_quality": decode_quality,
+        "diagnostic_unbounded_decode_quality": diagnostic_unbounded_decode_quality,
         "deployment_decode_quality": deployment_decode_quality,
+        # Legacy consumers receive deployment results, never unbounded diagnostics.
+        "decode_quality": deployment_decode_quality,
         "discovery_quality": discovery_quality,
         "cross_modal_retrieval": cross_modal_retrieval(
             neural_embeddings,
@@ -273,7 +275,7 @@ def rich_test_report(
             "pm4py_log_case_features_mean_std": "pm4py.extract_features_dataframe aggregated per log",
         },
     }
-    trace_decode = decode_quality["methods"]["proc_rosetta_trace_mu"]
+    trace_decode = deployment_decode_quality["methods"]["proc_rosetta_trace_mu"]
     assert isinstance(trace_decode, dict)
     strata = trace_decode.get("strata", {})
     assert isinstance(strata, dict)
@@ -465,7 +467,7 @@ def validation_audit_report(
         device=device_name,
         show_progress=show_progress,
     )
-    decode_quality = decode_quality_report(
+    diagnostic_unbounded_decode_quality = decode_quality_report(
         model,
         decode_samples,
         batch_size=batch_size,
@@ -557,8 +559,10 @@ def validation_audit_report(
             for key, value in behavior.items()
             if key != "mean_l1"
         },
-        "decode_quality": decode_quality,
+        "diagnostic_unbounded_decode_quality": diagnostic_unbounded_decode_quality,
         "deployment_decode_quality": deployment_decode_quality,
+        # Legacy consumers receive deployment results, never unbounded diagnostics.
+        "decode_quality": deployment_decode_quality,
         "discovery_quality": discovery_quality,
         "cross_modal_retrieval": retrieval,
         "equivalence_families": equivalence,
@@ -578,7 +582,7 @@ def validation_audit_report(
             ),
         },
     }
-    trace_decode = decode_quality["methods"]["proc_rosetta_trace_mu"]
+    trace_decode = deployment_decode_quality["methods"]["proc_rosetta_trace_mu"]
     assert isinstance(trace_decode, dict)
     strata = trace_decode.get("strata", {})
     assert isinstance(strata, dict)
@@ -1384,7 +1388,7 @@ def decode_quality_report(
     max_decode_length: int = 512,
     behavior_traces_per_sample: int = 128,
     show_progress: bool = False,
-    completion_policy: str = "prefix_only",
+    completion_policy: str = "bounded",
     beam_size: int = 5,
     include_beam_oracle: bool = True,
 ) -> dict[str, object]:
@@ -1552,7 +1556,7 @@ def decode_with_beam(
     max_length: int,
     beam_size: int = 5,
     allowed_activity_mask: torch.Tensor | None = None,
-    completion_policy: str = "prefix_only",
+    completion_policy: str = "bounded",
     avoid_duplicate_activity_labels: bool = False,
 ):
     if hasattr(decoder, "decode_beam"):
@@ -1715,7 +1719,7 @@ def evaluate_single_decode(
     source_name: str,
     target_tree: ProcessTreeNode,
     behavior_traces_per_sample: int = 128,
-    completion_policy: str = "prefix_only",
+    completion_policy: str = "bounded",
     include_original_tree_metrics: bool = False,
 ) -> dict[str, object]:
     tokenizer = model.tree_tokenizer
@@ -1770,6 +1774,8 @@ def evaluate_single_decode(
         "operator_to_leaf_ratio": operator_count / max(leaf_count, 1),
         "unresolved_open_slots": unresolved_open_slots,
         "valid_tree": False,
+        "hard_structural_success": False,
+        "neural_decode_without_fallback": False,
         "exact_tree_match": False,
         "petri_convertible": False,
         "behavior_evaluable": False,
@@ -1792,8 +1798,17 @@ def evaluate_single_decode(
         )
 
     try:
-        decoded_tree = tokenizer.decode_tree(token_ids)
+        decoded_tree = (
+            tokenizer.validate_complete_tree_sequence(
+                token_ids,
+                token_budget=len(token_ids),
+            )
+            if completion_policy == "bounded"
+            else tokenizer.decode_tree(token_ids)
+        )
         row["valid_tree"] = True
+        row["hard_structural_success"] = True
+        row["neural_decode_without_fallback"] = True
     except Exception as exc:
         row["error"] = f"decode:{type(exc).__name__}: {exc}"
         return row
@@ -1839,6 +1854,10 @@ def summarize_decode_quality(rows: Sequence[dict[str, object]]) -> dict[str, obj
         "count": int(count),
         "terminated_rate": rate(rows, "terminated"),
         "valid_tree_rate": rate(rows, "valid_tree"),
+        "hard_structural_success_rate": rate(rows, "hard_structural_success"),
+        "neural_decode_without_fallback_rate": rate(
+            rows, "neural_decode_without_fallback"
+        ),
         "exact_tree_match_rate": rate(rows, "exact_tree_match"),
         "petri_conversion_rate": rate(rows, "petri_convertible"),
         "behavior_eval_success_rate": rate(rows, "behavior_evaluable"),
@@ -2423,12 +2442,12 @@ def format_human_test_report(report: dict[str, object]) -> str:
     )
     lines.append("")
 
-    decode_quality = report.get("decode_quality", {})
+    decode_quality = report.get("deployment_decode_quality", {})
     if isinstance(decode_quality, dict):
         decode_methods = decode_quality.get("methods", {})
         if isinstance(decode_methods, dict):
-            lines.append("Decode quality")
-            lines.append("--------------")
+            lines.append("Decode quality (deployment)")
+            lines.append("---------------------------")
             lines.append(
                 "Greedy decodes use the process-tree decoder; Petri ok means the decoded tree "
                 "converted to a Petri net."

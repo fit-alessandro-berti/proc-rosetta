@@ -28,7 +28,12 @@ from proc_rosetta.artifact_io import (
 )
 from proc_rosetta.behavior import behavioral_distance
 from proc_rosetta.devices import resolve_device
-from proc_rosetta.models import CompletionPolicy, DecodeConstraints, LatentDistribution
+from proc_rosetta.models import (
+    CompletionPolicy,
+    DecodeConstraints,
+    DecoderInvariantError,
+    LatentDistribution,
+)
 from proc_rosetta.pm4py_bridge import (
     TREE_NORMALIZATION_VERSION,
     PetriGraph,
@@ -143,6 +148,7 @@ class DecodeStep:
     selected_pre_budget_probability: float = 0.0
     selected_conditional_probability: float = 0.0
     completion_slack: int | None = None
+    forced_closure: bool = False
 
 
 @dataclass
@@ -182,6 +188,9 @@ class DecodeResult:
     operators_removed: int = 0
     arities_removed: int = 0
     raw_unresolved_open_slots: int | None = None
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+    forced_closure_used: bool = False
     decoder_configuration: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -189,6 +198,14 @@ class DecodeResult:
     @property
     def successful(self) -> bool:
         return self.eos_emitted and self.grammar_valid and self.petri_convertible
+
+    @property
+    def hard_structural_success(self) -> bool:
+        return self.eos_emitted and self.grammar_valid and self.arity_valid
+
+    @property
+    def neural_decode_without_fallback(self) -> bool:
+        return self.hard_structural_success and not self.fallback_used
 
     @property
     def token_ids(self) -> list[int]:
@@ -511,13 +528,17 @@ def decode_latent_iter(
     completion_policy: CompletionPolicy = "bounded",
     chosen_token_ids: Sequence[int] | None = None,
 ) -> Iterator[DecodeStep]:
-    """Yield shared-step diagnostics for greedy or supplied decoder decisions."""
+    """Yield shared-step diagnostics; ``max_length`` includes BOS and EOS."""
 
     if completion_policy not in {"prefix_only", "bounded"}:
         raise ValueError("completion_policy must be 'prefix_only' or 'bounded'")
-    minimum_length = 3 if completion_policy == "bounded" else 2
-    if max_length < minimum_length:
-        raise ValueError(f"{completion_policy} completion requires max_length >= {minimum_length}")
+    if completion_policy == "bounded":
+        model.tree_decoder.validate_token_budget(max_length)
+    else:
+        if max_length < 2:
+            raise ValueError("prefix_only completion requires max_length >= 2")
+        if max_length > model.tree_decoder.maximum_supported_decode_length:
+            raise ValueError("decode length exceeds decoder positional capacity")
     device = next(model.parameters()).device
     tokenizer = model.tree_tokenizer
     source = _decoder_source(
@@ -551,6 +572,72 @@ def decode_latent_iter(
         if chosen_token_ids is not None and step_index > len(chosen_token_ids):
             break
         remaining_tokens = max_length - step_index
+        forced_closure = False
+        if completion_policy == "bounded":
+            minimum = int(
+                tokenizer.minimum_tokens_to_finish(
+                    open_nodes,
+                    pending_operator,
+                )[0]
+            )
+            if remaining_tokens < minimum:
+                raise DecoderInvariantError(
+                    "Current prefix cannot be completed inside the token budget."
+                )
+            forced_closure = remaining_tokens == minimum
+        if forced_closure:
+            chosen_id = tokenizer.shortest_completion(
+                int(open_nodes[0]),
+                int(pending_operator[0]),
+            )[0]
+            if (
+                chosen_token_ids is not None
+                and int(chosen_token_ids[step_index - 1]) != chosen_id
+            ):
+                raise ValueError(
+                    "supplied token does not match deterministic forced closure "
+                    f"at decode step {step_index}"
+                )
+            grammar_state = (
+                "need_arity"
+                if int(pending_operator[0])
+                else "complete" if int(open_nodes[0]) == 0 else "need_node"
+            )
+            open_slots = int(open_nodes[0])
+            chosen_name = tokenizer.tokens[chosen_id]
+            prefix_ids.append(chosen_id)
+            prefix_names.append(chosen_name)
+            chosen_tensor = torch.tensor([chosen_id], dtype=torch.long, device=device)
+            model.tree_decoder._advance_incremental_grammar(
+                chosen_tensor,
+                open_nodes,
+                pending_operator,
+                torch.ones(1, dtype=torch.bool, device=device),
+            )
+            yield DecodeStep(
+                step_index=step_index,
+                grammar_state=grammar_state,
+                valid_next_tokens=(chosen_name,),
+                chosen_token_id=chosen_id,
+                chosen_token=chosen_name,
+                chosen_token_score=1.0,
+                top_valid_token_scores=((chosen_name, 1.0),),
+                invalid_high_scoring_tokens=(),
+                current_prefix=tuple(prefix_names),
+                open_child_slots=open_slots,
+                subtree_position=_next_subtree_position(prefix_names[:-1]),
+                eos_emitted=chosen_id == tokenizer.eos_id,
+                budget_mask_active=True,
+                pre_budget_top_token="",
+                selected_pre_budget_probability=0.0,
+                selected_conditional_probability=1.0,
+                completion_slack=0,
+                forced_closure=True,
+            )
+            if chosen_id == tokenizer.eos_id:
+                break
+            current = chosen_tensor
+            continue
         scores, caches = model.tree_decoder._incremental_next_token_scores(
             current,
             step_index - 1,
@@ -668,13 +755,14 @@ def decode_latent_iter(
             selected_pre_budget_probability=chosen_probability,
             selected_conditional_probability=chosen_conditional_probability,
             completion_slack=completion_slack,
+            forced_closure=False,
         )
         if chosen_id == tokenizer.eos_id:
             break
         current = chosen_tensor
 
 
-def decode_latent(
+def _decode_latent_with_policy(
     checkpoint: LoadedCheckpoint,
     latent: Sequence[float] | np.ndarray | torch.Tensor,
     *,
@@ -693,9 +781,10 @@ def decode_latent(
     duplicate_policy: str = "disallow",
     completion_policy: CompletionPolicy = "bounded",
     progress_callback: Callable[[DecodeStep], None] | None = None,
+    _step_sink: list[DecodeStep] | None = None,
 ) -> DecodeResult:
     start = perf_counter()
-    steps: list[DecodeStep] = []
+    steps: list[DecodeStep] = [] if _step_sink is None else _step_sink
     if allowed_activity_slots is None and canonical_mapping is not None:
         canonical_labels = set(canonical_mapping.values())
         allowed_activity_slots = [
@@ -737,7 +826,7 @@ def decode_latent(
             chosen_ids.append(token_id)
             if token_id == checkpoint.model.tree_tokenizer.eos_id:
                 break
-        steps = list(
+        steps.extend(
             decode_latent_iter(
                 checkpoint.model,
                 latent,
@@ -793,6 +882,219 @@ def decode_latent(
     )
 
 
+def _recover_bounded_prefix(
+    tokenizer: Any,
+    prefix: Sequence[int],
+    *,
+    token_budget: int,
+) -> tuple[list[int], bool]:
+    """Complete a valid partial prefix, or replace it with the safe TAU tree."""
+
+    safe_tree = [
+        tokenizer.bos_id,
+        tokenizer.token_to_id["TAU"],
+        tokenizer.eos_id,
+    ]
+    ids = [int(token_id) for token_id in prefix]
+    try:
+        state, pending_operator, open_nodes = tokenizer._grammar_state(ids)
+        if state.value == "done":
+            tokenizer.validate_complete_tree_sequence(ids, token_budget=token_budget)
+            return ids, False
+        if state.value not in {"need_node", "need_arity"}:
+            return safe_tree, False
+        completion = tokenizer.shortest_completion(open_nodes, pending_operator)
+        if len(ids) + len(completion) > token_budget:
+            return safe_tree, False
+        recovered = [*ids, *completion]
+        tokenizer.validate_complete_tree_sequence(
+            recovered,
+            token_budget=token_budget,
+        )
+        return recovered, True
+    except Exception:
+        return safe_tree, False
+
+
+def decode_guaranteed(
+    checkpoint: LoadedCheckpoint,
+    latent: Sequence[float] | np.ndarray | torch.Tensor,
+    *,
+    source_artifact_ids: Sequence[str],
+    source_modalities: Sequence[ArtifactModality],
+    latent_source: str,
+    canonical_mapping: dict[str, str] | None = None,
+    total_token_budget_including_bos_eos: int = 512,
+    top_k: int = 5,
+    beam_size: int = 5,
+    allowed_activity_slots: Sequence[bool] | torch.Tensor | None = None,
+    copy_activity_slots: Sequence[bool] | torch.Tensor | None = None,
+    activity_memory: Sequence[Sequence[float]] | torch.Tensor | None = None,
+    constrain_to_source_activities: bool = True,
+    avoid_duplicate_activity_labels: bool = True,
+    duplicate_policy: str = "disallow",
+    progress_callback: Callable[[DecodeStep], None] | None = None,
+) -> DecodeResult:
+    """Deployment decode with strict validation and an emergency safe-tree fallback."""
+
+    budget = checkpoint.model.tree_decoder.validate_token_budget(
+        total_token_budget_including_bos_eos
+    )
+    started = perf_counter()
+    partial_steps: list[DecodeStep] = []
+    try:
+        result = _decode_latent_with_policy(
+            checkpoint,
+            latent,
+            source_artifact_ids=source_artifact_ids,
+            source_modalities=source_modalities,
+            latent_source=latent_source,
+            canonical_mapping=canonical_mapping,
+            max_length=budget,
+            top_k=top_k,
+            beam_size=beam_size,
+            allowed_activity_slots=allowed_activity_slots,
+            copy_activity_slots=copy_activity_slots,
+            activity_memory=activity_memory,
+            constrain_to_source_activities=constrain_to_source_activities,
+            avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+            duplicate_policy=duplicate_policy,
+            completion_policy="bounded",
+            progress_callback=progress_callback,
+            _step_sink=partial_steps,
+        )
+        checkpoint.model.tree_tokenizer.validate_complete_tree_sequence(
+            result.raw_token_ids,
+            token_budget=budget,
+        )
+        if not result.grammar_valid:
+            raise DecoderInvariantError(
+                "Strictly validated token stream was not accepted by result construction."
+            )
+        return result
+    except Exception as exc:
+        tokenizer = checkpoint.model.tree_tokenizer
+        prefix = [tokenizer.bos_id]
+        prefix.extend(step.chosen_token_id for step in partial_steps)
+        recovered, appended_closure = _recover_bounded_prefix(
+            tokenizer,
+            prefix,
+            token_budget=budget,
+        )
+        reason = f"{type(exc).__name__}: {exc}"
+        result = build_decode_result(
+            checkpoint.model,
+            latent,
+            source_artifact_ids=source_artifact_ids,
+            source_modalities=source_modalities,
+            latent_source=latent_source,
+            token_ids=recovered,
+            steps=partial_steps,
+            canonical_mapping=canonical_mapping,
+            allowed_activity_slots=allowed_activity_slots,
+            constrain_to_source_activities=constrain_to_source_activities,
+            avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+            duplicate_policy=duplicate_policy,
+            completion_policy="bounded",
+            token_strategy="emergency_fallback",
+            beam_size=beam_size,
+            max_length=budget,
+            decode_seconds=perf_counter() - started,
+            fallback_used=True,
+            fallback_reason=reason,
+            forced_closure_used=appended_closure,
+        )
+        tokenizer.validate_complete_tree_sequence(
+            result.raw_token_ids,
+            token_budget=budget,
+        )
+        result.warnings.append(f"Emergency structural fallback used: {reason}")
+        return result
+
+
+def decode_unbounded_for_diagnostics(
+    checkpoint: LoadedCheckpoint,
+    latent: Sequence[float] | np.ndarray | torch.Tensor,
+    *,
+    source_artifact_ids: Sequence[str],
+    source_modalities: Sequence[ArtifactModality],
+    latent_source: str,
+    canonical_mapping: dict[str, str] | None = None,
+    maximum_tokens_including_bos: int = 512,
+    top_k: int = 5,
+    beam_size: int = 5,
+    allowed_activity_slots: Sequence[bool] | torch.Tensor | None = None,
+    copy_activity_slots: Sequence[bool] | torch.Tensor | None = None,
+    activity_memory: Sequence[Sequence[float]] | torch.Tensor | None = None,
+    constrain_to_source_activities: bool = True,
+    avoid_duplicate_activity_labels: bool = False,
+    duplicate_policy: str = "allow",
+    progress_callback: Callable[[DecodeStep], None] | None = None,
+) -> DecodeResult:
+    """Explicitly diagnostic prefix-only decode with no completion guarantee."""
+
+    return _decode_latent_with_policy(
+        checkpoint,
+        latent,
+        source_artifact_ids=source_artifact_ids,
+        source_modalities=source_modalities,
+        latent_source=latent_source,
+        canonical_mapping=canonical_mapping,
+        max_length=maximum_tokens_including_bos,
+        top_k=top_k,
+        beam_size=beam_size,
+        allowed_activity_slots=allowed_activity_slots,
+        copy_activity_slots=copy_activity_slots,
+        activity_memory=activity_memory,
+        constrain_to_source_activities=constrain_to_source_activities,
+        avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+        duplicate_policy=duplicate_policy,
+        completion_policy="prefix_only",
+        progress_callback=progress_callback,
+    )
+
+
+def decode_latent(
+    checkpoint: LoadedCheckpoint,
+    latent: Sequence[float] | np.ndarray | torch.Tensor,
+    *,
+    source_artifact_ids: Sequence[str],
+    source_modalities: Sequence[ArtifactModality],
+    latent_source: str,
+    canonical_mapping: dict[str, str] | None = None,
+    max_length: int = 512,
+    top_k: int = 5,
+    beam_size: int = 5,
+    allowed_activity_slots: Sequence[bool] | torch.Tensor | None = None,
+    copy_activity_slots: Sequence[bool] | torch.Tensor | None = None,
+    activity_memory: Sequence[Sequence[float]] | torch.Tensor | None = None,
+    constrain_to_source_activities: bool = True,
+    avoid_duplicate_activity_labels: bool = True,
+    duplicate_policy: str = "disallow",
+    progress_callback: Callable[[DecodeStep], None] | None = None,
+) -> DecodeResult:
+    """Compatibility name for :func:`decode_guaranteed`."""
+
+    return decode_guaranteed(
+        checkpoint,
+        latent,
+        source_artifact_ids=source_artifact_ids,
+        source_modalities=source_modalities,
+        latent_source=latent_source,
+        canonical_mapping=canonical_mapping,
+        total_token_budget_including_bos_eos=max_length,
+        top_k=top_k,
+        beam_size=beam_size,
+        allowed_activity_slots=allowed_activity_slots,
+        copy_activity_slots=copy_activity_slots,
+        activity_memory=activity_memory,
+        constrain_to_source_activities=constrain_to_source_activities,
+        avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
+        duplicate_policy=duplicate_policy,
+        progress_callback=progress_callback,
+    )
+
+
 def build_decode_result(
     model: Any,
     latent: Sequence[float] | np.ndarray | torch.Tensor,
@@ -807,11 +1109,14 @@ def build_decode_result(
     constrain_to_source_activities: bool = True,
     avoid_duplicate_activity_labels: bool = True,
     duplicate_policy: str = "disallow",
-    completion_policy: CompletionPolicy = "prefix_only",
+    completion_policy: CompletionPolicy = "bounded",
     token_strategy: str = "greedy",
     beam_size: int = 1,
     max_length: int = 512,
     decode_seconds: float = 0.0,
+    fallback_used: bool = False,
+    fallback_reason: str | None = None,
+    forced_closure_used: bool = False,
 ) -> DecodeResult:
     tokenizer = model.tree_tokenizer
     ids = [int(token_id) for token_id in token_ids]
@@ -832,7 +1137,14 @@ def build_decode_result(
     vocabulary_valid = all(0 <= token_id < tokenizer.vocab_size for token_id in ids)
     if vocabulary_valid:
         try:
-            raw_tree = tokenizer.decode_tree(ids)
+            raw_tree = (
+                tokenizer.validate_complete_tree_sequence(
+                    ids,
+                    token_budget=max_length,
+                )
+                if completion_policy == "bounded"
+                else tokenizer.decode_tree(ids)
+            )
             grammar_valid = True
             arity_valid = _arity_valid(raw_tree, tokenizer.max_arity)
         except Exception as exc:
@@ -984,8 +1296,13 @@ def build_decode_result(
         operators_removed=sum(step.operators_removed for step in step_rows),
         arities_removed=sum(step.arities_removed for step in step_rows),
         raw_unresolved_open_slots=unresolved_open_slots,
+        fallback_used=fallback_used,
+        fallback_reason=fallback_reason,
+        forced_closure_used=(
+            forced_closure_used or any(step.forced_closure for step in step_rows)
+        ),
         decoder_configuration={
-            "maximum_token_length": max_length,
+            "total_token_budget_including_bos_eos": max_length,
             "token_strategy": token_strategy,
             "beam_size": beam_size,
             "grammar_mask": True,

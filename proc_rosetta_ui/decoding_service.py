@@ -7,7 +7,7 @@ from proc_rosetta.inference import (
     DecodeStep,
     LoadedCheckpoint,
     combine_encoding_decode_evidence,
-    decode_latent,
+    decode_guaranteed,
     fuse_latent_distributions,
     sample_latent_distribution,
 )
@@ -58,7 +58,6 @@ def decode_workspace_selection(
     beam_size: int = 5,
     constrain_to_source_activities: bool = True,
     avoid_duplicate_activity_labels: bool = True,
-    completion_policy: str = "bounded",
     weights: Sequence[float] | None = None,
     progress_callback: Callable[[DecodeStep], None] | None = None,
     decode_cache: dict[str, object] | None = None,
@@ -81,7 +80,6 @@ def decode_workspace_selection(
         beam_size=beam_size,
         constrain_to_source_activities=constrain_to_source_activities,
         avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
-        completion_policy=completion_policy,
         progress_callback=progress_callback,
         decode_cache=decode_cache,
     )
@@ -98,7 +96,6 @@ def decode_workspace_latent(
     beam_size: int = 5,
     constrain_to_source_activities: bool = True,
     avoid_duplicate_activity_labels: bool = True,
-    completion_policy: str = "bounded",
     progress_callback: Callable[[DecodeStep], None] | None = None,
     decode_cache: dict[str, object] | None = None,
 ) -> DecodeResult:
@@ -117,27 +114,26 @@ def decode_workspace_latent(
         activity_memory=activity_memory,
         constrain_to_source_activities=constrain_to_source_activities,
         avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
-        completion_policy=completion_policy,
+        completion_policy="bounded",
         artifact_ids=[item.artifact_id for item in items],
         latent_source=latent_source,
     )
     cached = decode_cache.get(key) if decode_cache else None
     if cached is None:
-        result = decode_latent(
+        result = decode_guaranteed(
             checkpoint,
             latent,
             source_artifact_ids=[item.artifact_id for item in items],
             source_modalities=[item.parsed.modality for item in items],
             latent_source=latent_source,
             canonical_mapping=mapping,
-            max_length=max_length,
+            total_token_budget_including_bos_eos=max_length,
             beam_size=beam_size,
             allowed_activity_slots=allowed_slots,
             copy_activity_slots=copy_slots,
             activity_memory=activity_memory,
             constrain_to_source_activities=constrain_to_source_activities,
             avoid_duplicate_activity_labels=avoid_duplicate_activity_labels,
-            completion_policy=completion_policy,
             progress_callback=progress_callback,
         )
         if decode_cache is not None:

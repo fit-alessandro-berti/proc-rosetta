@@ -237,6 +237,74 @@ class TreeTokenizer:
             raise ValueError("grammar state contains an unknown pending operator")
         return minimum
 
+    def shortest_completion(
+        self,
+        open_nodes: int,
+        pending_operator: int | str | None,
+    ) -> list[int]:
+        """Return the deterministic shortest legal continuation through EOS.
+
+        ``open_nodes`` and ``pending_operator`` describe the grammar state after
+        the current prefix.  The returned continuation never includes BOS.
+        Choosing TAU for every remaining child makes this independent of the
+        source alphabet and duplicate-activity constraints.
+        """
+
+        open_count = int(open_nodes)
+        if open_count < 0:
+            raise ValueError("grammar state cannot contain negative open slots")
+        pending: str | None
+        if pending_operator is None or pending_operator == 0:
+            pending = None
+        elif isinstance(pending_operator, str):
+            pending = pending_operator
+        else:
+            pending_id = int(pending_operator)
+            if not 0 <= pending_id < self.vocab_size:
+                raise ValueError("grammar state contains an unknown pending operator")
+            pending = self.tokens[pending_id]
+        completion: list[int] = []
+        if pending is not None:
+            arity = self.minimum_legal_arity(pending)
+            completion.append(self.token_to_id[f"ARITY_{arity}"])
+            open_count += arity
+        completion.extend([self.token_to_id["TAU"]] * open_count)
+        completion.append(self.eos_id)
+        return completion
+
+    def validate_complete_tree_sequence(
+        self,
+        token_ids: Sequence[int],
+        *,
+        token_budget: int,
+    ) -> ProcessTreeNode:
+        """Strictly validate a deployment token stream and decode its tree.
+
+        The budget includes BOS and EOS. Padding is permitted only after the
+        first EOS, which allows a padded batch row to satisfy the same strict
+        postcondition as an unpadded result.
+        """
+
+        ids = [int(token_id) for token_id in token_ids]
+        if not ids:
+            raise ValueError("empty token sequence")
+        if ids[0] != self.bos_id:
+            raise ValueError("missing BOS")
+        if any(token_id < 0 or token_id >= self.vocab_size for token_id in ids):
+            raise ValueError("token sequence contains an ID outside the vocabulary")
+        if self.eos_id not in ids:
+            raise ValueError("missing EOS")
+        eos_position = ids.index(self.eos_id)
+        consumed = ids[: eos_position + 1]
+        suffix = ids[eos_position + 1 :]
+        if len(consumed) > int(token_budget):
+            raise ValueError("tree exceeds token budget")
+        if any(token_id != self.pad_id for token_id in suffix):
+            raise ValueError("non-padding token after EOS")
+        if self.pad_id in consumed:
+            raise ValueError("padding token before EOS")
+        return self.decode_tree(consumed)
+
     def completion_feasibility_mask(
         self,
         open_nodes: torch.Tensor,

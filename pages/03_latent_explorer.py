@@ -10,7 +10,7 @@ from proc_rosetta.artifact_io import ArtifactModality, event_log_statistics
 from proc_rosetta.inference import (
     ArtifactEncodingResult,
     combine_encoding_decode_evidence,
-    decode_latent,
+    decode_guaranteed,
     fuse_latent_distributions,
     interpolate_latents,
 )
@@ -433,14 +433,14 @@ with interpolation_tab:
                 if left_encoding.canonical_mapping == right_encoding.canonical_mapping
                 else None
             )
-            result = decode_latent(
+            result = decode_guaranteed(
                 checkpoint,
                 latent,
                 source_artifact_ids=[left_id, right_id],
                 source_modalities=[left_encoding.modality, right_encoding.modality],
                 latent_source=f"linear_interpolation_alpha_{alpha:.2f}",
                 canonical_mapping=mapping,
-                max_length=256,
+                total_token_budget_including_bos_eos=256,
                 allowed_activity_slots=allowed,
                 copy_activity_slots=copy,
                 activity_memory=activity_memory,

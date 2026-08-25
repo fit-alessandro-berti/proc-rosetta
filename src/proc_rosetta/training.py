@@ -323,7 +323,10 @@ def validation_deficit_loss_weights(
 ) -> LossWeights:
     if not validation_metrics:
         return weights
-    raw = validation_metrics.get("decode_quality")
+    raw = validation_metrics.get(
+        "diagnostic_unbounded_decode_quality",
+        validation_metrics.get("decode_quality"),
+    )
     if not isinstance(raw, dict) or not isinstance(raw.get("methods"), dict):
         return weights
     methods = raw["methods"]
@@ -701,7 +704,10 @@ def adaptive_scheduled_sampling_probability(
     base = scheduled_sampling_probability(config, epoch)
     if base <= 0.0 or not validation_metrics:
         return base
-    raw_decode = validation_metrics.get("decode_quality")
+    raw_decode = validation_metrics.get(
+        "diagnostic_unbounded_decode_quality",
+        validation_metrics.get("decode_quality"),
+    )
     if not isinstance(raw_decode, dict) or not isinstance(
         raw_decode.get("methods"), dict
     ):
@@ -794,7 +800,7 @@ def beam_minimum_risk_loss(
                     length_penalty=0.7,
                     allowed_activity_mask=allowed[row : row + 1],
                     avoid_duplicate_activity_labels=False,
-                    completion_policy="prefix_only",
+                    completion_policy="bounded",
                 )[0]
             if not candidates:
                 continue
@@ -1486,19 +1492,18 @@ def evaluate_epoch(
             dists = outputs["dists"]
             assert isinstance(dists, dict)
             trace_distribution = dists["trace"]
-            maximum_length = min(512, max(2, tree_tokens.shape[1] * 2))
+            maximum_length = min(512, max(3, tree_tokens.shape[1] * 2))
             source_activity_masks = batch.get("source_activity_masks")
             trace_allowed = (
                 source_activity_masks.get("trace")
                 if isinstance(source_activity_masks, dict)
                 else None
             )
-            decoded = model.tree_decoder.decode_greedy(
+            decoded = model.tree_decoder.decode_guaranteed(
                 trace_distribution,
-                max_length=maximum_length,
+                total_token_budget_including_bos_eos=maximum_length,
                 allowed_activity_mask=trace_allowed,
                 avoid_duplicate_activity_labels=False,
-                completion_policy="prefix_only",
             )
             shuffled_decoded: torch.Tensor | None = None
             zero_decoded: torch.Tensor | None = None
@@ -1549,19 +1554,17 @@ def evaluate_epoch(
                         else torch.zeros_like(trace_distribution.activity_memory)
                     ),
                 )
-                shuffled_decoded = model.tree_decoder.decode_greedy(
+                shuffled_decoded = model.tree_decoder.decode_guaranteed(
                     shuffled_distribution,
-                    max_length=maximum_length,
+                    total_token_budget_including_bos_eos=maximum_length,
                     allowed_activity_mask=trace_allowed,
                     avoid_duplicate_activity_labels=False,
-                    completion_policy="prefix_only",
                 )
-                zero_decoded = model.tree_decoder.decode_greedy(
+                zero_decoded = model.tree_decoder.decode_guaranteed(
                     zero_distribution,
-                    max_length=maximum_length,
+                    total_token_budget_including_bos_eos=maximum_length,
                     allowed_activity_mask=trace_allowed,
                     avoid_duplicate_activity_labels=False,
-                    completion_policy="prefix_only",
                 )
             samples = batch.get("samples")
             assert isinstance(samples, list)
@@ -2223,24 +2226,21 @@ def balanced_validation_components(
 ) -> dict[str, float | bool]:
     """Calculate the test-aligned balanced score for flat or rich metrics."""
 
-    raw_decode = metrics.get("decode_quality")
-    bounded_decode = metrics.get("deployment_decode_quality")
-    if isinstance(raw_decode, dict) and isinstance(bounded_decode, dict):
-        policy_scores: list[float] = []
+    bounded_decode = metrics.get(
+        "deployment_decode_quality",
+        metrics.get("decode_quality"),
+    )
+    if isinstance(bounded_decode, dict):
+        method_scores: list[float] = []
         hard_gates: list[bool] = []
-        for policy, policy_weight in ((raw_decode, 0.60), (bounded_decode, 0.40)):
-            methods = policy.get("methods", {})
-            method_scores: list[float] = []
-            method_gates: list[bool] = []
-            if isinstance(methods, dict):
-                for values in methods.values():
-                    if isinstance(values, dict):
-                        score, passed = _decode_method_score(values)
-                        method_scores.append(score)
-                        method_gates.append(passed)
-            policy_scores.append(policy_weight * _mean_scores(method_scores))
-            hard_gates.extend(method_gates)
-        decode_score = sum(policy_scores)
+        methods = bounded_decode.get("methods", {})
+        if isinstance(methods, dict):
+            for values in methods.values():
+                if isinstance(values, dict):
+                    score, passed = _decode_method_score(values)
+                    method_scores.append(score)
+                    hard_gates.append(passed)
+        decode_score = _mean_scores(method_scores)
         all_hard_gates_pass = bool(hard_gates) and all(hard_gates)
     else:
         exact = float(
@@ -4174,7 +4174,10 @@ def stage_acceptance_report(
         family_top1 = float(
             fused_equivalence.get("behavior_id_retrieval_top1", 0.0)
         ) if isinstance(fused_equivalence, dict) else 0.0
-        raw_decode = metrics.get("decode_quality", {})
+        raw_decode = metrics.get(
+            "deployment_decode_quality",
+            metrics.get("decode_quality", {}),
+        )
         raw_methods = raw_decode.get("methods", {}) if isinstance(raw_decode, dict) else {}
         termination = _mean_scores(
             [

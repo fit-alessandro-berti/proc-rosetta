@@ -370,19 +370,29 @@ def decode_tree_from_latent(
         if canonical_mapping is not None
         else None
     )
-    decoded = model.tree_decoder.decode_greedy(
-        latent,
-        max_length=max_decode_length,
-        apply_grammar_mask=True,
-        constraints=DecodeConstraints(
-            allowed_activity_slots=(
-                None if slots is None else torch.tensor([slots], device=latent_tensor.device)
-            ),
+    allowed_mask = (
+        None if slots is None else torch.tensor([slots], device=latent_tensor.device)
+    )
+    if hasattr(model.tree_decoder, "decode_guaranteed"):
+        decoded = model.tree_decoder.decode_guaranteed(
+            latent,
+            total_token_budget_including_bos_eos=max_decode_length,
+            allowed_activity_mask=allowed_mask,
             constrain_to_source_activities=constrain_source_activities,
             avoid_duplicate_activity_labels=avoid_duplicate_transitions,
-            completion_policy="bounded",
-        ),
-    )
+        )
+    else:  # Compatibility for lightweight third-party decoder test doubles.
+        decoded = model.tree_decoder.decode_greedy(
+            latent,
+            max_length=max_decode_length,
+            apply_grammar_mask=True,
+            constraints=DecodeConstraints(
+                allowed_activity_slots=allowed_mask,
+                constrain_to_source_activities=constrain_source_activities,
+                avoid_duplicate_activity_labels=avoid_duplicate_transitions,
+                completion_policy="bounded",
+            ),
+        )
     token_ids = [int(token_id) for token_id in decoded[0].detach().cpu().tolist()]
     if model.tree_tokenizer.eos_id not in token_ids:
         raise ValueError(f"decoder did not emit <eos> within {max_decode_length} tokens")

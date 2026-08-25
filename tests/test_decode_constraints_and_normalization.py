@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
+import inspect
 import random
 from types import SimpleNamespace
 
@@ -18,6 +19,7 @@ from proc_rosetta.inference import (
     ArtifactEncodingResult,
     build_decode_result,
     combine_encoding_decode_evidence,
+    decode_guaranteed,
     decode_latent_iter,
     petri_graph_to_tensors,
     simulate_decoded_behavior,
@@ -673,6 +675,112 @@ def test_prefix_only_forward_is_unchanged_and_bounded_contract_is_explicit():
         tokenizer.next_token_mask(
             [tokenizer.bos_id, tokenizer.eos_id],
             remaining_tokens=2,
+        )
+
+
+def test_shortest_completion_and_strict_sequence_contract():
+    tokenizer = TreeTokenizer(max_activities=2, max_arity=3)
+    sequence_id = tokenizer.token_to_id["SEQ"]
+    completion = tokenizer.shortest_completion(0, sequence_id)
+
+    assert completion == [
+        tokenizer.token_to_id["ARITY_2"],
+        tokenizer.token_to_id["TAU"],
+        tokenizer.token_to_id["TAU"],
+        tokenizer.eos_id,
+    ]
+    token_ids = [tokenizer.bos_id, sequence_id, *completion]
+    tokenizer.validate_complete_tree_sequence(token_ids, token_budget=len(token_ids))
+    with pytest.raises(ValueError, match="missing EOS"):
+        tokenizer.validate_complete_tree_sequence(token_ids[:-1], token_budget=len(token_ids))
+    with pytest.raises(ValueError, match="tree exceeds token budget"):
+        tokenizer.validate_complete_tree_sequence(token_ids, token_budget=len(token_ids) - 1)
+    with pytest.raises(ValueError, match="non-padding token after EOS"):
+        tokenizer.validate_complete_tree_sequence(
+            [*token_ids, tokenizer.token_to_id["TAU"]],
+            token_budget=len(token_ids) + 1,
+        )
+
+
+def test_budget_three_forced_closure_never_consults_neural_decoder(monkeypatch):
+    model = _model(2)
+    tokenizer = model.tree_tokenizer
+
+    def fail_if_scored(*args, **kwargs):
+        raise AssertionError("boundary closure must not score the neural decoder")
+
+    monkeypatch.setattr(
+        model.tree_decoder,
+        "_incremental_next_token_scores",
+        fail_if_scored,
+    )
+    greedy = model.tree_decoder.decode_guaranteed(
+        torch.zeros(1, 8),
+        total_token_budget_including_bos_eos=3,
+    )
+    beam = model.tree_decoder.decode_guaranteed(
+        torch.zeros(1, 8),
+        total_token_budget_including_bos_eos=3,
+        beam_size=3,
+    )
+    progressive = [tokenizer.bos_id]
+    progressive.extend(
+        step.chosen_token_id
+        for step in decode_latent_iter(model, torch.zeros(1, 8), max_length=3)
+    )
+    expected = [tokenizer.bos_id, tokenizer.token_to_id["TAU"], tokenizer.eos_id]
+
+    assert greedy[0].tolist() == beam[0].tolist() == progressive == expected
+
+
+def test_guaranteed_api_hides_policy_and_emergency_fallback_is_explicit(monkeypatch):
+    assert "completion_policy" not in inspect.signature(decode_guaranteed).parameters
+    assert "completion_policy" not in inspect.signature(
+        _model(2).tree_decoder.decode_guaranteed
+    ).parameters
+
+    model = _model(2)
+    tokenizer = model.tree_tokenizer
+    checkpoint = SimpleNamespace(model=model, device=torch.device("cpu"))
+
+    def fail_decode(*args, **kwargs):
+        raise RuntimeError("injected neural failure")
+
+    monkeypatch.setattr(model.tree_decoder, "decode_beam", fail_decode)
+    result = decode_guaranteed(
+        checkpoint,
+        torch.zeros(1, 8),
+        source_artifact_ids=["test"],
+        source_modalities=[ArtifactModality.PROCESS_TREE],
+        latent_source="test",
+        total_token_budget_including_bos_eos=8,
+    )
+
+    assert result.raw_token_ids == [
+        tokenizer.bos_id,
+        tokenizer.token_to_id["TAU"],
+        tokenizer.eos_id,
+    ]
+    assert result.hard_structural_success
+    assert result.fallback_used
+    assert result.fallback_reason == "RuntimeError: injected neural failure"
+    assert result.forced_closure_used
+    assert not result.neural_decode_without_fallback
+
+
+def test_token_budget_rejects_minimum_and_positional_capacity_violations():
+    model = _model(2)
+    with pytest.raises(ValueError, match="fewer than 3 tokens"):
+        model.tree_decoder.decode_guaranteed(
+            torch.zeros(1, 8),
+            total_token_budget_including_bos_eos=2,
+        )
+    with pytest.raises(ValueError, match="positional capacity"):
+        model.tree_decoder.decode_guaranteed(
+            torch.zeros(1, 8),
+            total_token_budget_including_bos_eos=(
+                model.tree_decoder.maximum_supported_decode_length + 1
+            ),
         )
 
 

@@ -30,7 +30,7 @@ from proc_rosetta.inference import (
     LoadedCheckpoint,
     combine_encoding_decode_evidence,
     compare_source_and_decoded,
-    decode_latent,
+    decode_guaranteed,
     fuse_latent_means,
 )
 from proc_rosetta.losses import multimodal_tree_loss
@@ -57,7 +57,6 @@ def decode_quality_iter(
     max_length: int = 512,
     simulated_traces: int = 100,
     exact_conformance: bool = False,
-    completion_policy: str = "prefix_only",
 ) -> Iterator[EvaluationUpdate]:
     selected = [item for item in items if item.encoding is not None and item.encoding.mu]
     tasks = [
@@ -131,18 +130,17 @@ def decode_quality_iter(
         allowed, copy, activity_memory = combine_encoding_decode_evidence(
             task["encodings"]
         )
-        decode = decode_latent(
+        decode = decode_guaranteed(
             checkpoint,
             task["latent"],
             source_artifact_ids=task["source_ids"],
             source_modalities=task["modalities"],
             latent_source=task["latent_source"],
             canonical_mapping=task["mapping"],
-            max_length=max_length,
+            total_token_budget_including_bos_eos=max_length,
             allowed_activity_slots=allowed,
             copy_activity_slots=copy,
             activity_memory=activity_memory,
-            completion_policy=completion_policy,
         )
         comparison: dict[str, Any]
         try:
@@ -162,12 +160,13 @@ def decode_quality_iter(
             "petri_conversion": decode.petri_convertible,
             "decode_length": len(decode.token_ids),
             "decode_seconds": decode.decode_seconds,
-            "completion_policy": completion_policy,
-            "evaluation_scope": (
-                "raw_model_quality"
-                if completion_policy == "prefix_only"
-                else "deployment_system_quality"
-            ),
+            "completion_policy": "bounded",
+            "evaluation_scope": "deployment_system_quality",
+            "hard_structural_success": decode.hard_structural_success,
+            "fallback_used": decode.fallback_used,
+            "fallback_reason": decode.fallback_reason,
+            "forced_closure_used": decode.forced_closure_used,
+            "neural_decode_without_fallback": decode.neural_decode_without_fallback,
             "budget_intervention_steps": decode.budget_intervention_steps,
             "argmax_override_steps": decode.argmax_override_steps,
             "raw_unresolved_open_slots": decode.raw_unresolved_open_slots,
@@ -219,7 +218,7 @@ def decode_quality_iter(
             completed=index,
             total=len(tasks),
             artifact_id=task["artifact_id"],
-            section="decode_quality",
+            section="deployment_decode_quality",
             result=result,
             elapsed_seconds=perf_counter() - start,
         )
@@ -361,14 +360,14 @@ def discovery_comparison_iter(
         allowed, copy, activity_memory = combine_encoding_decode_evidence(
             [item.encoding]
         )
-        decoded = decode_latent(
+        decoded = decode_guaranteed(
             checkpoint,
             item.encoding.mu,
             source_artifact_ids=[item.artifact_id],
             source_modalities=[item.parsed.modality],
             latent_source="event_log_mean",
             canonical_mapping=item.encoding.canonical_mapping,
-            max_length=max_length,
+            total_token_budget_including_bos_eos=max_length,
             allowed_activity_slots=allowed,
             copy_activity_slots=copy,
             activity_memory=activity_memory,
