@@ -43,10 +43,10 @@ CONFORMANCE_METHODS = ("token_based_replay", "footprints")
 class ValidationAuditConfig:
     decode_interval: int = 2
     full_interval: int = 10
-    decode_family_count: int = 64
-    discovery_family_count: int = 32
+    decode_family_count: int = 32
+    discovery_family_count: int = 16
     beam_size: int = 5
-    max_decode_length: int = 512
+    max_decode_length: int = 128
     cache_dir: str | None = None
 
     def __post_init__(self) -> None:
@@ -2172,6 +2172,26 @@ def behavior_matrices(
         "directly_follows_l1": np.zeros((n, n), dtype=float),
         "length_l1": np.zeros((n, n), dtype=float),
     }
+    profiles = [
+        {
+            "variant_l1": trace_variant_features(sample.traces),
+            "directly_follows_l1": directly_follows_features(sample.traces),
+            "length_l1": normalize_counts(
+                Counter(("length", len(trace)) for trace in sample.traces),
+                len(sample.traces),
+            ),
+        }
+        for sample in samples
+    ]
+
+    def profile_l1(left: FeatureDict, right: FeatureDict) -> float:
+        return float(
+            sum(
+                abs(left.get(key, 0.0) - right.get(key, 0.0))
+                for key in left.keys() | right.keys()
+            )
+        )
+
     with progress_bar(
         total=n * (n - 1) // 2,
         enabled=show_progress,
@@ -2180,9 +2200,17 @@ def behavior_matrices(
     ) as progress:
         for i in range(n):
             for j in range(i + 1, n):
-                distance = behavioral_distance(samples[i].traces, samples[j].traces)
-                for key, matrix in matrices.items():
-                    matrix[i, j] = matrix[j, i] = float(distance[key])
+                components = {
+                    name: profile_l1(profiles[i][name], profiles[j][name])
+                    for name in (
+                        "variant_l1",
+                        "directly_follows_l1",
+                        "length_l1",
+                    )
+                }
+                components["mean_l1"] = sum(components.values()) / 3.0
+                for name, matrix in matrices.items():
+                    matrix[i, j] = matrix[j, i] = components[name]
                 progress.update()
     if cache_path is not None:
         cache_path.parent.mkdir(parents=True, exist_ok=True)

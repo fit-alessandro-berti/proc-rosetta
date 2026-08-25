@@ -820,7 +820,7 @@ def multimodal_tree_loss(
     assert isinstance(logits, dict)
     assert isinstance(dists, dict)
     token_weight_tensor = None if tokenizer is None else tree_token_weights(tokenizer)
-    zero = next(iter(logits.values())).sum() * 0.0
+    zero = next(iter(dists.values())).mu.sum() * 0.0
 
     def reconstruction(name: str) -> torch.Tensor:
         return sequence_cross_entropy(

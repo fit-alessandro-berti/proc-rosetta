@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import torch
 
+from proc_rosetta.behavior import behavioral_distance
 from proc_rosetta.benchmarks import (
     activity_count_features,
     alignment_f1_score,
@@ -216,6 +217,27 @@ def test_behavior_matrix_cache_is_invalidated_when_validation_rows_change(tmp_pa
     assert validation_split_hash(first) != validation_split_hash(second)
     assert len(list(tmp_path.glob("behavior-*.npz"))) == 2
     assert first_matrices["mean_l1"].shape == second_matrices["mean_l1"].shape
+
+
+def test_behavior_matrices_match_pairwise_behavioral_distance():
+    config = SyntheticConfig(max_depth=2, max_activities=4, traces_per_sample=3)
+    samples = SyntheticProcessDataset(4, config=config, seed=33).samples
+
+    matrices = behavior_matrices(samples)
+
+    for left in range(len(samples)):
+        for right in range(left + 1, len(samples)):
+            expected = behavioral_distance(
+                samples[left].traces,
+                samples[right].traces,
+            )
+            for name in (
+                "mean_l1",
+                "variant_l1",
+                "directly_follows_l1",
+                "length_l1",
+            ):
+                assert matrices[name][left, right] == pytest.approx(expected[name])
 
 
 def test_validation_audit_has_no_checkpoint_or_split_path_surface(monkeypatch):

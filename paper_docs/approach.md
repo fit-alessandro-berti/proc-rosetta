@@ -659,6 +659,12 @@ After each epoch, validation is performed over all three validation splits:
 ```
 
 The validation data are not shuffled. The validation split is never used in `optimizer.step()`.
+Losses are evaluated on all 2,048 rows of each curriculum. The periodic
+test-aligned audit uses deterministic family-complete subsets: 32 families for
+decode metrics and 16 for discovery, with a 128-token decode ceiling that
+still covers the current maximum 121-token validation target.
+Validation runs once per epoch: live weights are used until the EMA is
+initialized, and EMA weights are used thereafter.
 
 ---
 

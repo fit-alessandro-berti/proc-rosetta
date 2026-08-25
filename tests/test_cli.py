@@ -57,6 +57,9 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert train_args.training_max_trace_length == 64
     assert train_args.validation_max_traces == 64
     assert train_args.validation_max_trace_length == 128
+    assert train_args.validation_decode_family_count == 32
+    assert train_args.validation_discovery_family_count == 16
+    assert train_args.validation_max_decode_length == 128
     assert train_args.loader_num_workers == 0
     assert train_args.latent_dim == 96
     assert train_args.device == default_device()

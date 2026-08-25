@@ -373,10 +373,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train.add_argument("--validation-decode-interval", type=int, default=2)
     train.add_argument("--validation-full-interval", type=int, default=10)
-    train.add_argument("--validation-decode-family-count", type=int, default=64)
-    train.add_argument("--validation-discovery-family-count", type=int, default=32)
+    train.add_argument("--validation-decode-family-count", type=int, default=32)
+    train.add_argument("--validation-discovery-family-count", type=int, default=16)
     train.add_argument("--validation-beam-size", type=int, default=5)
-    train.add_argument("--validation-max-decode-length", type=int, default=512)
+    train.add_argument("--validation-max-decode-length", type=int, default=128)
 
     test = subparsers.add_parser("test", help="load a checkpoint and evaluate the persisted test split")
     test.add_argument("--data-dir", default="data")

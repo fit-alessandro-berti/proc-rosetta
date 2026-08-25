@@ -491,10 +491,10 @@ class TrainConfig:
     validation_audit_enabled: bool = True
     validation_decode_interval: int = 2
     validation_full_interval: int = 10
-    validation_decode_family_count: int = 64
-    validation_discovery_family_count: int = 32
+    validation_decode_family_count: int = 32
+    validation_discovery_family_count: int = 16
     validation_beam_size: int = 5
-    validation_max_decode_length: int = 512
+    validation_max_decode_length: int = 128
     training_max_traces: int = 32
     training_max_trace_length: int = 64
     validation_max_traces: int = 64
@@ -3638,146 +3638,93 @@ def train_from_data_dir(
             f"Epoch {epoch} training complete: {format_metrics(training_metrics)}",
             enabled=show_progress,
         )
-        if curriculum_mode:
-            ordinary_validation_by_curriculum = {}
-            for level in CURRICULUM_LEVELS:
-                level_metrics = evaluate_epoch(
-                    model,
-                    validation_loaders[level],
-                    device,
-                    weights=evaluation_weights,
-                    epoch=epoch,
-                    show_progress=show_progress,
-                    progress_desc=f"Epoch {epoch} {level} validation",
-                    compute_discovery_metrics=(
-                        not train_config.validation_audit_enabled
-                    ),
-                )
-                ordinary_validation_by_curriculum[level] = attach_validation_audit(
-                    model,
-                    validation_loaders[level],
-                    level_metrics,
-                    curriculum=level,
-                    epoch=epoch,
-                    train_config=train_config,
-                    device=device,
-                    cache_dir=Path(checkpoint_path).parent
-                    / "validation_cache"
-                    / level,
-                    stage_transition=stage_transition,
-                    show_progress=show_progress,
-                )
-            ordinary_validation_metrics = ordinary_validation_by_curriculum[
-                structural_stage
-            ]
-        else:
-            ordinary_validation_by_curriculum = {}
-            ordinary_epoch_metrics = evaluate_epoch(
-                model,
-                validation_loader,
-                device,
-                weights=evaluation_weights,
-                epoch=epoch,
-                show_progress=show_progress,
-                compute_discovery_metrics=(
-                    not train_config.validation_audit_enabled
-                ),
-            )
-            ordinary_validation_metrics = attach_validation_audit(
-                model,
-                validation_loader,
-                ordinary_epoch_metrics,
-                curriculum=str(
-                    validation_loader.dataset.samples[0].complexity_level
-                    or synthetic_config.complexity_level
-                    or "complex"
-                ),
-                epoch=epoch,
-                train_config=train_config,
-                device=device,
-                cache_dir=Path(checkpoint_path).parent / "validation_cache",
-                stage_transition=stage_transition,
-                show_progress=show_progress,
-            )
-        ema_validation_metrics: dict[str, float] | None = None
-        validation_weights = "ordinary"
-        if ema is not None and ema.initialized:
-            with ema.average_parameters(model):
-                if curriculum_mode:
-                    ema_validation_by_curriculum = {}
-                    for level in CURRICULUM_LEVELS:
-                        level_metrics = evaluate_epoch(
-                            model,
-                            validation_loaders[level],
-                            device,
-                            weights=evaluation_weights,
-                            epoch=epoch,
-                            show_progress=show_progress,
-                            progress_desc=f"Epoch {epoch} EMA {level} validation",
-                            compute_discovery_metrics=(
-                                not train_config.validation_audit_enabled
-                            ),
-                        )
-                        ema_validation_by_curriculum[level] = attach_validation_audit(
-                            model,
-                            validation_loaders[level],
-                            level_metrics,
-                            curriculum=level,
-                            epoch=epoch,
-                            train_config=train_config,
-                            device=device,
-                            cache_dir=Path(checkpoint_path).parent
-                            / "validation_cache"
-                            / level,
-                            stage_transition=stage_transition,
-                            show_progress=show_progress,
-                        )
-                    ema_validation_metrics = ema_validation_by_curriculum[
-                        structural_stage
-                    ]
-                else:
-                    ema_validation_by_curriculum = {}
-                    ema_epoch_metrics = evaluate_epoch(
+        use_ema_validation = ema is not None and ema.initialized
+        validation_weights = "ema" if use_ema_validation else "ordinary"
+        validation_context = (
+            ema.average_parameters(model)
+            if use_ema_validation and ema is not None
+            else nullcontext()
+        )
+        with validation_context:
+            if curriculum_mode:
+                validation_by_curriculum = {}
+                for level in CURRICULUM_LEVELS:
+                    level_metrics = evaluate_epoch(
                         model,
-                        validation_loader,
+                        validation_loaders[level],
                         device,
                         weights=evaluation_weights,
                         epoch=epoch,
                         show_progress=show_progress,
-                        progress_desc=f"Epoch {epoch} EMA validation",
+                        progress_desc=(
+                            f"Epoch {epoch} EMA {level} validation"
+                            if use_ema_validation
+                            else f"Epoch {epoch} {level} validation"
+                        ),
                         compute_discovery_metrics=(
                             not train_config.validation_audit_enabled
                         ),
                     )
-                    ema_validation_metrics = attach_validation_audit(
+                    validation_by_curriculum[level] = attach_validation_audit(
                         model,
-                        validation_loader,
-                        ema_epoch_metrics,
-                        curriculum=str(
-                            validation_loader.dataset.samples[0].complexity_level
-                            or synthetic_config.complexity_level
-                            or "complex"
-                        ),
+                        validation_loaders[level],
+                        level_metrics,
+                        curriculum=level,
                         epoch=epoch,
                         train_config=train_config,
                         device=device,
-                        cache_dir=Path(checkpoint_path).parent / "validation_cache",
+                        cache_dir=Path(checkpoint_path).parent
+                        / "validation_cache"
+                        / level,
                         stage_transition=stage_transition,
                         show_progress=show_progress,
                     )
-            validation_metrics, validation_weights = select_validation_candidate(
-                ordinary_validation_metrics,
-                ema_validation_metrics,
-            )
-        else:
-            ema_validation_by_curriculum = {}
-            validation_metrics = ordinary_validation_metrics
+                validation_metrics = validation_by_curriculum[structural_stage]
+            else:
+                validation_by_curriculum = {}
+                epoch_metrics = evaluate_epoch(
+                    model,
+                    validation_loader,
+                    device,
+                    weights=evaluation_weights,
+                    epoch=epoch,
+                    show_progress=show_progress,
+                    progress_desc=(
+                        f"Epoch {epoch} EMA validation"
+                        if use_ema_validation
+                        else None
+                    ),
+                    compute_discovery_metrics=(
+                        not train_config.validation_audit_enabled
+                    ),
+                )
+                validation_metrics = attach_validation_audit(
+                    model,
+                    validation_loader,
+                    epoch_metrics,
+                    curriculum=str(
+                        validation_loader.dataset.samples[0].complexity_level
+                        or synthetic_config.complexity_level
+                        or "complex"
+                    ),
+                    epoch=epoch,
+                    train_config=train_config,
+                    device=device,
+                    cache_dir=Path(checkpoint_path).parent / "validation_cache",
+                    stage_transition=stage_transition,
+                    show_progress=show_progress,
+                )
+        ordinary_validation_metrics = (
+            {} if use_ema_validation else validation_metrics
+        )
+        ordinary_validation_by_curriculum = (
+            {} if use_ema_validation else validation_by_curriculum
+        )
+        ema_validation_metrics = validation_metrics if use_ema_validation else None
+        ema_validation_by_curriculum = (
+            validation_by_curriculum if use_ema_validation else {}
+        )
         if curriculum_mode:
-            validation_by_curriculum = (
-                ema_validation_by_curriculum
-                if validation_weights == "ema"
-                else ordinary_validation_by_curriculum
-            )
             validation_macro = macro_average_metrics(validation_by_curriculum)
             validation_worst_case = worst_case_metrics(validation_by_curriculum)
             if curriculum_stage_baseline is None:

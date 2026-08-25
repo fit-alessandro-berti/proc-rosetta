@@ -344,13 +344,17 @@ then macro and worst-case summaries are recorded. Competence gates can hold a
 stage until decoding, retrieval, family, geometry, and observation-quality
 criteria improve without regressing simpler curricula; validation deficits
 also rebalance curriculum sampling and source reconstruction weights.
+The full 2,048 rows per curriculum retain the loss pass. Periodic decode and
+discovery audits use fixed family-complete subsets of 32 and 16 families,
+respectively, and a 128-token decode budget (the current persisted targets are
+at most 121 tokens).
 
 The model-selection score is explicit and test-aligned: 40% decoding, 20%
 retrieval, 15% equivalence, 15% geometry, and 10% discovery, with decoding hard
-gates and a fused-geometry baseline comparison. It drives ordinary-versus-EMA
-selection, best checkpoints, LR scheduling, early stopping, and curriculum
-decisions. Specialized decode/retrieval/geometry/discovery checkpoints are
-also retained. `train_from_data_dir()` restores `.best.pt` before returning;
+gates and a fused-geometry baseline comparison. It drives best checkpoints, LR
+scheduling, early stopping, and curriculum decisions. Specialized
+decode/retrieval/geometry/discovery checkpoints are also retained.
+`train_from_data_dir()` restores `.best.pt` before returning;
 `--no-restore-best-weights` disables that return-time step without changing the
 latest resume checkpoint.
 
@@ -359,9 +363,9 @@ Losses cover each validation curriculum, while decoding, retrieval, geometry,
 and cached behavior matrices use fixed family-balanced subsets. Full PM4Py
 Inductive Miner audits run periodically and at stage transitions.
 
-An EMA starts at epoch 3 with decay 0.995. Ordinary and EMA validation metrics
-are both recorded, and the better scheduler-monitor result supplies the epoch's
-candidate checkpoints. Use `--no-use-ema` for an ablation.
+An EMA starts at epoch 3 with decay 0.995. Validation uses live weights before
+the EMA is initialized and EMA weights thereafter, avoiding a duplicate full
+validation pass. Use `--no-use-ema` for an ablation.
 
 Resume an interrupted run from the latest completed epoch:
 
