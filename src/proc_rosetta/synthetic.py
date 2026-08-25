@@ -41,10 +41,12 @@ class ComplexityProfile:
 
 
 COMPLEXITY_PROFILES: dict[str, ComplexityProfile] = {
-    "simple": ComplexityProfile("simple", 3, 2, 5, 11, 3, 6),
-    "medium": ComplexityProfile("medium", 5, 3, 12, 19, 5, 14),
-    "complex": ComplexityProfile("complex", 8, 4, 20, 96, 8, 30),
+    "simple": ComplexityProfile("simple", 2, 2, 3, 6, 2, 4),
+    "medium": ComplexityProfile("medium", 3, 2, 7, 11, 3, 7),
+    "complex": ComplexityProfile("complex", 4, 3, 12, 18, 5, 12),
 }
+DEFAULT_COMPLEXITY_LEVEL = "complex"
+DEFAULT_COMPLEXITY_PROFILE = COMPLEXITY_PROFILES[DEFAULT_COMPLEXITY_LEVEL]
 
 
 def complexity_profile(level: str) -> ComplexityProfile:
@@ -130,9 +132,9 @@ def _normalize_operator_probabilities(
 
 @dataclass(frozen=True)
 class SyntheticConfig:
-    max_depth: int = 8
+    max_depth: int = DEFAULT_COMPLEXITY_PROFILE.max_depth
     max_activities: int = DEFAULT_MAX_ACTIVITIES
-    min_activities: int = 8
+    min_activities: int = DEFAULT_COMPLEXITY_PROFILE.min_generated_activities
     max_arity: int = 3
     traces_per_sample: int = 128
     max_trace_length: int = 128
@@ -147,11 +149,11 @@ class SyntheticConfig:
     )
     motif_context_min_nodes: int = 4
     motif_context_max_nodes: int = 12
-    min_tree_depth: int = 4
-    min_tree_size: int = 20
-    max_tree_size: int = 96
+    min_tree_depth: int = DEFAULT_COMPLEXITY_PROFILE.min_tree_depth
+    min_tree_size: int = DEFAULT_COMPLEXITY_PROFILE.min_tree_size
+    max_tree_size: int = DEFAULT_COMPLEXITY_PROFILE.max_tree_size
     max_generated_activities: int | None = None
-    complexity_level: str = "complex"
+    complexity_level: str = DEFAULT_COMPLEXITY_LEVEL
     generator: str = "behavior_families"
     variants_per_behavior: int = 2
     exact_equivalence_only_for_training: bool = True
@@ -304,11 +306,18 @@ class SyntheticConfig:
         motif_weights = data.get("motifs", {})
         motif_weights = motif_weights if isinstance(motif_weights, dict) else {}
         return SyntheticConfig(
-            max_depth=int(data.get("max_depth", 8)),
+            max_depth=int(
+                data.get("max_depth", DEFAULT_COMPLEXITY_PROFILE.max_depth)
+            ),
             max_activities=int(
                 data.get("activity_vocab_size", data.get("max_activities", DEFAULT_MAX_ACTIVITIES))
             ),
-            min_activities=int(data.get("min_activities", 8)),
+            min_activities=int(
+                data.get(
+                    "min_activities",
+                    DEFAULT_COMPLEXITY_PROFILE.min_generated_activities,
+                )
+            ),
             max_arity=int(data.get("max_arity", 3)),
             traces_per_sample=int(logs.get("traces_per_log", data.get("traces_per_sample", 128))),
             max_trace_length=int(logs.get("max_trace_length", 128)),
@@ -333,16 +342,24 @@ class SyntheticConfig:
             ),
             motif_context_min_nodes=int(data.get("motif_context_min_nodes", 4)),
             motif_context_max_nodes=int(data.get("motif_context_max_nodes", 12)),
-            min_tree_depth=int(data.get("min_tree_depth", 4)),
-            min_tree_size=int(data.get("min_tree_size", 20)),
-            max_tree_size=int(data.get("max_tree_size", 96)),
+            min_tree_depth=int(
+                data.get("min_tree_depth", DEFAULT_COMPLEXITY_PROFILE.min_tree_depth)
+            ),
+            min_tree_size=int(
+                data.get("min_tree_size", DEFAULT_COMPLEXITY_PROFILE.min_tree_size)
+            ),
+            max_tree_size=int(
+                data.get("max_tree_size", DEFAULT_COMPLEXITY_PROFILE.max_tree_size)
+            ),
             max_generated_activities=int(
                 data.get(
                     "max_generated_activities",
                     data.get("activity_vocab_size", data.get("max_activities", DEFAULT_MAX_ACTIVITIES)),
                 )
             ),
-            complexity_level=str(data.get("complexity_level", "complex")),
+            complexity_level=str(
+                data.get("complexity_level", DEFAULT_COMPLEXITY_LEVEL)
+            ),
             generator=str(data.get("generator", "behavior_families")),
             variants_per_behavior=int(representations.get("variants_per_behavior", 2)),
             exact_equivalence_only_for_training=bool(

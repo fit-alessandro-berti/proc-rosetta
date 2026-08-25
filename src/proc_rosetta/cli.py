@@ -17,6 +17,7 @@ from proc_rosetta.data import read_samples_jsonl, split_samples_path
 from proc_rosetta.devices import default_device
 from proc_rosetta.synthetic import (
     CURRICULUM_LEVELS,
+    DEFAULT_COMPLEXITY_PROFILE,
     DEFAULT_MAX_ACTIVITIES,
     SyntheticConfig,
 )
@@ -56,7 +57,11 @@ def build_parser() -> argparse.ArgumentParser:
     sample.add_argument("--validation-families", type=int, default=None)
     sample.add_argument("--test-families", type=int, default=None)
     sample.add_argument("--seed", type=int, default=13)
-    sample.add_argument("--max-depth", type=int, default=8)
+    sample.add_argument(
+        "--max-depth",
+        type=int,
+        default=DEFAULT_COMPLEXITY_PROFILE.max_depth,
+    )
     sample.add_argument(
         "--activity-vocab-size",
         "--max-activities",
@@ -65,7 +70,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MAX_ACTIVITIES,
         help="Global tokenizer/model activity capacity shared by all curricula.",
     )
-    sample.add_argument("--min-activities", type=int, default=8)
+    sample.add_argument(
+        "--min-activities",
+        type=int,
+        default=DEFAULT_COMPLEXITY_PROFILE.min_generated_activities,
+    )
     sample.add_argument("--leaf-probability", type=float, default=0.55)
     sample.add_argument(
         "--operator-probabilities",
@@ -448,9 +457,9 @@ def synthetic_config_from_args(args: argparse.Namespace) -> SyntheticConfig:
     if args.class_coverage_mode is not None:
         overrides["class_coverage_mode"] = args.class_coverage_mode
     defaults = {
-        "max_depth": 8,
+        "max_depth": DEFAULT_COMPLEXITY_PROFILE.max_depth,
         "max_activities": DEFAULT_MAX_ACTIVITIES,
-        "min_activities": 8,
+        "min_activities": DEFAULT_COMPLEXITY_PROFILE.min_generated_activities,
         "leaf_probability": 0.55,
         "max_arity": 3,
         "traces_per_sample": 128,

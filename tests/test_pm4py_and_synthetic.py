@@ -43,6 +43,25 @@ def test_operator_probability_defaults_and_configuration_round_trip():
     assert SyntheticConfig.from_dict(config.to_dict()) == config
 
 
+def test_default_complexity_profiles_form_a_small_ordered_curriculum():
+    def profile_bounds(level):
+        profile = complexity_profile(level)
+        return (
+            profile.max_depth,
+            profile.min_tree_depth,
+            profile.min_tree_size,
+            profile.max_tree_size,
+            profile.min_generated_activities,
+            profile.max_generated_activities,
+        )
+
+    assert {level: profile_bounds(level) for level in CURRICULUM_LEVELS} == {
+        "simple": (2, 2, 3, 6, 2, 4),
+        "medium": (3, 2, 7, 11, 3, 7),
+        "complex": (4, 3, 12, 18, 5, 12),
+    }
+
+
 @pytest.mark.parametrize("level", CURRICULUM_LEVELS)
 def test_operator_probabilities_do_not_change_across_curricula(level):
     config = config_for_curriculum(SyntheticConfig(), level)
@@ -268,7 +287,7 @@ def test_phase_three_enables_but_does_not_require_two_child_loops():
     visit(sample.tree)
 
     assert len(sample.traces) == 128
-    assert sample.tree.max_depth() >= 4
+    assert sample.tree.max_depth() >= complexity_profile("complex").min_tree_depth
     assert not loop_nodes
 
 

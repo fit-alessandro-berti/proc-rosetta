@@ -111,7 +111,7 @@ make_node(depth, force_operator=False)
 
 Activity leaves are initially named `a0`, `a1`, etc. After the tree is generated, activity labels are canonicalized to `A0`, `A1`, ... in order of first occurrence. No post-generation sequence padding is used, so activity floors cannot change the sampled root or inject extra operators.
 
-The folded structural profiles are: simple, recursion depth 3, target size 5–11, minimum depth 2, 3–6 activities; medium, depth 5, size 12–19, minimum depth 3, 5–14 activities; and complex, depth 8, size 20–96, minimum depth 4, 8–30 activities. Controlled motifs remain fixed anchor cases and are reported separately from ordinary-tree probability audits.
+The folded structural profiles are: simple, recursion depth 2, target size 3–6, minimum depth 2, 2–4 activities; medium, depth 3, size 7–11, minimum depth 2, 3–7 activities; and complex, depth 4, size 12–18, minimum depth 3, 5–12 activities. Controlled motifs remain fixed anchor cases and are reported separately from ordinary-tree probability audits.
 
 Under the default `behavior_families` generator, each behavior is written as four rows: two event-log views crossed with two Petri-net variants. Rows share the canonical tree and `equivalence_id`; representation pairs within one log view share visible traces. Some Petri pairs differ only by node names; others use different internal routing or interleaving while accepting the same visible traces.
 
