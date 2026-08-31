@@ -2187,39 +2187,45 @@ class ProcRosettaModel(nn.Module):
         probability: float,
         input_token_dropout: float,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Build sampled prefixes with cached, graph-free incremental decoding.
+        """Build sequence-sampled prefixes with graph-free incremental decoding.
 
-        Every predicted replacement is produced under the same grammar and
-        source-activity constraints as normal decoding.  A teacher token that
-        became illegal under a sampled prefix is replaced unconditionally and
-        excluded from the reconstruction loss. Rows are compacted after
-        EOS/PAD or the end of their teacher target, so completed sequences do
-        not consume later incremental decoder steps.
+        ``probability`` selects whole rows for deployment-like autoregressive
+        exposure. Non-selected rows stay teacher-forced and incur no incremental
+        decoder work, making runtime proportional to the exposure schedule.
+        Teacher tokens that become illegal under a sampled prefix are excluded
+        from reconstruction. Selected rows are compacted after EOS/PAD or the
+        end of their target.
         """
 
-        sampled_input = torch.full_like(teacher_input, self.tree_tokenizer.pad_id)
-        sampled_input[:, 0] = teacher_input[:, 0]
-        loss_targets = torch.full_like(stacked_targets, self.tree_tokenizer.pad_id)
-        loss_targets[:, 0] = stacked_targets[:, 0]
+        if not 0.0 <= probability <= 1.0:
+            raise ValueError("scheduled sampling probability must be in [0, 1]")
+        batch_size = teacher_input.shape[0]
+        eligible = teacher_input[:, 0].ne(self.tree_tokenizer.eos_id)
+        eligible &= teacher_input[:, 0].ne(self.tree_tokenizer.pad_id)
+        eligible &= stacked_targets[:, 1].ne(self.tree_tokenizer.pad_id)
+        selected = torch.rand(batch_size, device=teacher_input.device) < probability
+        row_ids = torch.where(eligible & selected)[0]
+        if row_ids.numel() == 0:
+            return teacher_input, stacked_targets
 
-        memory, activity_mask = self.tree_decoder.source_memory(source)
+        sampled_input = teacher_input.clone()
+        sampled_input[row_ids] = self.tree_tokenizer.pad_id
+        sampled_input[row_ids, 0] = teacher_input[row_ids, 0]
+        loss_targets = stacked_targets.clone()
+        loss_targets[row_ids] = self.tree_tokenizer.pad_id
+        loss_targets[row_ids, 0] = stacked_targets[row_ids, 0]
+
+        selected_source: LatentDistribution | torch.Tensor
+        if isinstance(source, LatentDistribution):
+            selected_source = _select_latent_distribution_rows(source, row_ids)
+        else:
+            selected_source = source[row_ids]
+        memory, activity_mask = self.tree_decoder.source_memory(selected_source)
         activity_memory = (
-            source.activity_memory
-            if isinstance(source, LatentDistribution)
+            selected_source.activity_memory
+            if isinstance(selected_source, LatentDistribution)
             else None
         )
-        batch_size = teacher_input.shape[0]
-        row_ids = torch.arange(batch_size, device=teacher_input.device)
-        row_ids = row_ids[
-            teacher_input[:, 0].ne(self.tree_tokenizer.eos_id)
-            & teacher_input[:, 0].ne(self.tree_tokenizer.pad_id)
-            & stacked_targets[:, 1].ne(self.tree_tokenizer.pad_id)
-        ]
-        memory = memory[row_ids]
-        if activity_mask is not None:
-            activity_mask = activity_mask[row_ids]
-        if activity_memory is not None:
-            activity_memory = activity_memory[row_ids]
         if allowed_activity_mask is not None:
             allowed_activity_mask = allowed_activity_mask.to(teacher_input.device)
             if allowed_activity_mask.ndim == 1:
@@ -2266,9 +2272,7 @@ class ProcRosettaModel(nn.Module):
                 continue
 
             prediction = current_logits.argmax(dim=-1)
-            replace = torch.rand(teacher_next.shape, device=teacher_next.device)
-            replace = (replace < probability) | ~teacher_is_legal
-            next_token = torch.where(replace, prediction, teacher_next)
+            next_token = prediction
             sampled_input[row_ids, position + 1] = next_token
             active = next_token.ne(self.tree_tokenizer.eos_id)
             active &= next_token.ne(self.tree_tokenizer.pad_id)
@@ -2295,6 +2299,23 @@ class ProcRosettaModel(nn.Module):
             if allowed_activity_mask is not None:
                 allowed_activity_mask = allowed_activity_mask[active]
         return sampled_input, loss_targets
+
+
+def _select_latent_distribution_rows(
+    distribution: LatentDistribution,
+    row_ids: torch.Tensor,
+) -> LatentDistribution:
+    def select(value: torch.Tensor | None) -> torch.Tensor | None:
+        return None if value is None else value[row_ids]
+
+    return LatentDistribution(
+        mu=distribution.mu[row_ids],
+        logvar=distribution.logvar[row_ids],
+        memory=select(distribution.memory),
+        pre_normalized=select(distribution.pre_normalized),
+        activity_mask=select(distribution.activity_mask),
+        activity_memory=select(distribution.activity_memory),
+    )
 
 
 def _stack_latent_distributions(

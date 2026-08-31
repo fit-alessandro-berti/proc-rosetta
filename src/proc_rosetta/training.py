@@ -46,6 +46,10 @@ RESUME_POLICY_OVERRIDE_FIELDS = frozenset(
         "scheduled_sampling_max",
         "scheduled_sampling_start_epoch",
         "scheduled_sampling_ramp_epochs",
+        "beam_risk_batch_probability",
+        "beam_risk_size",
+        "beam_risk_max_decode_length",
+        "beam_risk_rows_per_batch",
     }
 )
 
@@ -462,8 +466,9 @@ class TrainConfig:
     completion_feasibility_weight: float = 0.05
     beam_risk_start_epoch: int = 15
     beam_risk_batch_probability: float = 0.10
-    beam_risk_size: int = 5
-    beam_risk_max_decode_length: int = 128
+    beam_risk_size: int = 3
+    beam_risk_max_decode_length: int = 64
+    beam_risk_rows_per_batch: int = 2
     variance_weight: float = 0.1
     covariance_weight: float = 0.01
     kl_weight: float = 0.0
@@ -546,6 +551,7 @@ class TrainConfig:
             "beam_risk_start_epoch",
             "beam_risk_size",
             "beam_risk_max_decode_length",
+            "beam_risk_rows_per_batch",
             "training_max_traces",
             "training_max_trace_length",
             "validation_max_traces",
@@ -762,6 +768,23 @@ def _repeat_latent_row(
     )
 
 
+def _select_latent_rows(
+    distribution: LatentDistribution,
+    rows: torch.Tensor,
+) -> LatentDistribution:
+    def select(value: torch.Tensor | None) -> torch.Tensor | None:
+        return None if value is None else value[rows]
+
+    return LatentDistribution(
+        mu=distribution.mu[rows],
+        logvar=distribution.logvar[rows],
+        memory=select(distribution.memory),
+        pre_normalized=select(distribution.pre_normalized),
+        activity_mask=select(distribution.activity_mask),
+        activity_memory=select(distribution.activity_memory),
+    )
+
+
 def beam_minimum_risk_loss(
     model: ProcRosettaModel,
     outputs: dict[str, object],
@@ -769,9 +792,12 @@ def beam_minimum_risk_loss(
     *,
     beam_size: int,
     max_decode_length: int,
+    max_rows: int | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """Optimize expected test-aligned cost under generated beam candidates."""
 
+    if max_rows is not None and max_rows < 1:
+        raise ValueError("beam risk max_rows must be positive")
     dists = outputs["dists"]
     assert isinstance(dists, dict)
     decoder_targets = batch["decoder_targets"]
@@ -789,27 +815,33 @@ def beam_minimum_risk_loss(
     oracle_edits: list[float] = []
     top1_behaviors: list[float] = []
     oracle_behaviors: list[float] = []
+    selected_row_count = len(samples) if max_rows is None else min(max_rows, len(samples))
+    selected_rows = torch.randperm(len(samples), device=first.device)[
+        :selected_row_count
+    ]
+    selected_row_indices = selected_rows.detach().cpu().tolist()
     for source_name in ("tree", "trace", "petri", "fused"):
         distribution = dists[source_name]
         assert isinstance(distribution, LatentDistribution)
         allowed = source_masks[source_name]
         assert isinstance(allowed, torch.Tensor)
-        for row, sample in enumerate(samples):
-            source_row: LatentDistribution | torch.Tensor = (
-                distribution.mu[row : row + 1]
-                if source_name == "fused"
-                else _repeat_latent_row(distribution, row, 1)
+        source_rows: LatentDistribution | torch.Tensor = (
+            distribution.mu[selected_rows]
+            if source_name == "fused"
+            else _select_latent_rows(distribution, selected_rows)
+        )
+        with torch.no_grad():
+            candidate_rows = model.tree_decoder.decode_beam_candidates(
+                source_rows,
+                max_length=max_decode_length,
+                beam_size=beam_size,
+                length_penalty=0.7,
+                allowed_activity_mask=allowed[selected_rows],
+                avoid_duplicate_activity_labels=False,
+                completion_policy="bounded",
             )
-            with torch.no_grad():
-                candidates = model.tree_decoder.decode_beam_candidates(
-                    source_row,
-                    max_length=max_decode_length,
-                    beam_size=beam_size,
-                    length_penalty=0.7,
-                    allowed_activity_mask=allowed[row : row + 1],
-                    avoid_duplicate_activity_labels=False,
-                    completion_policy="bounded",
-                )[0]
+        for row, candidates in zip(selected_row_indices, candidate_rows):
+            sample = samples[row]
             if not candidates:
                 continue
             candidate_ids = [tokens for tokens, _ in candidates]
@@ -1051,6 +1083,7 @@ def train_epoch(
                 batch,
                 beam_size=train_config.beam_risk_size,
                 max_decode_length=train_config.beam_risk_max_decode_length,
+                max_rows=train_config.beam_risk_rows_per_batch,
             )
         else:
             beam_risk = losses["loss"].sum() * 0.0

@@ -317,8 +317,9 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--completion-feasibility-weight", type=float, default=0.05)
     train.add_argument("--beam-risk-start-epoch", type=int, default=15)
     train.add_argument("--beam-risk-batch-probability", type=float, default=0.10)
-    train.add_argument("--beam-risk-size", type=int, default=5)
-    train.add_argument("--beam-risk-max-decode-length", type=int, default=128)
+    train.add_argument("--beam-risk-size", type=int, default=3)
+    train.add_argument("--beam-risk-max-decode-length", type=int, default=64)
+    train.add_argument("--beam-risk-rows-per-batch", type=int, default=2)
     train.add_argument("--variance-weight", type=float, default=0.1)
     train.add_argument("--covariance-weight", type=float, default=0.01)
     train.add_argument("--latent-alignment-weight", type=float, default=0.075)
@@ -638,6 +639,7 @@ def run_train(args: argparse.Namespace) -> int:
         beam_risk_batch_probability=args.beam_risk_batch_probability,
         beam_risk_size=args.beam_risk_size,
         beam_risk_max_decode_length=args.beam_risk_max_decode_length,
+        beam_risk_rows_per_batch=args.beam_risk_rows_per_batch,
         variance_weight=args.variance_weight,
         covariance_weight=args.covariance_weight,
         latent_alignment_weight=args.latent_alignment_weight,

@@ -36,6 +36,7 @@ from proc_rosetta.training import (
     _folded_tree_statistics,
     _summarize_discovery_metrics,
     adaptive_scheduled_sampling_probability,
+    beam_minimum_risk_loss,
     build_lr_scheduler,
     build_model,
     build_optimizer,
@@ -563,6 +564,99 @@ def test_scheduled_sampling_masks_illegal_targets_and_stops_finished_rows(monkey
             tree_tokenizer.pad_id,
         ]
     ]
+
+
+def test_scheduled_sampling_skips_incremental_decoder_when_no_rows_are_selected(
+    monkeypatch,
+):
+    tree_tokenizer = TreeTokenizer(max_activities=2, max_arity=3)
+    model = ProcRosettaModel(
+        tree_tokenizer,
+        ActivityTokenizer(max_activities=2),
+        latent_dim=8,
+        hidden_dim=16,
+        decoder_layers=1,
+    )
+    target = torch.tensor(
+        [
+            tree_tokenizer.encode_tree(ProcessTreeNode.activity("A0")),
+            tree_tokenizer.encode_tree(ProcessTreeNode.activity("A1")),
+        ]
+    )
+    source = LatentDistribution(
+        mu=torch.zeros(2, 8),
+        logvar=torch.zeros(2, 8),
+    )
+    monkeypatch.setattr(
+        torch,
+        "rand",
+        lambda size, **kwargs: torch.ones(size, device=kwargs.get("device")),
+    )
+    monkeypatch.setattr(
+        model.tree_decoder,
+        "_incremental_step",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("incremental decoder should be skipped")
+        ),
+    )
+
+    sampled_input, loss_targets = model._scheduled_sampling_inputs(
+        source,
+        target[:, :-1],
+        None,
+        stacked_targets=target,
+        probability=0.01,
+        input_token_dropout=0.0,
+    )
+
+    assert torch.equal(sampled_input, target[:, :-1])
+    assert torch.equal(loss_targets, target)
+
+
+def test_beam_risk_caps_rows_and_batches_decode_by_modality(monkeypatch):
+    batch_size = 6
+    latent_dim = 4
+    decode_batch_sizes = []
+
+    class Decoder:
+        @staticmethod
+        def decode_beam_candidates(source, **kwargs):
+            source_tensor = source.mu if isinstance(source, LatentDistribution) else source
+            decode_batch_sizes.append(source_tensor.shape[0])
+            return [[] for _ in range(source_tensor.shape[0])]
+
+    model = SimpleNamespace(tree_decoder=Decoder())
+    distributions = {
+        name: LatentDistribution(
+            mu=torch.zeros(batch_size, latent_dim, requires_grad=True),
+            logvar=torch.zeros(batch_size, latent_dim),
+        )
+        for name in ("tree", "trace", "petri", "fused")
+    }
+    batch = {
+        "samples": [object() for _ in range(batch_size)],
+        "decoder_targets": {
+            name: torch.ones(batch_size, 2, dtype=torch.long)
+            for name in ("tree", "trace", "petri", "fused")
+        },
+        "source_activity_masks": {
+            name: torch.ones(batch_size, 2, dtype=torch.bool)
+            for name in ("tree", "trace", "petri", "fused")
+        },
+    }
+
+    loss, diagnostics = beam_minimum_risk_loss(
+        model,
+        {"dists": distributions},
+        batch,
+        beam_size=3,
+        max_decode_length=32,
+        max_rows=2,
+    )
+
+    assert decode_batch_sizes == [2, 2, 2, 2]
+    assert loss == 0.0
+    assert all(value == 0.0 for value in diagnostics.values())
 
 
 def test_resume_allows_and_reports_scheduled_sampling_policy_overrides():
