@@ -36,6 +36,7 @@ from proc_rosetta.training import evaluate_samples_from_checkpoint, load_checkpo
 
 Trace = Sequence[str]
 FeatureDict = dict[Hashable, float]
+DecodeCandidateRow = list[tuple[list[int], float]]
 CONFORMANCE_METHODS = ("token_based_replay", "footprints")
 
 
@@ -100,6 +101,9 @@ def rich_test_report(
     show_progress: bool = False,
     conformance_method: str = "token_based_replay",
     max_decode_length: int = 512,
+    beam_size: int = 5,
+    behavior_traces_per_sample: int = 128,
+    total_test_sample_count: int | None = None,
 ) -> dict[str, object]:
     validate_conformance_method(conformance_method)
     mismatches = [
@@ -153,7 +157,10 @@ def rich_test_report(
         max_decode_length=max_decode_length,
         show_progress=show_progress,
         completion_policy="prefix_only",
+        beam_size=beam_size,
+        behavior_traces_per_sample=behavior_traces_per_sample,
     )
+    deployment_trace_candidates: list[DecodeCandidateRow] = []
     deployment_decode_quality = decode_quality_report(
         model,
         samples,
@@ -162,11 +169,14 @@ def rich_test_report(
         max_decode_length=max_decode_length,
         show_progress=show_progress,
         completion_policy="bounded",
+        beam_size=beam_size,
+        behavior_traces_per_sample=behavior_traces_per_sample,
+        captured_candidate_rows=deployment_trace_candidates,
     )
     test_debug(
         f"[4/{stage_count}] Running {2 * len(samples)} "
         f"{conformance_method_label(conformance_method)} evaluations "
-        "(fitness + precision each)",
+        "from cached deployment beams (fitness + precision each)",
         enabled=show_progress,
     )
     discovery_quality = discovery_quality_report(
@@ -177,6 +187,8 @@ def rich_test_report(
         max_decode_length=max_decode_length,
         show_progress=show_progress,
         conformance_method=conformance_method,
+        beam_size=beam_size,
+        decoded_candidate_rows=deployment_trace_candidates,
     )
 
     pair_count = len(samples) * (len(samples) - 1) // 2
@@ -230,6 +242,11 @@ def rich_test_report(
         "split": "test",
         "curriculum": curriculum,
         "sample_count": len(samples),
+        "total_test_sample_count": (
+            len(samples)
+            if total_test_sample_count is None
+            else int(total_test_sample_count)
+        ),
         "behavior_family_count": len({sample.equivalence_id for sample in samples}),
         "dataset_statistics": sample_statistics(samples),
         "loss_metrics": round_float_dict(loss_metrics),
@@ -381,6 +398,39 @@ def fixed_validation_family_subset(
             break
     selected_set = set(selected)
     return [sample for sample in samples if str(sample.equivalence_id) in selected_set]
+
+
+def fixed_test_sample_subset(
+    samples: Sequence[ProcessSample],
+    max_samples: int,
+) -> list[ProcessSample]:
+    """Choose a deterministic, family-complete test subset near a row budget.
+
+    A zero budget requests the full split.  If one behavior family alone is
+    larger than the requested budget, that whole family is retained so paired
+    representation metrics remain valid.
+    """
+
+    if max_samples < 0:
+        raise ValueError("max_samples cannot be negative")
+    if max_samples == 0 or len(samples) <= max_samples:
+        return list(samples)
+    family_count = len({str(sample.equivalence_id) for sample in samples})
+    if family_count == 0:
+        return []
+
+    lower = 1
+    upper = family_count
+    best = fixed_validation_family_subset(samples, 1)
+    while lower <= upper:
+        midpoint = (lower + upper) // 2
+        candidate = fixed_validation_family_subset(samples, midpoint)
+        if len(candidate) <= max_samples:
+            best = candidate
+            lower = midpoint + 1
+        else:
+            upper = midpoint - 1
+    return best
 
 
 def _cached_validation_baselines(
@@ -850,14 +900,22 @@ def discovery_quality_report(
     show_progress: bool = False,
     conformance_method: str = "token_based_replay",
     inductive_rows: Sequence[dict[str, object]] | None = None,
+    beam_size: int = 5,
+    decoded_candidate_rows: Sequence[DecodeCandidateRow] | None = None,
 ) -> dict[str, object]:
     validate_conformance_method(conformance_method)
     if inductive_rows is not None and len(inductive_rows) != len(samples):
         raise ValueError("cached Inductive Miner rows must match the selected samples")
+    if decoded_candidate_rows is not None and len(decoded_candidate_rows) != len(samples):
+        raise ValueError("cached decode candidates must match the selected samples")
     model.eval()
     torch_device = resolve_device(device)
     model.to(torch_device)
-    collator = ProcessBatchCollator(model.tree_tokenizer, model.activity_tokenizer)
+    collator = (
+        ProcessBatchCollator(model.tree_tokenizer, model.activity_tokenizer)
+        if decoded_candidate_rows is None
+        else None
+    )
     rows: dict[str, list[dict[str, object]]] = {
         "proc_rosetta_trace_mu": [],
         "inductive_miner": [],
@@ -878,26 +936,53 @@ def discovery_quality_report(
         total_models = 2 * len(samples)
         for start in range(0, len(samples), batch_size):
             batch_samples = samples[start : start + batch_size]
-            batch = _move_batch_to_device(collator(batch_samples), torch_device)
-            trace_dist = model.encode_traces(batch["traces"])
-            source_masks = batch.get("source_activity_masks", {})
-            decoded_rows, beam_candidate_rows = (
-                decode_trace_candidates_with_conformance_reranking(
-                    model,
-                    trace_dist,
-                    batch_samples,
-                    max_length=max_decode_length,
-                    allowed_activity_mask=source_masks.get("trace"),
+            if decoded_candidate_rows is None:
+                assert collator is not None
+                batch = _move_batch_to_device(collator(batch_samples), torch_device)
+                trace_dist = model.encode_traces(batch["traces"])
+                source_masks = batch.get("source_activity_masks", {})
+                decoded_rows, beam_candidate_rows = (
+                    decode_trace_candidates_with_conformance_reranking(
+                        model,
+                        trace_dist,
+                        batch_samples,
+                        max_length=max_decode_length,
+                        beam_size=beam_size,
+                        allowed_activity_mask=source_masks.get("trace"),
+                    )
                 )
-            )
+            else:
+                batch_candidate_rows = decoded_candidate_rows[
+                    start : start + len(batch_samples)
+                ]
+                decoded_rows, beam_candidate_rows = rerank_trace_candidate_rows(
+                    model,
+                    batch_samples,
+                    batch_candidate_rows,
+                )
             for offset, (sample, token_ids, beam_candidates) in enumerate(
                 zip(batch_samples, decoded_rows, beam_candidate_rows)
             ):
+                event_log = None
+                log_footprints = None
+                try:
+                    event_log = traces_to_event_dataframe(sample.traces)
+                    if conformance_method == "footprints":
+                        import pm4py
+
+                        log_footprints = pm4py.discover_footprints(event_log)
+                except Exception:
+                    # Individual evaluators retain their existing error rows if
+                    # shared preprocessing itself is not possible.
+                    event_log = None
+                    log_footprints = None
                 proc_rosetta_row = evaluate_proc_rosetta_discovery(
                     model,
                     sample,
                     token_ids,
                     conformance_method=conformance_method,
+                    event_log=event_log,
+                    log_footprints=log_footprints,
                 )
                 proc_rosetta_row["equivalence_id"] = str(
                     getattr(sample, "equivalence_id", start)
@@ -921,6 +1006,8 @@ def discovery_quality_report(
                             sample,
                             candidate_ids,
                             conformance_method=conformance_method,
+                            event_log=event_log,
+                            log_footprints=log_footprints,
                         )
                     )
                 oracle = max(
@@ -964,6 +1051,8 @@ def discovery_quality_report(
                     else evaluate_inductive_miner_discovery(
                         sample,
                         conformance_method=conformance_method,
+                        event_log=event_log,
+                        log_footprints=log_footprints,
                     )
                 )
                 inductive_miner_row["equivalence_id"] = str(
@@ -1000,6 +1089,8 @@ def discovery_quality_report(
         "description": description,
         "conformance_method": conformance_method,
         "max_decode_length": int(max_decode_length),
+        "beam_size": int(beam_size),
+        "reused_decode_candidates": decoded_candidate_rows is not None,
         "methods": {
             name: summarize_discovery_quality(values, conformance_method=conformance_method)
             for name, values in rows.items()
@@ -1012,6 +1103,9 @@ def evaluate_proc_rosetta_discovery(
     sample: ProcessSample,
     token_ids: Sequence[int],
     conformance_method: str = "token_based_replay",
+    *,
+    event_log: pd.DataFrame | None = None,
+    log_footprints: object | None = None,
 ) -> dict[str, object]:
     validate_conformance_method(conformance_method)
     row = discovery_quality_row()
@@ -1030,7 +1124,17 @@ def evaluate_proc_rosetta_discovery(
             row["error"] = f"process_tree:{type(exc).__name__}: {exc}"
             return row
         row["model_discovered"] = True
-        return score_discovered_process_tree(sample, pm4py_tree, row=row)
+        score_kwargs: dict[str, object] = {}
+        if event_log is not None:
+            score_kwargs["event_log"] = event_log
+        if log_footprints is not None:
+            score_kwargs["log_footprints"] = log_footprints
+        return score_discovered_process_tree(
+            sample,
+            pm4py_tree,
+            row=row,
+            **score_kwargs,
+        )
 
     try:
         bundle = tree_to_petri_net(tree)
@@ -1044,19 +1148,28 @@ def evaluate_proc_rosetta_discovery(
         bundle.initial_marking,
         bundle.final_marking,
         row=row,
+        event_log=event_log,
     )
 
 
 def evaluate_inductive_miner_discovery(
     sample: ProcessSample,
     conformance_method: str = "token_based_replay",
+    *,
+    event_log: pd.DataFrame | None = None,
+    log_footprints: object | None = None,
 ) -> dict[str, object]:
     validate_conformance_method(conformance_method)
     row = discovery_quality_row()
+    shared_event_log = event_log
     try:
         import pm4py
 
-        log = traces_to_event_dataframe(sample.traces)
+        log = (
+            event_log
+            if event_log is not None
+            else traces_to_event_dataframe(sample.traces)
+        )
         tree = pm4py.discover_process_tree_inductive(
             log,
             activity_key="concept:name",
@@ -1069,7 +1182,17 @@ def evaluate_inductive_miner_discovery(
 
     if conformance_method == "footprints":
         row["model_discovered"] = True
-        return score_discovered_process_tree(sample, tree, row=row)
+        score_kwargs: dict[str, object] = {}
+        if shared_event_log is not None:
+            score_kwargs["event_log"] = shared_event_log
+        if log_footprints is not None:
+            score_kwargs["log_footprints"] = log_footprints
+        return score_discovered_process_tree(
+            sample,
+            tree,
+            row=row,
+            **score_kwargs,
+        )
 
     try:
         net, initial_marking, final_marking = pm4py.convert_to_petri_net(tree)
@@ -1083,6 +1206,7 @@ def evaluate_inductive_miner_discovery(
         initial_marking,
         final_marking,
         row=row,
+        event_log=log,
     )
 
 
@@ -1103,14 +1227,20 @@ def score_discovered_petri_net(
     initial_marking,
     final_marking,
     row: dict[str, object] | None = None,
+    *,
+    event_log: pd.DataFrame | None = None,
 ) -> dict[str, object]:
     row = row or discovery_quality_row()
     try:
+        score_kwargs: dict[str, object] = {}
+        if event_log is not None:
+            score_kwargs["event_log"] = event_log
         fitness, precision = token_based_replay_fitness_precision(
             sample.traces,
             net,
             initial_marking,
             final_marking,
+            **score_kwargs,
         )
         row["fitness"] = round_float(fitness)
         row["precision"] = round_float(precision)
@@ -1125,10 +1255,22 @@ def score_discovered_process_tree(
     sample: ProcessSample,
     tree,
     row: dict[str, object] | None = None,
+    *,
+    event_log: pd.DataFrame | None = None,
+    log_footprints: object | None = None,
 ) -> dict[str, object]:
     row = row or discovery_quality_row()
     try:
-        fitness, precision = footprint_fitness_precision(sample.traces, tree)
+        score_kwargs: dict[str, object] = {}
+        if event_log is not None:
+            score_kwargs["event_log"] = event_log
+        if log_footprints is not None:
+            score_kwargs["log_footprints"] = log_footprints
+        fitness, precision = footprint_fitness_precision(
+            sample.traces,
+            tree,
+            **score_kwargs,
+        )
         row["fitness"] = round_float(fitness)
         row["precision"] = round_float(precision)
         row["f1"] = fitness_precision_f1_score(fitness, precision)
@@ -1143,10 +1285,12 @@ def token_based_replay_fitness_precision(
     net,
     initial_marking,
     final_marking,
+    *,
+    event_log: pd.DataFrame | None = None,
 ) -> tuple[float, float]:
     import pm4py
 
-    log = traces_to_event_dataframe(traces)
+    log = event_log if event_log is not None else traces_to_event_dataframe(traces)
     fitness = extract_token_based_replay_fitness(
         pm4py.fitness_token_based_replay(
             log,
@@ -1175,13 +1319,17 @@ def token_based_replay_fitness_precision(
 def footprint_fitness_precision(
     traces: Sequence[Trace],
     process_tree,
+    *,
+    event_log: pd.DataFrame | None = None,
+    log_footprints: object | None = None,
 ) -> tuple[float, float]:
     import pm4py
     from pm4py.algo.conformance.footprints import algorithm as footprint_conformance
     from pm4py.algo.conformance.footprints.util import evaluation as footprint_evaluation
 
-    log = traces_to_event_dataframe(traces)
-    log_footprints = pm4py.discover_footprints(log)
+    if log_footprints is None:
+        log = event_log if event_log is not None else traces_to_event_dataframe(traces)
+        log_footprints = pm4py.discover_footprints(log)
     tree_footprints = pm4py.discover_footprints(process_tree)
     conformance = footprint_conformance.apply(
         log_footprints,
@@ -1405,6 +1553,7 @@ def decode_quality_report(
     completion_policy: str = "bounded",
     beam_size: int = 5,
     include_beam_oracle: bool = True,
+    captured_candidate_rows: list[DecodeCandidateRow] | None = None,
 ) -> dict[str, object]:
     model.eval()
     torch_device = resolve_device(device)
@@ -1484,6 +1633,11 @@ def decode_quality_report(
                         [(token_ids, 0.0)]
                         for token_ids in decoded.detach().cpu().tolist()
                     ]
+                if (
+                    captured_candidate_rows is not None
+                    and name == "proc_rosetta_trace_mu"
+                ):
+                    captured_candidate_rows.extend(candidate_rows)
                 for sample, candidates in zip(batch_samples, candidate_rows):
                     token_ids = candidates[0][0]
                     source_name = source_names[name]
@@ -1669,6 +1823,27 @@ def decode_trace_candidates_with_conformance_reranking(
         completion_policy=completion_policy,
         avoid_duplicate_activity_labels=True,
     )
+    return rerank_trace_candidate_rows(
+        model,
+        samples,
+        candidate_rows,
+        fitness_weight=fitness_weight,
+        footprint_precision_weight=footprint_precision_weight,
+    )
+
+
+def rerank_trace_candidate_rows(
+    model,
+    samples: Sequence[ProcessSample],
+    candidate_rows: Sequence[DecodeCandidateRow],
+    *,
+    fitness_weight: float = 0.25,
+    footprint_precision_weight: float = 0.25,
+) -> tuple[list[list[int]], list[list[list[int]]]]:
+    """Rerank already-decoded trace candidates without another neural pass."""
+
+    if len(candidate_rows) != len(samples):
+        raise ValueError("decode candidate rows must match the selected samples")
     selected: list[list[int]] = []
     all_candidates: list[list[list[int]]] = []
     for sample, candidates in zip(samples, candidate_rows):
@@ -2466,9 +2641,16 @@ def format_human_test_report(report: dict[str, object]) -> str:
     lines.append("ProcRosetta Test Report")
     lines.append("=======================")
     lines.append("")
+    sample_count = int(report["sample_count"])
+    total_sample_count = int(report.get("total_test_sample_count", sample_count))
+    sample_label = (
+        str(sample_count)
+        if sample_count == total_sample_count
+        else f"{sample_count} selected / {total_sample_count} total"
+    )
     lines.append(
         f"Split: {report['split']}  |  curriculum: {report.get('curriculum', 'legacy')}"
-        f"  |  samples: {report['sample_count']}"
+        f"  |  samples: {sample_label}"
     )
     lines.append("")
 

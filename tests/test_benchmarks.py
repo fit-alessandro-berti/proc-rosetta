@@ -21,6 +21,7 @@ from proc_rosetta.benchmarks import (
     evaluate_inductive_miner_discovery,
     evaluate_proc_rosetta_discovery,
     evaluate_embedding_method,
+    fixed_test_sample_subset,
     fitness_precision_f1_score,
     footprint_fitness_precision,
     format_human_test_report,
@@ -70,6 +71,29 @@ def test_embedding_method_report_contains_behavior_alignment():
     assert report["vector_statistics"]["count"] == 3
     assert report["nearest_neighbor_behavior"]["count"] == 3
     assert "spearman_embedding_distance_vs_behavior_l1" in report["behavior_alignment"]
+
+
+def test_fixed_test_subset_is_deterministic_and_family_complete():
+    samples = [
+        SimpleNamespace(
+            equivalence_id=f"family-{family}",
+            complexity_level="simple",
+            metadata={"motif": "ordinary_tree", "observation_quality": "full"},
+        )
+        for family in range(5)
+        for _ in range(2)
+    ]
+
+    selected = fixed_test_sample_subset(samples, 4)
+
+    assert len(selected) == 4
+    assert selected == fixed_test_sample_subset(samples, 4)
+    selected_families = {sample.equivalence_id for sample in selected}
+    assert all(
+        sum(sample.equivalence_id == family for sample in selected) == 2
+        for family in selected_families
+    )
+    assert fixed_test_sample_subset(samples, 0) == samples
 
 
 def test_retrieval_metrics_and_trace_features():
@@ -384,6 +408,18 @@ def test_discovery_reports_reranked_f1_against_beam_oracle(monkeypatch):
     assert neural["mean_beam_oracle_f1"] == 1.0
     assert neural["mean_beam_oracle_f1_gap"] == 0.5
 
+    cached_report = discovery_quality_report(
+        Model(),
+        [sample],
+        batch_size=1,
+        device="cpu",
+        decoded_candidate_rows=[[([1], 0.0), ([2], -1.0)]],
+    )
+    assert cached_report["reused_decode_candidates"] is True
+    assert cached_report["methods"]["proc_rosetta_trace_mu"][
+        "mean_beam_oracle_f1"
+    ] == 1.0
+
 
 def test_observation_quality_report_includes_decode_and_exact_retrieval():
     samples = [
@@ -460,6 +496,17 @@ def test_footprint_fitness_and_precision_use_log_and_process_tree_footprints(mon
         ({"source": "log"}, {"source": "tree"}, {"result": "conformance"})
     ]
     assert precision_calls == [({"source": "log"}, {"source": "tree"})]
+
+    discovered_from.clear()
+    cached_log_footprints = {"source": "cached-log"}
+    footprint_fitness_precision(
+        [["A", "B"]],
+        process_tree,
+        log_footprints=cached_log_footprints,
+    )
+
+    assert discovered_from == [process_tree]
+    assert conformance_calls[-1][0] is cached_log_footprints
 
 
 def test_proc_rosetta_footprints_score_the_process_tree_without_petri_conversion(monkeypatch):

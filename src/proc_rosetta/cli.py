@@ -9,6 +9,7 @@ import sys
 from proc_rosetta.benchmarks import (
     CONFORMANCE_METHODS,
     Pm4pyPetriEmbeddingConfig,
+    fixed_test_sample_subset,
     format_human_test_report,
     rich_test_report,
 )
@@ -404,6 +405,27 @@ def build_parser() -> argparse.ArgumentParser:
     test.add_argument("--batch-size", type=int, default=16)
     test.add_argument("--max-decode-length", type=int, default=512)
     test.add_argument(
+        "--max-samples",
+        type=int,
+        default=64,
+        help=(
+            "Maximum family-complete test subset size (default: 64); "
+            "use 0 for the entire persisted split."
+        ),
+    )
+    test.add_argument(
+        "--beam-size",
+        type=int,
+        default=2,
+        help="Decode beam width for routine evaluation (default: 2).",
+    )
+    test.add_argument(
+        "--decode-behavior-traces",
+        type=int,
+        default=16,
+        help="Simulated traces per decode used for behavior metrics (default: 16).",
+    )
+    test.add_argument(
         "--device",
         default=default_device(),
         help="Torch device; defaults to cuda or mps when available, otherwise cpu.",
@@ -676,6 +698,12 @@ def run_train(args: argparse.Namespace) -> int:
 def run_test(args: argparse.Namespace) -> int:
     if args.max_decode_length < 3:
         raise ValueError("--max-decode-length must be at least 3")
+    if args.max_samples < 0:
+        raise ValueError("--max-samples cannot be negative")
+    if args.beam_size < 1:
+        raise ValueError("--beam-size must be positive")
+    if args.decode_behavior_traces < 1:
+        raise ValueError("--decode-behavior-traces must be positive")
     show_progress = not args.quiet
     checkpoint_path = checkpoint_for_selection(
         args.checkpoint,
@@ -694,13 +722,16 @@ def run_test(args: argparse.Namespace) -> int:
             f"test split {sample_path} contains {len(mismatches)} rows outside requested "
             f"curriculum {args.curriculum!r}; first mismatch at row {mismatches[0] + 1}"
         )
+    total_sample_count = len(samples)
+    samples = fixed_test_sample_subset(samples, args.max_samples)
     sample_count = len(samples)
     sample_label = "sample" if sample_count == 1 else "samples"
     conformance_label = (
         "token-replay" if args.conformance_method == "token_based_replay" else "footprint"
     )
     test_debug(
-        f"Plan: {sample_count} {sample_label}, batch_size={args.batch_size}, device={args.device}; "
+        f"Plan: {sample_count} {sample_label} selected from {total_sample_count}, "
+        f"batch_size={args.batch_size}, device={args.device}, beam_size={args.beam_size}; "
         f"{2 * sample_count} {conformance_label} conformance evaluations, "
         f"{8 * sample_count} matched raw/deployment decodes, "
         f"{sample_count * (sample_count - 1) // 2} behavioral pairs, "
@@ -725,6 +756,9 @@ def run_test(args: argparse.Namespace) -> int:
         show_progress=show_progress,
         conformance_method=args.conformance_method,
         max_decode_length=args.max_decode_length,
+        beam_size=args.beam_size,
+        behavior_traces_per_sample=args.decode_behavior_traces,
+        total_test_sample_count=total_sample_count,
         curriculum=args.curriculum,
     )
     if args.json:

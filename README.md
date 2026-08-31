@@ -463,6 +463,19 @@ behavioral pairs, baseline feature sets, and optional Petri embeddings. This
 keeps stdout available for the final report. Use `--quiet` to disable progress
 output.
 
+Routine evaluation uses a deterministic, family-complete subset of at most 64
+rows, beam width 2, and 16 simulated traces per decode. This keeps paired-family
+and stratified metrics while avoiding an exhaustive multi-hour discovery pass.
+Use the complete persisted test split and the historical heavier settings with:
+
+```bash
+./test.py \
+  --curriculum complex \
+  --max-samples 0 \
+  --beam-size 5 \
+  --decode-behavior-traces 128
+```
+
 Token-based replay on Petri nets is the default. To use footprint fitness and
 precision instead, computed directly from the log and discovered process tree:
 

@@ -84,6 +84,9 @@ def test_default_sample_and_train_values_match_recommended_run():
     assert not test_args.quiet
     assert test_args.conformance_method == "token_based_replay"
     assert test_args.checkpoint_selection == "best"
+    assert test_args.max_samples == 64
+    assert test_args.beam_size == 2
+    assert test_args.decode_behavior_traces == 16
 
 
 def test_test_cli_requires_curriculum():
