@@ -2015,6 +2015,7 @@ class ProcRosettaModel(nn.Module):
             else torch.cat(allowed_rows, dim=0)
         )
         decoder_loss_targets = dict(decoder_targets)
+        decoder_budget_targets = dict(decoder_targets)
         if self.training and scheduled_sampling_probability > 0:
             stacked_targets = torch.cat(
                 [decoder_targets[name] for name in names],
@@ -2105,6 +2106,9 @@ class ProcRosettaModel(nn.Module):
             )
             decoder_inputs["fused_subset"] = subset_input
             decoder_loss_targets["fused_subset"] = subset_loss_target
+            decoder_budget_targets["fused_subset"] = decoder_targets[
+                fusion_subset_name
+            ]
         deployment_source_name: str | None = None
         if (
             self.training
@@ -2151,6 +2155,9 @@ class ProcRosettaModel(nn.Module):
             decoder_loss_targets["deployment"] = decoder_targets[
                 deployment_target_name
             ]
+            decoder_budget_targets["deployment"] = decoder_targets[
+                deployment_target_name
+            ]
         contrastive_embeddings = {
             name: F.normalize(self.contrastive_head(dists[name].mu), dim=-1)
             for name in (*names, "fused")
@@ -2162,6 +2169,7 @@ class ProcRosettaModel(nn.Module):
             "tree_logits": logits,
             "decoder_targets": decoder_targets,
             "decoder_loss_targets": decoder_loss_targets,
+            "decoder_budget_targets": decoder_budget_targets,
             "decoder_inputs": decoder_inputs,
             "fused_decoder_source": fused_mu,
             "fusion_subset_name": fusion_subset_name,

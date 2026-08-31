@@ -807,6 +807,85 @@ def test_policy_feasibility_losses_are_differentiable():
     assert logits.grad is not None and logits.grad.abs().sum() > 0.0
 
 
+def test_policy_feasibility_penalizes_sampled_prefix_that_exhausts_budget():
+    tokenizer = TreeTokenizer(max_activities=2, max_arity=4)
+    tokens = tokenizer.token_to_id
+    target = torch.tensor(
+        [
+            [
+                tokenizer.bos_id,
+                tokens["SEQ"],
+                tokens["ARITY_2"],
+                tokens["A0"],
+                tokens["A1"],
+                tokenizer.eos_id,
+            ]
+        ]
+    )
+    sampled_input = torch.tensor(
+        [
+            [
+                tokenizer.bos_id,
+                tokens["SEQ"],
+                tokens["ARITY_4"],
+                tokens["A0"],
+                tokens["A1"],
+            ]
+        ]
+    )
+    logits = torch.zeros(
+        (1, sampled_input.shape[1], tokenizer.vocab_size),
+        requires_grad=True,
+    )
+
+    unresolved, feasibility = sequence_policy_feasibility_losses(
+        {"tree": logits},
+        {"tree": sampled_input},
+        {"tree": target},
+        tokenizer,
+    )
+    (unresolved + feasibility).backward()
+
+    assert torch.isfinite(feasibility)
+    assert feasibility > 0.0
+    assert logits.grad is not None and torch.isfinite(logits.grad).all()
+
+
+def test_policy_feasibility_uses_unmasked_targets_for_completion_budget():
+    tokenizer = TreeTokenizer(max_activities=2, max_arity=4)
+    tokens = tokenizer.token_to_id
+    target = torch.tensor(
+        [
+            [
+                tokenizer.bos_id,
+                tokens["SEQ"],
+                tokens["ARITY_2"],
+                tokens["A0"],
+                tokens["A1"],
+                tokenizer.eos_id,
+            ]
+        ]
+    )
+    loss_target = target.clone()
+    loss_target[0, 3] = tokenizer.pad_id
+    logits = torch.full(
+        (1, target.shape[1] - 1, tokenizer.vocab_size),
+        -torch.inf,
+    )
+    for position, token_id in enumerate(target[0, 1:]):
+        logits[0, position, token_id] = 0.0
+
+    _, feasibility = sequence_policy_feasibility_losses(
+        {"tree": logits},
+        {"tree": target[:, :-1]},
+        {"tree": loss_target},
+        tokenizer,
+        budget_targets={"tree": target},
+    )
+
+    assert feasibility == 0.0
+
+
 def test_scheduled_sampling_adapts_to_raw_decode_exposure_gap():
     config = TrainConfig(
         device="cpu",

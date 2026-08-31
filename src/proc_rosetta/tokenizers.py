@@ -433,12 +433,17 @@ class TreeTokenizer:
         prefixes: torch.Tensor,
         *,
         remaining_tokens: int | torch.Tensor | None = None,
+        allow_infeasible_prefixes: bool = False,
     ) -> torch.Tensor:
         """Compute every prefix mask with one vectorized recurrence over time.
 
         With a scalar budget, the value applies to the final prefix and earlier
         positions receive the positions between them and the final prefix.
         Omitting the budget is exactly the historical teacher-forcing behavior.
+        ``allow_infeasible_prefixes`` returns an empty bounded mask when a valid
+        prefix can no longer finish within its budget.  This is useful when
+        scoring sampled training prefixes; bounded decoding remains strict by
+        default.
         """
 
         masks = torch.zeros(
@@ -551,7 +556,10 @@ class TreeTokenizer:
                         position_budget[grammar_rows],
                     )
                     flat_masks[grammar_rows, position] &= completion
-                    if not flat_masks[grammar_rows, position].any(dim=-1).all():
+                    all_have_feasible_token = flat_masks[
+                        grammar_rows, position
+                    ].any(dim=-1).all()
+                    if not allow_infeasible_prefixes and not all_have_feasible_token:
                         raise ValueError(
                             "no grammar-legal completion fits the remaining token budget"
                         )

@@ -455,6 +455,8 @@ def sequence_policy_feasibility_losses(
     decoder_inputs: dict[str, torch.Tensor],
     decoder_targets: dict[str, torch.Tensor],
     tokenizer: TreeTokenizer,
+    *,
+    budget_targets: dict[str, torch.Tensor] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Penalize unresolved expected slots and budget-infeasible next tokens."""
 
@@ -484,26 +486,36 @@ def sequence_policy_feasibility_losses(
             unresolved_values.append(F.relu(expected_open_slots[eos_positions]).mean())
 
         inputs = decoder_inputs[name]
-        widths = active.sum(dim=1)
-        valid_rows = widths.gt(0)
+        active_widths = active.sum(dim=1)
+        valid_rows = active_widths.gt(0)
         if valid_rows.any():
+            budget_target = (
+                decoder_targets[name]
+                if budget_targets is None or name not in budget_targets
+                else budget_targets[name]
+            )
+            budget_widths = budget_target[:, 1:].ne(tokenizer.pad_id).sum(dim=1)
             positions = torch.arange(
                 inputs.shape[1],
                 dtype=torch.long,
                 device=inputs.device,
             )
-            budget = widths.unsqueeze(1) - positions.unsqueeze(0)
+            budget = budget_widths.unsqueeze(1) - positions.unsqueeze(0)
             prefix_legal = tokenizer.valid_next_token_masks(inputs)
             bounded_legal = tokenizer.valid_next_token_masks(
                 inputs,
-                remaining_tokens=budget,
+                # Sampled rows can remain grammar-valid after their supervised
+                # target has ended.  Those inactive positions are ignored
+                # below, so give the tokenizer its minimum accepted budget.
+                remaining_tokens=budget.clamp_min(1),
+                allow_infeasible_prefixes=True,
             )
             infeasible_probability = (
                 probabilities * (prefix_legal & ~bounded_legal)
             ).sum(dim=-1)
             per_row = (
                 (infeasible_probability * active).sum(dim=-1)
-                / widths.clamp_min(1).to(infeasible_probability.dtype)
+                / active_widths.clamp_min(1).to(infeasible_probability.dtype)
             )
             feasibility_values.append(per_row[valid_rows].mean())
 
@@ -809,6 +821,9 @@ def multimodal_tree_loss(
     decoder_loss_targets = outputs.get("decoder_loss_targets")
     if not isinstance(decoder_loss_targets, dict):
         decoder_loss_targets = decoder_targets
+    decoder_budget_targets = outputs.get("decoder_budget_targets")
+    if not isinstance(decoder_budget_targets, dict):
+        decoder_budget_targets = decoder_targets
     decoder_inputs = outputs.get("decoder_inputs")
     if not isinstance(decoder_inputs, dict):
         decoder_inputs = {
@@ -949,6 +964,7 @@ def multimodal_tree_loss(
             decoder_inputs,
             decoder_loss_targets,
             tokenizer,
+            budget_targets=decoder_budget_targets,
         )
         if tokenizer is not None
         else (rec_tree.sum() * 0.0, rec_tree.sum() * 0.0)
