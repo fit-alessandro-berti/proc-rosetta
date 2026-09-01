@@ -1,0 +1,94 @@
+ProcRosetta Test Report
+=======================
+
+Split: test  |  curriculum: complex  |  samples: 64 selected / 2048 total
+
+Neural test losses
+------------------
+loss=4.9223  tree=0.6687  trace->tree=1.0541  petri->tree=0.8481  contrastive=1.6229  kl=0.0000
+
+Decode quality (deployment)
+---------------------------
+Greedy decodes use the process-tree decoder; Petri ok means the decoded tree converted to a Petri net.
+source latent      ended   valid tree  exact tree  Petri ok  behavior L1  norm edit
+-----------------  ------  ----------  ----------  --------  -----------  ---------
+ProcRosetta tree   100.0%  100.0%      15.6%       100.0%    1.105        0.645    
+ProcRosetta trace  100.0%  100.0%      0.0%        100.0%    1.291        0.562    
+ProcRosetta Petri  100.0%  100.0%      6.2%        100.0%    1.245        0.673    
+ProcRosetta fused  100.0%  100.0%      0.0%        100.0%    1.273        0.676    
+
+Process discovery quality
+-------------------------
+Footprint conformance compares each test log with footprints computed directly on the discovered process trees (not Petri nets).
+method             model ok  footprint ok  fitness  precision  F1   
+-----------------  --------  ------------  -------  ---------  -----
+ProcRosetta trace  100.0%    71.9%         0.691    0.639      0.649
+Inductive Miner    100.0%    100.0%        1.000    0.907      0.938
+
+Behavioral distance scale
+-------------------------
+Mean pairwise behavior L1 among test logs is 1.5712 (min=0.0000, max=1.9678, pairs=2016).
+For nearest-neighbor behavior L1 below, lower is better; improvement over random is higher better.
+
+Embedding quality ranking
+-------------------------
+method                   behavior rho  NN behavior  impr. vs random  dim 
+-----------------------  ------------  -----------  ---------------  ----
+ProcRosetta fused        0.791         0.227        1.344            96  
+pm4py log features       0.757         0.022        1.550            56  
+ProcRosetta Petri        0.755         0.548        1.023            96  
+directly-follows         0.750         0.000        1.571            427 
+ProcRosetta trace        0.723         0.000        1.571            96  
+ProcRosetta tree         0.680         0.002        1.569            96  
+trace activity counts    0.624         0.022        1.550            28  
+eventually-follows       0.599         0.000        1.571            690 
+Petri structural counts  0.581         0.736        0.835            9   
+pm4py Petri Node2Vec     0.535         1.173        0.398            256 
+trace variants           0.453         0.000        1.571            1226
+
+Agreement against ProcRosetta fused encoding
+-------------------------------------------
+Pairwise agreement compares the whole geometry of each method against our fused latent (1.0 means the methods order all test-pair distances the same way).
+method                   pairwise rho  top1 NN overlap  behavior rho delta  NN behavior delta
+-----------------------  ------------  ---------------  ------------------  -----------------
+pm4py Petri Node2Vec     0.382         0.125            -0.256              +0.946           
+ProcRosetta Petri        0.965         0.594            -0.036              +0.321           
+ProcRosetta trace        0.922         0.656            -0.067              -0.227           
+ProcRosetta tree         0.915         0.672            -0.111              -0.225           
+pm4py log features       0.610         0.672            -0.033              -0.205           
+directly-follows         0.572         0.656            -0.041              -0.227           
+Petri structural counts  0.572         0.406            -0.209              +0.509           
+eventually-follows       0.448         0.656            -0.191              -0.227           
+trace variants           0.432         0.656            -0.337              -0.227           
+trace activity counts    0.423         0.672            -0.167              -0.205           
+
+pm4py Petri Node2Vec vs ProcRosetta fused: pairwise geometry rho=0.382, top1 nearest-neighbor overlap=0.125, behavior-rho delta=-0.256, NN-behavior delta=+0.946.
+
+Behavior-family equivalence
+---------------------------
+paired behaviors: 16; within-family cosine and retrieval use alternate exact-equivalent representations.
+embedding          within cosine  between cosine  margin  family top1
+-----------------  -------------  --------------  ------  -----------
+ProcRosetta fused  0.995          0.101           0.291   1.000      
+ProcRosetta Petri  0.985          0.103           0.326   1.000      
+ProcRosetta trace  0.982          0.221           0.182   1.000      
+ProcRosetta tree   0.999          0.065           0.372   1.000      
+
+ProcRosetta cross-modal retrieval
+---------------------------------
+query -> target  top1   MRR    mean rank
+---------------  -----  -----  ---------
+petri -> trace   0.828  0.855  2.062    
+petri -> tree    0.828  0.862  1.781    
+trace -> petri   0.750  0.801  2.312    
+trace -> tree    0.688  0.730  3.625    
+tree -> petri    0.875  0.908  1.375    
+tree -> trace    0.875  0.905  1.500    
+
+Legend
+------
+- behavior rho: Spearman correlation between embedding distance and behavior distance.
+- NN behavior: behavior L1 distance to the nearest neighbor under that embedding.
+- NN behavior delta: method NN behavior minus ProcRosetta fused NN behavior; negative is better.
+- decode behavior L1: original traces vs traces simulated from the decoded tree; lower is better.
+- discovery F1: harmonic mean of footprint fitness and precision; higher is better.
