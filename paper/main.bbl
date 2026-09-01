@@ -1,4 +1,4 @@
-\begin{thebibliography}{23}
+\begin{thebibliography}{20}
 \providecommand{\natexlab}[1]{#1}
 \providecommand{\url}[1]{{#1}}
 \providecommand{\urlprefix}{URL }
@@ -16,12 +16,6 @@ van~der Aalst WMP (2019) A practitioner's guide to process mining: Limitations
   Procedia Computer Science, vol 164. Elsevier, pp 321--328,
   \doi{10.1016/j.procs.2019.12.182}
 
-\bibitem[{van~der Aalst et~al.(2004)van~der Aalst, Weijters, and
-  Maruster}]{Aalst2004}
-van~der Aalst WMP, Weijters T, Maruster L (2004) Workflow mining: Discovering
-  process models from event logs. IEEE Transactions on Knowledge and Data
-  Engineering 16(9):1128--1142. \doi{10.1109/TKDE.2004.47}
-
 \bibitem[{Adriansyah et~al.(2013)Adriansyah, Munoz-Gama, Carmona, van Dongen,
   and van~der Aalst}]{Adriansyah2013}
 Adriansyah A, Munoz-Gama J, Carmona J, et~al (2013) Alignment based precision
@@ -34,25 +28,14 @@ Bardes A, Ponce J, LeCun Y (2022) {VICReg}: Variance-invariance-covariance
   regularization for self-supervised learning. In: International Conference on
   Learning Representations
 
-\bibitem[{Berti and van~der Aalst(2026{\natexlab{a}})}]{Berti2026ICFM}
-Berti A, van~der Aalst WMP (2026{\natexlab{a}}) An in-context foundation model
-  for predictive process monitoring on event logs. IEEE Access
+\bibitem[{Berti and van~der Aalst(2026)}]{Berti2026ICFM}
+Berti A, van~der Aalst WMP (2026) An in-context foundation model for predictive
+  process monitoring on event logs. IEEE Access
   \doi{10.1109/ACCESS.2026.3658877}
-
-\bibitem[{Berti and van~der Aalst(2026{\natexlab{b}})}]{Berti2026Preprint}
-Berti A, van~der Aalst WMP (2026{\natexlab{b}}) {ProcRosetta}: A foundation
-  model for multimodal process mining. Preprints.org,
-  \doi{10.20944/preprints202607.0463.v1}, version 1, posted 7 July 2026
 
 \bibitem[{Berti et~al.(2023)Berti, van Zelst, and Schuster}]{Berti2023PM4Py}
 Berti A, van Zelst SJ, Schuster D (2023) {PM4Py}: A process mining library for
   python. Software Impacts 17:100556. \doi{10.1016/j.simpa.2023.100556}
-
-\bibitem[{Bommasani et~al.(2021)Bommasani, Hudson, Adeli, Altman, Arora, von
-  Arx, Bernstein, Bohg, Bosselut, Brunskill et~al.}]{Bommasani2021}
-Bommasani R, Hudson DA, Adeli E, et~al (2021) On the opportunities and risks of
-  foundation models. arXiv preprint arXiv:210807258
-  \doi{10.48550/arXiv.2108.07258}
 
 \bibitem[{Colonna et~al.(2024)Colonna, Fares, Duarte, and Sousa}]{Colonna2024}
 Colonna JG, Fares AA, Duarte M, et~al (2024) Process mining embeddings:

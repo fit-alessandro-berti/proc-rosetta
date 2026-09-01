@@ -10,22 +10,24 @@ the article.
   and appendices. Section 4 and Appendix A contain the self-contained,
   code-current data-generation specification; no detached generation document
   is required to interpret the corpus.
-- `main.pdf` — compiled 31-page manuscript.
 - `references.bib` — bibliography.
 - `sn-jnl.cls` and `sn-basic.bst` — official Springer Nature LaTeX template v3.1
   (December 2024).
-- `cover_letter.tex` and `cover_letter.pdf` — journal-specific cover letter.
+- `cover_letter.tex` — journal-specific cover-letter source.
 - `evaluation_evidence.json` — machine-readable scope, point estimates,
   uncertainty intervals, qualitative results, report hashes, and limitations.
 - `checkpoint_provenance.json` — checkpoint identity, architecture, training
   provenance, and hashes.
 - `curriculum_manifest.json` — exact persisted corpus manifest used by the
   evaluated checkpoint.
-- `SHA256SUMS` — integrity hashes for every archived source, PDF, and evidence
+- `SHA256SUMS` — integrity hashes for every archived source and evidence
   file.
 - `proc-rosetta-process-science-submission.zip` — portal-ready source and
   evidence archive (the cover letter PDF can also be uploaded separately).
 - `SUBMISSION_CHECKLIST.md` — final portal and archival checks.
+
+Generated manuscript and cover-letter PDFs are intentionally not versioned.
+Build them locally from the LaTeX sources when they are needed for submission.
 
 ## Build
 
@@ -104,10 +106,3 @@ Run these commands from the repository root:
 
 The training command has a nominal 100-epoch horizon; the reported run stopped
 after 17 completed epochs and selected epoch 11 as its balanced checkpoint.
-
-## Submission history disclosure
-
-The manuscript cites the July 2026 preprint
-`10.20944/preprints202607.0463.v1` and includes an explicit change table. The
-journal article replaces the preliminary corpus, architecture, latent model,
-objective, decoder, checkpoint-selection protocol, and numerical evaluation.

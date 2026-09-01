@@ -42,9 +42,6 @@
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
 \newcommand{\model}{\textsc{ProcRosetta}}
-\newcommand{\Rone}{\textbf{RQ1}}
-\newcommand{\Rtwo}{\textbf{RQ2}}
-\newcommand{\Rthree}{\textbf{RQ3}}
 \newcommand{\tauact}{\ensuremath{\tau}}
 \newcommand{\vect}[1]{\boldsymbol{#1}}
 \newcommand{\best}[1]{\textbf{#1}}
@@ -64,7 +61,7 @@
   \orgaddress{\street{Ahornstrasse 55}, \city{Aachen}, \postcode{52074}, \country{Germany}}}
 \affil[2]{\orgname{Celonis}, \orgaddress{\city{Munich}, \country{Germany}}}
 
-\abstract{Process-mining systems describe the same process through event logs, process trees, and Petri nets, yet learned representations are usually tied to one artifact type. We present \model, a deterministic multimodal model that maps all three artifacts into a shared 96-dimensional semantic space and decodes any representation into a grammar-valid process tree. Its corpus comprises 15,360 synthetic behavior families (61,440 aligned rows) spanning three structural curricula, with 12,288 families used for fitting. Each family couples two Petri-net realizations with two clean log views and records exact-language or structural-isomorphism evidence. A 6.26-million-parameter architecture combines a prefix Transformer, a trace/set encoder, an edge-aware graph encoder, and a shared cross-attentive tree decoder. On fixed, family-complete test audits of 16 families per curriculum, fused-latent distance correlates increasingly with held-out behavioral distance from simple to complex processes (Spearman $\rho=0.577$, $0.743$, and $0.791$), and cross-modal family Recall@1 ranges from $0.656$ to $0.875$. All 768 audited deployment decodes terminate as syntactically valid, Petri-convertible, duplicate-free trees. Exact reconstruction is nevertheless weak---zero for log inputs and at most $34.4\%$ for tree inputs---and classical Inductive Miner remains substantially better for discovery conformance. These results support a shared process representation and reliable constrained generation, but not replacement of established discovery algorithms. We release the generator, evaluation pipeline, exact provenance, and submission evidence bundle for reproducible scrutiny.}
+\abstract{Process mining represents behavior through event logs, process trees, and Petri nets. These artifacts describe related semantics but differ so much in structure that learning methods usually treat them separately. We introduce \model, a multimodal model that embeds each artifact in a shared semantic space and translates any of them into a process tree. Training uses behavior families that pair alternative process realizations and log observations while recording the strength of the available equivalence evidence. Specialized encoders capture each modality, while a shared grammar-constrained decoder produces executable models. Experiments show that the learned space supports cross-modal retrieval and reflects behavioral similarity. Constrained decoding is consistently syntactically reliable, although semantic reconstruction---especially from logs---remains difficult and classical discovery is still stronger for conformance. \model\ is therefore best viewed as a reusable representation and candidate-generation layer, with generated models subject to validation. The generator, evaluation pipeline, and evidence bundle support reproducible scrutiny.}
 
 \keywords{process mining, foundation models, multimodal representation learning, process trees, Petri nets, event logs, grammar-constrained decoding}
 
@@ -72,44 +69,21 @@
 
 \section{Introduction}\label{sec:introduction}
 
-Process mining connects observed event data to executable process models. Its core artifacts are heterogeneous: an event log is a finite multiset of sequences, a process tree is a hierarchical expression, and a Petri net is a typed graph with token-flow semantics \citep{Aalst2004,vanDerAalst2016}. Their syntax differs even when their visible behavior is intended to be the same. Consequently, learning systems are often built in modality-specific silos: one encoder for traces, one method for graph similarity, or one discovery network translating a log into a model. A representation learned in one silo cannot be used directly to retrieve, compare, fuse, or translate artifacts in another.
+Process mining uses several artifacts to describe behavior. Event logs show what was observed. Process trees give a readable hierarchy of choices, sequences, loops, and parallel work. Petri nets describe how execution moves through a process. These views are closely related, but their structures are very different. Most learning methods therefore keep the views separate, which makes it difficult to search, compare, or translate across them.
 
-Foundation models seek reusable representations that support multiple downstream tasks and forms of input \citep{Bommasani2021}. In process mining, this idea is attractive but technically delicate. The training signal cannot be based on textual or graphical similarity alone. Two structurally different Petri nets may be behaviorally equivalent; finite logs provide incomplete observations; concurrency can share complete visible traces with explicit interleaving while differing in partial-order semantics; and loops make exact language enumeration impossible in general. A useful process foundation representation must therefore distinguish an artifact's presentation from its behavioral content, while retaining enough source detail for structured generation.
+A shared representation could connect these views, but surface similarity is not enough. Different models can express the same behavior, while a finite log reveals only part of the process that produced it. Concurrency and loops make the relationship harder still. A useful representation must capture behavioral meaning without confusing it with the way an artifact happens to be written.
 
-We address this problem with \model, a multimodal representation and translation model for event logs, process trees, and Petri nets. Three specialized encoders produce six memory tokens and one normalized deterministic semantic vector per artifact. A single grammar-constrained Transformer decoder maps source memory back to a process tree. Training is organized around \emph{behavior families}: groups that share a canonical behavior but vary in Petri realization and log observation. Exact certificates are used for strong positives; bounded or structurally motivated relations contribute only softer geometric supervision. This separation prevents an unverified equivalence from being treated as a hard identity.
+We introduce \model, a model that learns this shared representation for event logs, process trees, and Petri nets. Each artifact type has a specialized encoder, and all encoders feed a common semantic space. A shared grammar-constrained decoder translates the encoded information into an executable process tree. Training examples are organized as \emph{behavior families}: related process realizations and log observations accompanied by evidence about why they should be treated as equivalent or similar. Strong and weak evidence are kept separate during training.
 
-The study asks:
+The study focuses on the following goals:
 
 \begin{description}
-\item[\Rone:] Does the learned space align modalities, remain stable across equivalent views, and order pairs by behavioral distance?
-\item[\Rtwo:] Can each modality, and their fusion, be decoded into valid and behaviorally faithful process trees?
-\item[\Rthree:] How useful are the embeddings for cross-modal retrieval and how does log-to-tree decoding compare with classical process discovery?
+\item[Representation alignment.] Determine whether the shared space brings related artifacts together and reflects behavioral similarity.
+\item[Structured generation.] Determine whether each artifact can produce a well-formed executable tree while preserving behavior.
+\item[Practical utility.] Assess cross-modal retrieval and compare log-to-tree generation with classical process discovery.
 \end{description}
 
-The contributions are fourfold. First, we introduce a certificate-aware corpus generator with ordinary random trees and three controlled equivalence motifs, producing 15,360 family groups and 61,440 aligned rows across simple, medium, and complex curricula. Second, we develop a compact 6.26-million-parameter architecture in which modality-specific memories and a shared semantic vector serve both retrieval and constrained translation. Third, we train the representation with reconstruction, exact contrastive, hierarchical, observation-consistency, and behavioral-geometry objectives, without a variational latent or Kullback--Leibler term. Fourth, we provide an evidence-oriented evaluation that reports failure cases and family-bootstrap intervals alongside point estimates.
-
-This article supersedes an early preprint of the project \citep{Berti2026Preprint}. Table~\ref{tab:extension} makes the distinction explicit. The previous prototype used a smaller corpus and recurrent/variational components; the present work replaces the data model, architecture, objective, deployment decoder, checkpoint-selection protocol, and evaluation. The preprint is cited to make the development history transparent rather than presented as independent prior evidence.
-
-\begin{table}[t]
-\caption{Material changes from the July 2026 preprint to this journal submission.}
-\label{tab:extension}
-\begin{tabularx}{\textwidth}{@{}p{0.20\textwidth}YY@{}}
-\toprule
-Dimension & Preliminary preprint & This article \\
-\midrule
-Training unit & Independently generated aligned examples & Grouped behavior families with four views and explicit certificates \\
-Data coverage & One synthetic regime & Three curricula; 15,360 families; controlled motifs and ordinary cases \\
-Latent model & Variational 64-dimensional representation & Deterministic, normalized 96-dimensional semantic representation \\
-Encoders & Recurrent tree/log components and graph encoder & Prefix Transformer, biGRU plus set Transformer, and edge-aware residual GNN \\
-Decoder & Recurrent generation & Three-layer cross-attentive Transformer with factorized grammar heads and activity copy \\
-Supervision & Reconstruction and pair alignment & Multi-source reconstruction, exact and hierarchical metric learning, view consistency, behavior regression/ranking, and anti-collapse terms \\
-Deployment & Basic grammar masking & Bounded completion, source-alphabet masking, duplicate-free policy, and Petri conversion checks \\
-Evaluation & Aggregate prototype results & Fixed family-complete audits, baselines, controlled strata, bootstrap intervals, and disclosed failure modes \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-The remainder of the article reviews related work (Section~\ref{sec:related}), defines the formal setting (Section~\ref{sec:setting}), explains corpus generation (Section~\ref{sec:corpus}), architecture and training (Sections~\ref{sec:architecture}--\ref{sec:training}), presents the experimental design and results (Sections~\ref{sec:experiment}--\ref{sec:results}), and closes with use, limitations, and conclusions.
+\model\ contributes a certificate-aware generator for behavior families, a multimodal architecture with a shared semantic interface, behavior-supervised learning across related views, and an evidence-oriented evaluation that makes both strengths and failures visible. The article develops the process setting and related work, then explains data generation, model design, training, and evaluation before discussing the results and their limitations.
 
 \section{Background and related work}\label{sec:related}
 
@@ -581,11 +555,11 @@ Uncertainty is estimated by resampling complete families with replacement and re
 
 \subsection{Metrics for the research questions}
 
-For \Rone, within-family cosine similarity measures invariance across the two Petri representations and two log views. Mean cross-family similarity provides a global contrast; a nearest-positive minus nearest-negative margin provides a local contrast; and family Recall@1 tests whether the closest candidate shares the family. Geometry is evaluated by Spearman correlation between cosine distance and $d_B$. Baselines include trace-variant, directly-follows, eventually-follows, activity, and trace-length/log features; Petri node/edge counts; and PM4Py's Node2Vec-style Petri embedding based on \citet{Grover2016}.
+To evaluate representation alignment, within-family cosine similarity measures invariance across the two Petri representations and two log views. Mean cross-family similarity provides a global contrast; a nearest-positive minus nearest-negative margin provides a local contrast; and family Recall@1 tests whether the closest candidate shares the family. Geometry is evaluated by Spearman correlation between cosine distance and $d_B$. Baselines include trace-variant, directly-follows, eventually-follows, activity, and trace-length/log features; Petri node/edge counts; and PM4Py's Node2Vec-style Petri embedding based on \citet{Grover2016}.
 
-For \Rtwo, we report termination, grammar validity, Petri convertibility, duplicate freedom, exact tree match, normalized tree-edit distance, and $d_B$. These are non-interchangeable: constrained decoding can guarantee the first four but not semantic accuracy. We separately stratify the log decoder by motif and loops.
+To evaluate structured generation, we report termination, grammar validity, Petri convertibility, duplicate freedom, exact tree match, normalized tree-edit distance, and $d_B$. These are non-interchangeable: constrained decoding can guarantee the first four but not semantic accuracy. We separately stratify the log decoder by motif and loops.
 
-For \Rthree, cross-modal retrieval uses each artifact as a query and the strongest available exact-behavior identifier as relevance; in every fixed audit this identifier is present and corresponds one-to-one with the 16 selected family identifiers (four rows each). Recall@1 and mean reciprocal rank (MRR) are reported. For discovery, the log-decoded tree and PM4Py Inductive Miner are compared with footprint fitness and precision, summarized by harmonic mean F1. Some grammar-valid generated trees are too large for PM4Py footprint extraction; evaluability is therefore reported rather than silently dropping failures.
+To evaluate practical utility, cross-modal retrieval uses each artifact as a query and the strongest available exact-behavior identifier as relevance; in every fixed audit this identifier is present and corresponds one-to-one with the 16 selected family identifiers (four rows each). Recall@1 and mean reciprocal rank (MRR) are reported. For discovery, the log-decoded tree and PM4Py Inductive Miner are compared with footprint fitness and precision, summarized by harmonic mean F1. Some grammar-valid generated trees are too large for PM4Py footprint extraction; evaluability is therefore reported rather than silently dropping failures.
 
 \subsection{Qualitative external case}
 
@@ -593,7 +567,7 @@ The repository's running example is held outside the synthetic curriculum comman
 
 \section{Results}\label{sec:results}
 
-\subsection{RQ1: the shared space captures family identity and behavioral order}
+\subsection{Representation alignment: the shared space captures family identity and behavioral order}
 
 Table~\ref{tab:geometry} compares semantic embeddings with deterministic baselines. Fused geometry improves with structural complexity, from $\rho=0.577$ on simple families to $0.791$ on complex families. Its 95\% family-bootstrap intervals are $[0.405,0.833]$, $[0.593,0.868]$, and $[0.675,0.891]$. The simple trace-variant baseline is higher ($0.713$), showing that learning is not uniformly superior. Fused embeddings lead the listed baselines on medium and complex audits; on complex families, a rich deterministic PM4Py log vector is close at $0.757$.
 
@@ -717,10 +691,10 @@ The joint PCA in Fig.~\ref{fig:pca} is a qualitative projection of one row from 
 \label{fig:pca}
 \end{figure}
 
-\paragraph{Answer to \Rone.}
+\paragraph{Representation alignment.}
 Within the fixed audit, \model learns a stable family representation and a meaningful behavioral ordering. The evidence is strongest for within-modality view invariance and medium/complex fused geometry, but the wide simple-curriculum interval and strong direct-feature baselines preclude a claim of universal metric superiority.
 
-\subsection{RQ2: constrained validity is perfect, reconstruction is not}\label{sec:decode-results}
+\subsection{Structured generation: constrained validity is perfect, reconstruction is not}\label{sec:decode-results}
 
 Every audited deployment output terminates, satisfies the prefix grammar, avoids duplicate visible labels, and converts to a Petri net: 768 of 768 decodes. Table~\ref{tab:decode} shows why validity must be reported separately from accuracy. Tree-input exact match declines from 34.4\% to 15.6\%; Petri input reaches at most 12.5\%; log input never exactly reconstructs the canonical tree. The log encoder nevertheless maintains a normalized edit distance near 0.52--0.56 across curricula, suggesting structurally related but nonidentical outputs. Fused decoding does not outperform the best single modality.
 
@@ -771,10 +745,10 @@ Ordinary & 1.224 / .662 & 1.580 / .798 & 1.715 / .832 \\
 \end{tabular}
 \end{table}
 
-\paragraph{Answer to \Rtwo.}
+\paragraph{Structured generation.}
 The deployment wrapper reliably returns a valid executable representation, but the learned decoder is not a reliable inverse of the encoders. Grammar constraints solve well-formedness; they do not solve semantic reconstruction. The resulting model is suitable for candidate generation and inspection, not unattended model replacement.
 
-\subsection{RQ3: cross-modal retrieval is useful; discovery remains behind}
+\subsection{Practical utility: cross-modal retrieval is useful; discovery remains behind}
 
 Cross-modal family retrieval is substantially above the $4/64=1/16=0.0625$ random-row rate. Table~\ref{tab:retrieval} reports all six directions. Recall@1 ranges from 0.656 to 0.875 and mean MRR from 0.705 to 0.908. The hardest direction is log-to-tree; its Recall@1 is $0.656$, $0.656$, and $0.688$, with bootstrap intervals $[0.438,0.844]$, $[0.421,0.844]$, and $[0.469,0.844]$. Tree queries retrieve logs especially well (0.875 in every curriculum).
 
@@ -821,7 +795,7 @@ Curriculum & Method & Evaluable (\%) & Fitness & Precision & F1 & 95\% interval 
 
 This comparison clarifies what the shared model currently contributes. It provides one representation for heterogeneous inputs, supports bidirectional retrieval, and always returns a bounded syntactically valid candidate. It does not beat a specialized algorithm that directly exploits process-tree cut structure. A useful deployment would use \model to retrieve related artifacts, propose candidates, or initialize a downstream procedure, while retaining conformance validation and classical discovery.
 
-\paragraph{Answer to \Rthree.}
+\paragraph{Practical utility.}
 The learned interface is useful for cross-modal retrieval on the fixed gallery, with consistent results in all six directions. As an end-to-end discovery system it is decisively inferior to Inductive Miner and suffers downstream evaluability failures on overlong candidates.
 
 \subsection{Running-example translation}
@@ -896,7 +870,7 @@ The decoder's copy mechanism succeeds at vocabulary control, not necessarily at 
 
 \subsection{The meaning of ``foundation model''}
 
-\model is a domain foundation \emph{prototype}: one pretrained representation supports several modalities and tasks without task-specific encoders. It is not a general-purpose or large-scale foundation model in the contemporary language-model sense. It has 6.26 million parameters, a synthetic alphabet of 30 labels, and evidence on retrieval, geometry, and structured decoding rather than broad downstream adaptation. We retain the term to describe the shared reusable substrate, while the limitations below bound the claim.
+\model is a domain-specific foundation model: one pretrained representation supports several modalities and tasks without task-specific encoders. It is not a general-purpose or large-scale foundation model in the contemporary language-model sense. It has 6.26 million parameters, a synthetic alphabet of 30 labels, and evidence on retrieval, geometry, and structured decoding rather than broad downstream adaptation. We retain the term to describe the shared reusable substrate, while the limitations below bound the claim.
 
 \section{Threats to validity}\label{sec:threats}
 
@@ -923,7 +897,7 @@ The checkpoint stores software schema, seed, optimizer state, history, and CUDA 
 
 \section{Conclusion}\label{sec:conclusion}
 
-We introduced \model, a certificate-aware multimodal model that aligns event logs, process trees, and Petri nets in one deterministic semantic space and decodes each modality through a shared process-tree grammar. The new behavior-family corpus, architecture, training objective, and evidence protocol replace the project's preliminary preprint design.
+We introduced \model, a certificate-aware multimodal model that aligns event logs, process trees, and Petri nets in one deterministic semantic space and decodes each modality through a shared process-tree grammar. Its behavior-family corpus, architecture, training objective, and evidence protocol are designed around behavioral rather than merely syntactic alignment.
 
 The results establish a promising representation: family views are invariant, cross-modal Recall@1 is 0.656--0.875, and fused behavioral correlation reaches 0.791 on the complex audit. Constrained decoding is operationally reliable in that every audited output is closed, valid, duplicate-free, and Petri-convertible. Semantic generation is the limiting factor: log exact reconstruction is zero, fused decoding offers no consistent gain, overlong trees reduce evaluator coverage, and Inductive Miner remains far superior for discovery. \model should therefore be treated as a retrieval and candidate-generation substrate with mandatory validation.
 
@@ -998,7 +972,7 @@ The command below creates the three curricula and their family-level splits. Val
 Table~\ref{tab:loss-weights} reports the checkpoint configuration. Adaptive validation balancing can modestly change source reconstruction multipliers; at the selected epoch they are 1.000 (tree), 1.099 (trace), 1.064 (Petri), and 1.122 (fused).
 
 \begin{table}[t]
-\caption{Principal objective coefficients in the selected checkpoint. Zero entries are shown to prevent obsolete variational claims.}
+\caption{Principal objective coefficients in the selected checkpoint. Zero entries make clear that no variational terms are active.}
 \label{tab:loss-weights}
 \begin{tabular}{@{}lr@{\qquad}lr@{}}
 \toprule
@@ -1132,9 +1106,6 @@ Source code, command-line tools, the Streamlit inspection application, Docker co
 
 \bmhead{Author contributions}
 Alessandro Berti: conceptualization, methodology, software, data curation, investigation, formal analysis, visualization, and writing---original draft. Wil M. P. van der Aalst: conceptualization, methodology, supervision, validation, and writing---review and editing. Both authors approved the submitted version and accept responsibility for the work.
-
-\bmhead{Preprint disclosure}
-An earlier prototype was posted as a preprint \citep{Berti2026Preprint}. This article cites that version and explicitly documents the material changes in Table~\ref{tab:extension}; it does not reuse the obsolete preprint's architecture or numerical claims as evidence for the present model.
 
 \bmhead{Generative AI statement}
 During manuscript preparation, the authors used OpenAI Codex to assist with repository auditing, LaTeX drafting, generation of TikZ figures and tables, consistency checks, and language editing. The authors inspected the underlying source code and artifacts, verified the reported calculations, claims, and references, revised the generated text, and take full responsibility for the content.

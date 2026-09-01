@@ -218,6 +218,10 @@ __marimo__/
 .streamlit/secrets.toml
 nohup.out
 
+# Generated paper outputs
+paper/main.pdf
+paper/cover_letter.pdf
+
 # proc-rosetta generated artifacts
 /data/
 /checkpoints/
@@ -232,9 +236,7 @@ nohup.out
 *.vrb
 
 !presentation/*.pdf
-!paper/main.pdf
 !paper/main.bbl
-!paper/cover_letter.pdf
 !paper/figures/training_curves.pdf
 !paper/figures/reconstruction_*.pdf
 !paper/figures/discovery_*.pdf

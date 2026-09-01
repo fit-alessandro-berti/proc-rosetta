@@ -5,8 +5,10 @@
 - [x] Springer Nature template v3.1 (December 2024).
 - [x] One self-contained manuscript source file; no `\input` dependencies.
 - [x] All figures are vector TikZ/PGFPlots content embedded in `main.tex`.
-- [x] Compiled A4 manuscript PDF (31 pages).
-- [x] Journal-specific cover letter and compiled PDF.
+- [x] Manuscript source compiles locally to a 29-page A4 PDF; generated PDF is
+  intentionally untracked.
+- [x] Journal-specific cover-letter source compiles locally; generated PDF is
+  intentionally untracked.
 - [x] Bibliography resolves with `sn-basic.bst`.
 - [x] No undefined citations or cross-references.
 - [x] No overfull boxes in the final manuscript or cover letter logs.
@@ -24,7 +26,6 @@
 - [x] Syntax validity separated from semantic fidelity and evaluator coverage.
 - [x] Synthetic-data, split-overlap, single-seed, missing-ablation, and
   finite-semantics limitations disclosed.
-- [x] Preliminary preprint cited and material changes tabulated.
 - [x] Current data generation is specified inside Section 4 and Appendix A;
   no detached legacy generation document is required.
 - [x] No public checkpoint URL or model-weights availability claim is made.
@@ -38,7 +39,6 @@
 - [x] Ethics and consent statements.
 - [x] Data, materials, and code availability.
 - [x] Author contributions.
-- [x] Preprint disclosure.
 - [x] Generative-AI assistance disclosure and author responsibility.
 
 ## Submission portal actions
@@ -50,5 +50,4 @@
   email.
 - [ ] Copy the title, abstract, keywords, funding, conflicts, data statement,
   and AI disclosure from `main.tex` into the portal fields.
-- [ ] Confirm the preprint DOI in the portal's prior-dissemination question.
 - [ ] Review the portal-generated proof before final submission.
