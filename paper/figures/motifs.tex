@@ -1,0 +1,42 @@
+\begin{figure}[t]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+ smallbox/.style={draw,rounded corners,minimum width=13mm,minimum height=7mm,font=\scriptsize,align=center},
+ op/.style={circle,draw,minimum size=6mm,font=\scriptsize,inner sep=0pt},
+ arr/.style={-{Stealth[length=1.7mm]},thin},
+ panel/.style={draw=prgray!50,rounded corners=2pt,inner sep=4mm}
+]
+\begin{scope}[local bounding box=p1]
+\node[font=\small\bfseries] at (0,1.2) {Duplicate / silent route};
+\node[op,fill=prlightgold] (x1) at (-1.2,0.45) {$\times$};
+\node[smallbox,fill=prlightblue] (a1) at (-1.9,-0.55) {$a$};
+\node[smallbox,fill=prlightblue] (a2) at (-0.5,-0.55) {$a$};
+\draw[arr] (x1)--(a1); \draw[arr] (x1)--(a2);
+\node[font=\scriptsize] at (0.6,0.4) {$\Longleftrightarrow$};
+\node[smallbox,fill=prlightblue] (as) at (1.5,0.45) {$a$};
+\node[op,fill=prlightgold] (xs) at (1.5,-0.55) {$\times$};
+\draw[arr] (as)--(xs);
+\node[font=\scriptsize] at (0,-1.25) {same visible prefix; different routing};
+\end{scope}
+\node[panel,fit=(p1)] {};
+
+\begin{scope}[xshift=7.8cm,local bounding box=p2]
+\node[font=\small\bfseries] at (0,1.2) {Concurrency / interleaving};
+\node[op,fill=prlightteal] (and) at (-1.5,0.35) {$\wedge$};
+\node[smallbox,fill=prlightblue] (b) at (-2.1,-0.55) {$b$};
+\node[smallbox,fill=prlightblue] (c) at (-0.9,-0.55) {$c$};
+\draw[arr] (and)--(b); \draw[arr] (and)--(c);
+\node[font=\scriptsize] at (0.15,0.35) {$\Longleftrightarrow$};
+\node[op,fill=prlightgold] (xor) at (1.55,0.35) {$\times$};
+\node[smallbox,fill=prlightblue] at (0.95,-0.55) {$bc$};
+\node[smallbox,fill=prlightblue] at (2.15,-0.55) {$cb$};
+\draw[arr] (xor)--(0.95,-0.2); \draw[arr] (xor)--(2.15,-0.2);
+\node[font=\scriptsize] at (0,-1.25) {same complete traces; distinct partial order};
+\end{scope}
+\node[panel,fit=(p2)] {};
+\end{tikzpicture}
+}
+\caption{Two controlled relations. The double arrow denotes equality of visible complete traces, not universal semantic equivalence.}
+\label{fig:motifs}
+\end{figure}

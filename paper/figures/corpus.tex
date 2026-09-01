@@ -1,0 +1,31 @@
+\begin{figure}[t]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  node distance=6mm and 7mm,
+  box/.style={draw,rounded corners=2pt,minimum height=9mm,align=center,font=\small,inner xsep=5pt},
+  flow/.style={-{Stealth[length=2mm]},thick,prgray},
+  note/.style={font=\scriptsize,align=center,text=prgray}
+]
+\node[box,fill=prlightgold] (choice) {ordinary tree\\or controlled motif};
+\node[box,fill=prlightblue,right=of choice] (tree) {canonical\\process tree};
+\node[box,fill=prlightteal,right=of tree] (nets) {two Petri\\realizations};
+\node[box,fill=prlightred,right=of nets] (cert) {exact / bounded /\\isomorphic evidence};
+\node[box,fill=prlightblue,below=10mm of nets] (pool) {certified or sampled\\trace pool};
+\node[box,fill=prlightteal,left=of pool] (views) {two clean views\\128 traces each};
+\node[box,fill=prlightgold,left=of views] (rows) {four aligned rows\\per family};
+
+\draw[flow] (choice) -- (tree);
+\draw[flow] (tree) -- (nets);
+\draw[flow] (nets) -- (cert);
+\draw[flow] (cert) |- (pool);
+\draw[flow] (nets) -- (pool);
+\draw[flow] (pool) -- (views);
+\draw[flow] (views) -- (rows);
+\draw[flow] (tree) |- (rows);
+\node[note,below=1mm of rows] {tree + log + marked graph + IDs + 128-D signature};
+\end{tikzpicture}
+}
+\caption{Family-level generation. Family grouping is established before flattening, so all alternative realizations and observations remain in one data split.}
+\label{fig:corpus}
+\end{figure}

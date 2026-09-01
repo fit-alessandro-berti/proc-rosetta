@@ -1,0 +1,44 @@
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+ width=\textwidth,height=7.2cm,
+ xlabel={PC1 (25.4\%)},ylabel={PC2 (15.0\%)},
+ xmin=-1.15,xmax=.78,ymin=-.78,ymax=.72,
+ grid=major,grid style={prgray!12},
+ legend style={at={(0.5,-0.18)},anchor=north,legend columns=3,draw=none,font=\scriptsize},
+]
+% family connectors
+\foreach \xa/\ya/\xb/\yb/\xc/\yc in {
+-.150/-.454/-.195/-.662/-.028/-.671,
+.430/.037/.592/-.221/.380/-.231,
+.485/.206/.642/.101/.560/.210,
+.236/.492/.357/.546/.069/.589,
+-.711/.147/-.511/-.168/-.631/-.333,
+.492/.200/.620/.057/.585/.080,
+.506/.049/.525/-.332/.311/-.507,
+-.816/.266/-1.017/.423/-.974/.437,
+-.393/-.207/-.354/.120/-.459/-.142,
+.226/.534/.048/.588/.141/.509,
+.058/-.233/-.011/-.576/.109/-.572,
+-.390/-.122/-.376/-.068/-.358/-.091}{
+  \addplot[prgray!35,thin,no marks] coordinates {(
+  \xa,\ya) (\xb,\yb) (\xc,\yc) (\xa,\ya)};
+}
+\addplot[only marks,mark=*,mark size=2.4pt,prblue] coordinates {
+(-.150,-.454) (.430,.037) (.485,.206) (.236,.492) (-.711,.147) (.492,.200)
+(.506,.049) (-.816,.266) (-.393,-.207) (.226,.534) (.058,-.233) (-.390,-.122)};
+\addlegendentry{trace}
+\addplot[only marks,mark=square*,mark size=2.3pt,prteal] coordinates {
+(-.195,-.662) (.592,-.221) (.642,.101) (.357,.546) (-.511,-.168) (.620,.057)
+(.525,-.332) (-1.017,.423) (-.354,.120) (.048,.588) (-.011,-.576) (-.376,-.068)};
+\addlegendentry{Petri}
+\addplot[only marks,mark=triangle*,mark size=2.7pt,prgold] coordinates {
+(-.028,-.671) (.380,-.231) (.560,.210) (.069,.589) (-.631,-.333) (.585,.080)
+(.311,-.507) (-.974,.437) (-.459,-.142) (.141,.509) (.109,-.572) (-.358,-.091)};
+\addlegendentry{tree}
+\end{axis}
+\end{tikzpicture}
+\caption{Joint PCA of trace, Petri, and tree semantics for 12 complex families. Gray triangles connect modalities of one family. PCA is illustrative; all reported retrieval and distance results use the original 96-dimensional vectors.}
+\label{fig:pca}
+\end{figure}

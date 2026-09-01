@@ -1,0 +1,47 @@
+\begin{figure}[t]
+\centering
+\resizebox{0.92\textwidth}{!}{%
+\begin{tikzpicture}[
+  place/.style={circle,draw,minimum size=5.5mm,inner sep=0pt},
+  trans/.style={rectangle,draw,fill=prlightblue,minimum width=9mm,minimum height=5mm,font=\scriptsize},
+  tau/.style={rectangle,draw,fill=prgray!20,minimum width=2mm,minimum height=7mm,inner sep=0pt},
+  op/.style={circle,draw,minimum size=6mm,font=\scriptsize,inner sep=0pt},
+  leaf/.style={draw,rounded corners,fill=prlightblue,minimum width=10mm,minimum height=6mm,font=\scriptsize},
+  arr/.style={-{Stealth[length=1.5mm]},thin}
+]
+\node[font=\small\bfseries] at (-3.0,2.7) {Block-structured anchor};
+\node[op,fill=prlightgold] (mxor) at (-3.0,1.8) {$\times$};
+\node[leaf] (ma0) at (-4.0,0.8) {$A0$};
+\node[op,fill=prlightteal] (mand) at (-2.0,0.8) {$\wedge$};
+\node[leaf] (ma1) at (-2.6,-0.2) {$A1$};
+\node[leaf] (ma2) at (-1.4,-0.2) {$A2$};
+\draw[arr] (mxor)--(ma0); \draw[arr] (mxor)--(mand);
+\draw[arr] (mand)--(ma1); \draw[arr] (mand)--(ma2);
+
+\node[font=\small] at (0,1.35) {$\Longleftrightarrow$};
+\node[font=\scriptsize,align=center,text=prgray] at (0,0.85) {same complete traces};
+
+\node[font=\small\bfseries] at (4.4,2.7) {Non-free-choice realization};
+\node[place,fill=black] (p0) at (1.2,1.4) {};
+\node[tau] (split) at (2.0,1.4) {};
+\node[place] (p1) at (3.0,1.9) {};
+\node[place] (p2) at (3.0,0.9) {};
+\node[trans] (a1) at (4.4,2.15) {$A1$};
+\node[trans] (a0) at (4.4,1.4) {$A0$};
+\node[trans] (a2) at (4.4,0.65) {$A2$};
+\node[place] (q1) at (5.6,2.15) {};
+\node[place] (q2) at (5.6,0.65) {};
+\node[tau] (join) at (6.7,1.4) {};
+\node[place,double] (pf) at (7.7,1.4) {};
+\draw[arr] (p0)--(split); \draw[arr] (split)--(p1); \draw[arr] (split)--(p2);
+\draw[arr] (p1)--(a1); \draw[arr] (a1)--(q1);
+\draw[arr] (p2)--(a2); \draw[arr] (a2)--(q2);
+\draw[arr] (p1)--(a0); \draw[arr] (p2)--(a0); \draw[arr] (a0)--(pf);
+\draw[arr] (q1)--(join); \draw[arr] (q2)--(join); \draw[arr] (join)--(pf);
+\node[font=\scriptsize,text=prgray] at (2.0,0.35) {$\tau$ split};
+\node[font=\scriptsize,text=prgray] at (6.7,0.35) {$\tau$ join};
+\end{tikzpicture}%
+}
+\caption{The controlled M-pattern. Transition $A0$ competes for both post-split places, whereas $A1$ and $A2$ consume one each; this violates free choice while preserving the anchor's visible complete traces. Filled and double places denote the initial and final markings.}
+\label{fig:m-pattern}
+\end{figure}

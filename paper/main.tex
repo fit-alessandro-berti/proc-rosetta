@@ -152,37 +152,7 @@ where the terms are normalized trace-variant, boundary-aware directly-follows, a
 
 The dataset is generated at the level of a latent \emph{behavior family}, not one independently sampled row. Figure~\ref{fig:corpus} gives the overview. All choices used for this study are specified below and in Algorithm~\ref{alg:generation}; the version-7 manifest is the machine-readable record of the resulting splits, rather than a separate methodological specification.
 
-\begin{figure}[t]
-\centering
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[
-  node distance=6mm and 7mm,
-  box/.style={draw,rounded corners=2pt,minimum height=9mm,align=center,font=\small,inner xsep=5pt},
-  flow/.style={-{Stealth[length=2mm]},thick,prgray},
-  note/.style={font=\scriptsize,align=center,text=prgray}
-]
-\node[box,fill=prlightgold] (choice) {ordinary tree\\or controlled motif};
-\node[box,fill=prlightblue,right=of choice] (tree) {canonical\\process tree};
-\node[box,fill=prlightteal,right=of tree] (nets) {two Petri\\realizations};
-\node[box,fill=prlightred,right=of nets] (cert) {exact / bounded /\\isomorphic evidence};
-\node[box,fill=prlightblue,below=10mm of nets] (pool) {certified or sampled\\trace pool};
-\node[box,fill=prlightteal,left=of pool] (views) {two clean views\\128 traces each};
-\node[box,fill=prlightgold,left=of views] (rows) {four aligned rows\\per family};
-
-\draw[flow] (choice) -- (tree);
-\draw[flow] (tree) -- (nets);
-\draw[flow] (nets) -- (cert);
-\draw[flow] (cert) |- (pool);
-\draw[flow] (nets) -- (pool);
-\draw[flow] (pool) -- (views);
-\draw[flow] (views) -- (rows);
-\draw[flow] (tree) |- (rows);
-\node[note,below=1mm of rows] {tree + log + marked graph + IDs + 128-D signature};
-\end{tikzpicture}
-}
-\caption{Family-level generation. Family grouping is established before flattening, so all alternative realizations and observations remain in one data split.}
-\label{fig:corpus}
-\end{figure}
+\input{figures/corpus}
 
 One family is produced in six stages:
 
@@ -209,96 +179,9 @@ Three motifs introduce representation differences intentionally:
 \item \emph{Block versus non-free-choice M-pattern}: the anchor $\mathsf{XOR}(A0,\mathsf{AND}(A1,A2))$ is paired with the non-free-choice net in Figure~\ref{fig:m-pattern}. Both accept $\{A0,A1A2,A2A1\}$ before contextualization.
 \end{enumerate}
 
-\begin{figure}[t]
-\centering
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[
- smallbox/.style={draw,rounded corners,minimum width=13mm,minimum height=7mm,font=\scriptsize,align=center},
- op/.style={circle,draw,minimum size=6mm,font=\scriptsize,inner sep=0pt},
- arr/.style={-{Stealth[length=1.7mm]},thin},
- panel/.style={draw=prgray!50,rounded corners=2pt,inner sep=4mm}
-]
-\begin{scope}[local bounding box=p1]
-\node[font=\small\bfseries] at (0,1.2) {Duplicate / silent route};
-\node[op,fill=prlightgold] (x1) at (-1.2,0.45) {$\times$};
-\node[smallbox,fill=prlightblue] (a1) at (-1.9,-0.55) {$a$};
-\node[smallbox,fill=prlightblue] (a2) at (-0.5,-0.55) {$a$};
-\draw[arr] (x1)--(a1); \draw[arr] (x1)--(a2);
-\node[font=\scriptsize] at (0.6,0.4) {$\Longleftrightarrow$};
-\node[smallbox,fill=prlightblue] (as) at (1.5,0.45) {$a$};
-\node[op,fill=prlightgold] (xs) at (1.5,-0.55) {$\times$};
-\draw[arr] (as)--(xs);
-\node[font=\scriptsize] at (0,-1.25) {same visible prefix; different routing};
-\end{scope}
-\node[panel,fit=(p1)] {};
+\input{figures/motifs}
 
-\begin{scope}[xshift=7.8cm,local bounding box=p2]
-\node[font=\small\bfseries] at (0,1.2) {Concurrency / interleaving};
-\node[op,fill=prlightteal] (and) at (-1.5,0.35) {$\wedge$};
-\node[smallbox,fill=prlightblue] (b) at (-2.1,-0.55) {$b$};
-\node[smallbox,fill=prlightblue] (c) at (-0.9,-0.55) {$c$};
-\draw[arr] (and)--(b); \draw[arr] (and)--(c);
-\node[font=\scriptsize] at (0.15,0.35) {$\Longleftrightarrow$};
-\node[op,fill=prlightgold] (xor) at (1.55,0.35) {$\times$};
-\node[smallbox,fill=prlightblue] at (0.95,-0.55) {$bc$};
-\node[smallbox,fill=prlightblue] at (2.15,-0.55) {$cb$};
-\draw[arr] (xor)--(0.95,-0.2); \draw[arr] (xor)--(2.15,-0.2);
-\node[font=\scriptsize] at (0,-1.25) {same complete traces; distinct partial order};
-\end{scope}
-\node[panel,fit=(p2)] {};
-\end{tikzpicture}
-}
-\caption{Two controlled relations. The double arrow denotes equality of visible complete traces, not universal semantic equivalence.}
-\label{fig:motifs}
-\end{figure}
-
-\begin{figure}[t]
-\centering
-\resizebox{0.92\textwidth}{!}{%
-\begin{tikzpicture}[
-  place/.style={circle,draw,minimum size=5.5mm,inner sep=0pt},
-  trans/.style={rectangle,draw,fill=prlightblue,minimum width=9mm,minimum height=5mm,font=\scriptsize},
-  tau/.style={rectangle,draw,fill=prgray!20,minimum width=2mm,minimum height=7mm,inner sep=0pt},
-  op/.style={circle,draw,minimum size=6mm,font=\scriptsize,inner sep=0pt},
-  leaf/.style={draw,rounded corners,fill=prlightblue,minimum width=10mm,minimum height=6mm,font=\scriptsize},
-  arr/.style={-{Stealth[length=1.5mm]},thin}
-]
-\node[font=\small\bfseries] at (-3.0,2.7) {Block-structured anchor};
-\node[op,fill=prlightgold] (mxor) at (-3.0,1.8) {$\times$};
-\node[leaf] (ma0) at (-4.0,0.8) {$A0$};
-\node[op,fill=prlightteal] (mand) at (-2.0,0.8) {$\wedge$};
-\node[leaf] (ma1) at (-2.6,-0.2) {$A1$};
-\node[leaf] (ma2) at (-1.4,-0.2) {$A2$};
-\draw[arr] (mxor)--(ma0); \draw[arr] (mxor)--(mand);
-\draw[arr] (mand)--(ma1); \draw[arr] (mand)--(ma2);
-
-\node[font=\small] at (0,1.35) {$\Longleftrightarrow$};
-\node[font=\scriptsize,align=center,text=prgray] at (0,0.85) {same complete traces};
-
-\node[font=\small\bfseries] at (4.4,2.7) {Non-free-choice realization};
-\node[place,fill=black] (p0) at (1.2,1.4) {};
-\node[tau] (split) at (2.0,1.4) {};
-\node[place] (p1) at (3.0,1.9) {};
-\node[place] (p2) at (3.0,0.9) {};
-\node[trans] (a1) at (4.4,2.15) {$A1$};
-\node[trans] (a0) at (4.4,1.4) {$A0$};
-\node[trans] (a2) at (4.4,0.65) {$A2$};
-\node[place] (q1) at (5.6,2.15) {};
-\node[place] (q2) at (5.6,0.65) {};
-\node[tau] (join) at (6.7,1.4) {};
-\node[place,double] (pf) at (7.7,1.4) {};
-\draw[arr] (p0)--(split); \draw[arr] (split)--(p1); \draw[arr] (split)--(p2);
-\draw[arr] (p1)--(a1); \draw[arr] (a1)--(q1);
-\draw[arr] (p2)--(a2); \draw[arr] (a2)--(q2);
-\draw[arr] (p1)--(a0); \draw[arr] (p2)--(a0); \draw[arr] (a0)--(pf);
-\draw[arr] (q1)--(join); \draw[arr] (q2)--(join); \draw[arr] (join)--(pf);
-\node[font=\scriptsize,text=prgray] at (2.0,0.35) {$\tau$ split};
-\node[font=\scriptsize,text=prgray] at (6.7,0.35) {$\tau$ join};
-\end{tikzpicture}%
-}
-\caption{The controlled M-pattern. Transition $A0$ competes for both post-split places, whereas $A1$ and $A2$ consume one each; this violates free choice while preserving the anchor's visible complete traces. Filled and double places denote the initial and final markings.}
-\label{fig:m-pattern}
-\end{figure}
+\input{figures/m-pattern}
 
 Each controlled anchor is substituted into one leaf of the same randomized binary SEQ/XOR/AND context for both realizations. The implementation draws two to four fresh context activities; including the motif placeholder, the context template therefore has 5, 7, or 9 nodes within the configured 4--12-node envelope. Capping the context at four added activities keeps an all-AND language enumerable under the default gates. This randomization prevents success based only on recognizing a canonical PM4Py conversion. Ordinary cases remain dominant: each training curriculum contains 3,056 ordinary, 347 duplicate-prefix, 347 concurrency, and 346 M-pattern families.
 
@@ -372,42 +255,7 @@ Family identifiers do not cross splits, so no realization or observation of one 
 
 Figure~\ref{fig:architecture} gives the end-to-end design. Each encoder returns a modality-specific memory used for reconstruction and a normalized semantic vector used for metric learning, retrieval, and fusion. A disposable two-layer projection head is used only by selected contrastive losses; reported embeddings and decoder conditioning always use the semantic vector itself.
 
-\begin{figure}[htbp]
-\centering
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[
- input/.style={draw,rounded corners,minimum width=27mm,minimum height=9mm,align=center,font=\small},
- enc/.style={draw,rounded corners,minimum width=31mm,minimum height=13mm,align=center,font=\small,fill=prlightblue},
- mem/.style={draw,rounded corners,minimum width=25mm,minimum height=9mm,align=center,font=\scriptsize,fill=prlightteal},
- latent/.style={circle,draw,minimum size=15mm,align=center,font=\scriptsize,fill=prlightgold},
- dec/.style={draw,rounded corners,minimum width=35mm,minimum height=16mm,align=center,font=\small,fill=prlightred},
- outputbox/.style={draw,rounded corners,minimum width=31mm,minimum height=9mm,align=center,font=\small},
- flow/.style={-{Stealth[length=2mm]},thick,prgray}
-]
-\node[input,fill=prlightgold] (t) at (0,2.4) {process tree};
-\node[input,fill=prlightgold] (l) at (0,0) {event log};
-\node[input,fill=prlightgold] (n) at (0,-2.4) {marked Petri net};
-\node[enc] (te) at (4.0,2.4) {prefix Transformer\\3 layers};
-\node[enc] (le) at (4.0,0) {biGRU + set attention\\1 + 1 layers};
-\node[enc] (ne) at (4.0,-2.4) {edge-aware residual GNN\\5 message steps};
-\node[mem] (tm) at (7.45,2.4) {$6\times192$ memory};
-\node[mem] (lm) at (7.45,0) {$6\times192$ memory};
-\node[mem] (nm) at (7.45,-2.4) {$6\times192$ memory};
-\node[latent] (z) at (10.2,0) {$\vect z$\\96-D};
-\node[dec] (d) at (13.1,0) {cross-attentive tree decoder\\grammar + copy + completion};
-\node[outputbox,fill=prlightteal] (o) at (16.5,0) {valid tree\\and Petri net};
-
-\foreach \a/\b in {t/te,l/le,n/ne,te/tm,le/lm,ne/nm,tm/z,lm/z,nm/z,z/d,d/o}{\draw[flow] (\a)--(\b);}
-\draw[flow,dashed] (tm) to[bend left=12] (d);
-\draw[flow,dashed] (lm) -- (d);
-\draw[flow,dashed] (nm) to[bend right=12] (d);
-\node[font=\scriptsize,text=prgray,above=2mm of z] {normalized semantic content};
-\node[font=\scriptsize,text=prgray,below=2mm of d] {shared 3-layer Transformer};
-\end{tikzpicture}
-}
-\caption{\model architecture. Solid paths identify the shared semantic interface and fused path; dashed paths show direct source-memory conditioning for modality reconstruction. Total trainable parameters: 6,263,248.}
-\label{fig:architecture}
-\end{figure}
+\input{figures/architecture}
 
 \subsection{Process-tree encoder}
 
@@ -427,30 +275,7 @@ The decoder has three Transformer layers with cross-attention at every layer. It
 
 At each search step, an automaton tracks open child slots. Illegal operators, arities, activities outside the source alphabet, and---under the deployment policy---already used visible activities receive zero probability. End-of-sequence is legal only when no slot remains. If beam search reaches its length budget with an open prefix, bounded completion repeatedly selects the shortest legal closure. The resulting token sequence is parsed, semantically folded, and converted to a Petri net. Syntactic validity, termination, duplicate-freedom, and Petri convertibility are recorded separately; none is used as a synonym for behavioral fidelity.
 
-\begin{figure}[t]
-\centering
-\resizebox{0.98\textwidth}{!}{%
-\begin{tikzpicture}[
- state/.style={draw,rounded corners,minimum width=27mm,minimum height=10mm,align=center,font=\small},
- flow/.style={-{Stealth[length=2mm]},thick},
- guard/.style={font=\scriptsize,align=center,text=prgray}
-]
-\node[state,fill=prlightblue] (open) {open slots $s>0$};
-\node[state,fill=prlightteal,right=24mm of open] (emit) {emit legal token\\$s\leftarrow s-1+\mathrm{arity}$};
-\node[state,fill=prlightgold,right=24mm of emit] (closed) {$s=0$\\EOS enabled};
-\node[state,fill=prlightred,below=16mm of emit] (budget) {budget exhausted\\shortest legal closure};
-\node[state,fill=prlightteal,right=24mm of budget] (check) {parse, fold,\\convert and audit};
-\draw[flow] (open)--node[guard,above]{grammar + source alphabet\\+ duplicate mask}(emit);
-\draw[flow] (emit) to[bend left=18] node[guard,above]{still open} (open);
-\draw[flow] (emit)--node[guard,above]{all children filled}(closed);
-\draw[flow] (emit)--node[guard,left]{length limit}(budget);
-\draw[flow] (budget)--(check);
-\draw[flow] (closed)|-(check);
-\end{tikzpicture}
-}
-\caption{Deployment decoding state. Bounded completion guarantees a syntactically closed prefix within the supported grammar; conversion and behavioral evaluation remain distinct postconditions.}
-\label{fig:decoder}
-\end{figure}
+\input{figures/decoder}
 
 \subsection{Capacity and implementation profile}
 
@@ -500,42 +325,7 @@ The model is optimized with AdamW at initial learning rate $3\times10^{-4}$, wei
 
 The realized training schedule differs from the nominal 100-epoch horizon because competence gates advanced early and early stopping fired. Epochs 1--5 use only simple families; epochs 6--10 sample approximately 25\% simple and 75\% medium; epochs 11--17 sample approximately 10\% simple, 20\% medium, and 70\% complex. Reconstruction trains first, exact/hierarchical supervision ramps over epochs 3--6, and observed geometry ramps over epochs 5--10. An exponential moving average with decay 0.995 starts at epoch 3. Scheduled sampling begins at epoch 15 and had only begun its ramp when training stopped.
 
-\begin{figure}[t]
-\centering
-\begin{tikzpicture}
-\begin{axis}[
- width=\textwidth,height=6.2cm,
- xlabel={epoch},ylabel={loss},
- xmin=1,xmax=17,xtick={1,3,5,7,9,11,13,15,17},
- ymin=3,ymax=11,
- legend style={at={(0.02,0.97)},anchor=north west,draw=none,fill=white,font=\scriptsize},
- grid=major,grid style={prgray!15},
-]
-\addplot[draw=prgold!25,fill=prgold!12] coordinates {(1,3) (1,11) (5.5,11) (5.5,3)} -- cycle;
-\addplot[draw=prteal!25,fill=prteal!10] coordinates {(5.5,3) (5.5,11) (10.5,11) (10.5,3)} -- cycle;
-\addplot[draw=prred!20,fill=prred!8] coordinates {(10.5,3) (10.5,11) (17,11) (17,3)} -- cycle;
-\addplot[very thick,prblue,mark=*] coordinates {
- (1,5.1793) (2,4.5964) (3,5.0277) (4,5.4844) (5,6.1091)
- (6,8.2306) (7,7.9042) (8,7.8554) (9,7.6334) (10,7.5883)
- (11,9.1937) (12,9.1621) (13,9.1366) (14,9.4493) (15,9.0399)
- (16,9.1441) (17,8.9189)};
-\addlegendentry{training objective}
-\addplot[very thick,prpurple,mark=square*] coordinates {
- (1,10.0180) (2,9.1106) (3,6.6925) (4,5.8626) (5,5.4722)
- (6,6.6609) (7,6.1362) (8,5.8775) (9,5.7156) (10,5.6046)
- (11,7.7939) (12,7.5500) (13,7.4121) (14,7.3342) (15,7.2840)
- (16,7.2410) (17,7.2200)};
-\addlegendentry{macro validation loss}
-\draw[dashed,thick,prred] (axis cs:11,3)--(axis cs:11,11)
- node[pos=0.93,right,font=\scriptsize,text=prred]{selected};
-\node[font=\scriptsize,text=prgray] at (axis cs:3.2,10.55) {simple};
-\node[font=\scriptsize,text=prgray] at (axis cs:8.0,10.55) {medium mix};
-\node[font=\scriptsize,text=prgray] at (axis cs:13.8,10.55) {complex mix};
-\end{axis}
-\end{tikzpicture}
-\caption{Recorded training and macro validation objectives. Stage transitions change task difficulty, so loss is not expected to be monotone across epochs 5--6 and 10--11. The balanced checkpoint is epoch 11; training stops after epoch 17.}
-\label{fig:training}
-\end{figure}
+\input{figures/training}
 
 \subsection{Validation and model selection}
 
@@ -596,26 +386,7 @@ PM4Py Petri Node2Vec & 0.189 & 0.201 & 0.535 \\
 
 Figure~\ref{fig:geometry-bars} visualizes the principal comparison. It also cautions against a single-baseline narrative: direct behavior features are strong when the evaluation distance contains related statistics. The learned advantage is instead that one fixed-dimensional interface is available from all three modalities and supports translation and retrieval as well as distance.
 
-\begin{figure}[t]
-\centering
-\begin{tikzpicture}
-\begin{axis}[
- ybar,bar width=8pt,width=\textwidth,height=6.0cm,
- ymin=0,ymax=0.9,ylabel={Spearman $\rho$},
- symbolic x coords={Simple,Medium,Complex},xtick=data,
- legend style={at={(0.5,-0.20)},anchor=north,legend columns=4,draw=none,font=\scriptsize},
- grid=major,grid style={prgray!15},
-]
-\addplot[fill=prblue,draw=prblue] coordinates {(Simple,.577) (Medium,.743) (Complex,.791)};
-\addplot[fill=prteal,draw=prteal] coordinates {(Simple,.713) (Medium,.628) (Complex,.453)};
-\addplot[fill=prgold,draw=prgold] coordinates {(Simple,.550) (Medium,.693) (Complex,.750)};
-\addplot[fill=prpurple,draw=prpurple] coordinates {(Simple,.189) (Medium,.201) (Complex,.535)};
-\legend{fused semantic,trace variants,directly follows,Petri Node2Vec}
-\end{axis}
-\end{tikzpicture}
-\caption{Behavior-distance correlation. The fused learned representation strengthens across curricula; the trace-variant baseline is strongest on simple families, while directly-follows features remain competitive on complex families.}
-\label{fig:geometry-bars}
-\end{figure}
+\input{figures/geometry-bars}
 
 Equivalent-view invariance is consistently high (Table~\ref{tab:invariance}). Family Recall@1 is 1.0 for every modality and curriculum in this audit. This task is intentionally within-modality: it asks whether alternate views/realizations are neighbors. Cross-modal retrieval is evaluated separately below. The local closest-positive minus closest-negative margin is smallest for the trace encoder because finite observations vary even within one behavior family.
 
@@ -646,50 +417,7 @@ Curriculum & Encoder & Within $\uparrow$ & Between $\downarrow$ & Margin $\uparr
 
 The joint PCA in Fig.~\ref{fig:pca} is a qualitative projection of one row from 12 complex families. It explains 40.4\% of full-space variance. Most same-family modality triples occupy a local neighborhood, but they are not collapsed to one point; the full-space mean same-row cross-modal cosine distance is 0.476 versus 0.962 for distinct-family pairs. This distinction explains why within-modality invariance can be near 1.0 while cross-modal retrieval is imperfect.
 
-\begin{figure}[t]
-\centering
-\begin{tikzpicture}
-\begin{axis}[
- width=\textwidth,height=7.2cm,
- xlabel={PC1 (25.4\%)},ylabel={PC2 (15.0\%)},
- xmin=-1.15,xmax=.78,ymin=-.78,ymax=.72,
- grid=major,grid style={prgray!12},
- legend style={at={(0.5,-0.18)},anchor=north,legend columns=3,draw=none,font=\scriptsize},
-]
-% family connectors
-\foreach \xa/\ya/\xb/\yb/\xc/\yc in {
--.150/-.454/-.195/-.662/-.028/-.671,
-.430/.037/.592/-.221/.380/-.231,
-.485/.206/.642/.101/.560/.210,
-.236/.492/.357/.546/.069/.589,
--.711/.147/-.511/-.168/-.631/-.333,
-.492/.200/.620/.057/.585/.080,
-.506/.049/.525/-.332/.311/-.507,
--.816/.266/-1.017/.423/-.974/.437,
--.393/-.207/-.354/.120/-.459/-.142,
-.226/.534/.048/.588/.141/.509,
-.058/-.233/-.011/-.576/.109/-.572,
--.390/-.122/-.376/-.068/-.358/-.091}{
-  \addplot[prgray!35,thin,no marks] coordinates {(
-  \xa,\ya) (\xb,\yb) (\xc,\yc) (\xa,\ya)};
-}
-\addplot[only marks,mark=*,mark size=2.4pt,prblue] coordinates {
-(-.150,-.454) (.430,.037) (.485,.206) (.236,.492) (-.711,.147) (.492,.200)
-(.506,.049) (-.816,.266) (-.393,-.207) (.226,.534) (.058,-.233) (-.390,-.122)};
-\addlegendentry{trace}
-\addplot[only marks,mark=square*,mark size=2.3pt,prteal] coordinates {
-(-.195,-.662) (.592,-.221) (.642,.101) (.357,.546) (-.511,-.168) (.620,.057)
-(.525,-.332) (-1.017,.423) (-.354,.120) (.048,.588) (-.011,-.576) (-.376,-.068)};
-\addlegendentry{Petri}
-\addplot[only marks,mark=triangle*,mark size=2.7pt,prgold] coordinates {
-(-.028,-.671) (.380,-.231) (.560,.210) (.069,.589) (-.631,-.333) (.585,.080)
-(.311,-.507) (-.974,.437) (-.459,-.142) (.141,.509) (.109,-.572) (-.358,-.091)};
-\addlegendentry{tree}
-\end{axis}
-\end{tikzpicture}
-\caption{Joint PCA of trace, Petri, and tree semantics for 12 complex families. Gray triangles connect modalities of one family. PCA is illustrative; all reported retrieval and distance results use the original 96-dimensional vectors.}
-\label{fig:pca}
-\end{figure}
+\input{figures/pca}
 
 \paragraph{Representation alignment.}
 Within the fixed audit, \model learns a stable family representation and a meaningful behavioral ordering. The evidence is strongest for within-modality view invariance and medium/complex fused geometry, but the wide simple-curriculum interval and strong direct-feature baselines preclude a claim of universal metric superiority.

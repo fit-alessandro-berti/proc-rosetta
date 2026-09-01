@@ -1,0 +1,20 @@
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+ ybar,bar width=8pt,width=\textwidth,height=6.0cm,
+ ymin=0,ymax=0.9,ylabel={Spearman $\rho$},
+ symbolic x coords={Simple,Medium,Complex},xtick=data,
+ legend style={at={(0.5,-0.20)},anchor=north,legend columns=4,draw=none,font=\scriptsize},
+ grid=major,grid style={prgray!15},
+]
+\addplot[fill=prblue,draw=prblue] coordinates {(Simple,.577) (Medium,.743) (Complex,.791)};
+\addplot[fill=prteal,draw=prteal] coordinates {(Simple,.713) (Medium,.628) (Complex,.453)};
+\addplot[fill=prgold,draw=prgold] coordinates {(Simple,.550) (Medium,.693) (Complex,.750)};
+\addplot[fill=prpurple,draw=prpurple] coordinates {(Simple,.189) (Medium,.201) (Complex,.535)};
+\legend{fused semantic,trace variants,directly follows,Petri Node2Vec}
+\end{axis}
+\end{tikzpicture}
+\caption{Behavior-distance correlation. The fused learned representation strengthens across curricula; the trace-variant baseline is strongest on simple families, while directly-follows features remain competitive on complex families.}
+\label{fig:geometry-bars}
+\end{figure}

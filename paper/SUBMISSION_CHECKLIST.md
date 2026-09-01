@@ -3,8 +3,8 @@
 ## Manuscript package
 
 - [x] Springer Nature template v3.1 (December 2024).
-- [x] One self-contained manuscript source file; no `\input` dependencies.
-- [x] All figures are vector TikZ/PGFPlots content embedded in `main.tex`.
+- [x] Core manuscript source includes each figure from `figures/*.tex`.
+- [x] All figures remain repository-native vector TikZ/PGFPlots content.
 - [x] Manuscript source compiles locally to a 29-page A4 PDF; generated PDF is
   intentionally untracked.
 - [x] Journal-specific cover-letter source compiles locally; generated PDF is

@@ -6,10 +6,11 @@ the article.
 
 ## Primary files
 
-- `main.tex` — complete one-file manuscript, including all TikZ/PGFPlots figures
-  and appendices. Section 4 and Appendix A contain the self-contained,
-  code-current data-generation specification; no detached generation document
-  is required to interpret the corpus.
+- `main.tex` — core manuscript source and appendices. Section 4 and Appendix A
+  contain the self-contained, code-current data-generation specification; no
+  detached generation document is required to interpret the corpus.
+- `figures/*.tex` — the TikZ/PGFPlots figures included directly by
+  `main.tex`.
 - `references.bib` — bibliography.
 - `sn-jnl.cls` and `sn-basic.bst` — official Springer Nature LaTeX template v3.1
   (December 2024).
@@ -27,8 +28,8 @@ intentionally not versioned. Build them locally when needed for submission.
 
 ## Build
 
-The source is intentionally self-contained and uses no external figure files.
-From this directory:
+The manuscript uses only repository-native LaTeX and vector TikZ/PGFPlots
+sources. From this directory:
 
 ```bash
 latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
