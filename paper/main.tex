@@ -164,7 +164,8 @@ Figure~\ref{fig:corpus} summarizes corpus construction. The generator follows fo
 
 The relation attached to a pair determines how it may supervise the shared space. Table~\ref{tab:certificate-taxonomy} gives the taxonomy, and the implementation procedure and its finite-search boundaries follow below.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Relation taxonomy for behavior-family supervision.}
 \label{tab:certificate-taxonomy}
 \begin{tabularx}{\textwidth}{@{}p{0.16\textwidth}p{0.34\textwidth}Y@{}}
@@ -176,7 +177,7 @@ Isomorphic & Equivalence follows from a structure-preserving construction. & May
 Analogue & A related behavioral pattern is retained, but exact equivalence is not claimed. & Provides weaker geometric supervision only. \\
 \bottomrule
 \end{tabularx}
-\end{table}
+\end{table*}
 
 Ordinary families pair a tree-derived workflow net with an isomorphically renamed realization. Controlled families introduce the duplicate-prefix, concurrency/interleaving, and non-free-choice M-pattern contrasts in Fig.~\ref{fig:motifs}. The same activity notation is used across all panels. The controlled fragments are placed inside randomized contexts so that the model cannot succeed by recognizing a single fixed template.
 
@@ -190,7 +191,8 @@ Each family supplies two clean log observations derived from a common trace pool
 
 Algorithm~\ref{alg:generation} makes the data-generation procedure explicit. A global seed is expanded with BLAKE2b into family-specific streams for the process model, representation, playout, log view, and augmentation. Structural sampling is therefore independent from observation sampling. Ordinary topologies are retried until the requested profile constraints are met, with a limit of 4,000 attempts.
 
-\begin{algorithm}[!htbp]
+\begin{algorithm*}[!t]
+\centering
 \caption{Behavior-family generation}
 \label{alg:generation}
 \begin{algorithmic}[1]
@@ -216,11 +218,12 @@ Algorithm~\ref{alg:generation} makes the data-generation procedure explicit. A g
 \EndWhile
 \State verify coverage constraints and commit the split
 \end{algorithmic}
-\end{algorithm}
+\end{algorithm*}
 
 For non-looping families, marking exploration stops after 5,000 visited states, 10,000 completed traces, visible length 32, or the silent-transition firing safeguard. Exhausting both state spaces establishes exact visible-language evidence; reaching a limit establishes only a bounded comparison, which is never used as an exact positive. For ordinary looping pairs, exact supervision instead follows from the construction-level isomorphism. Normalized language hashes and partial-order identifiers record these distinctions without extending the claim beyond the available certificate.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Controlled-motif intent and relation boundary.}
 \label{tab:motif-cert}
 \begin{tabularx}{\textwidth}{@{}p{0.20\textwidth}YYY@{}}
@@ -233,7 +236,7 @@ M-pattern & Block-structured fragment versus non-free-choice realization & Exact
 Ordinary & Canonical tree conversion versus isomorphic renaming & Exact language for non-loops; construction isomorphism for loops & Cross-family language identity for loops \\
 \bottomrule
 \end{tabularx}
-\end{table}
+\end{table*}
 
 The generator rejects unsound conversions, unreachable final markings, and dead transitions before storing a family. It also verifies motif coverage and split-local identifiers after generation. The resulting certificates are part of each row rather than reconstructed later from surface similarity.
 
@@ -247,7 +250,8 @@ Figure~\ref{fig:architecture} separates the model's three uses. Direct translati
 
 The encoders differ because each artifact requires a different inductive bias:
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Encoder rationale by modality.}
 \label{tab:encoders}
 \begin{tabularx}{\textwidth}{@{}p{0.18\textwidth}Yp{0.27\textwidth}@{}}
@@ -259,11 +263,12 @@ Event log & Event order within traces and invariance to trace presentation order
 Petri net & Typed directed graph structure, labels, and markings & Edge-aware message-passing network \\
 \bottomrule
 \end{tabularx}
-\end{table}
+\end{table*}
 
 Each encoder retains contextual source states for translation and projects a pooled summary into the shared semantic space. The process-tree encoder reads a prefix representation, the event-log encoder combines sequential and set-level processing, and the Petri-net encoder exchanges messages along typed arcs. Table~\ref{tab:parameters} reports the selected architecture.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Architecture of the selected checkpoint.}
 \label{tab:parameters}
 \begin{tabularx}{\textwidth}{@{}YrrY@{}}
@@ -279,7 +284,7 @@ Contrastive head & 2-layer MLP & 18,624 & training-only projection \\
 Total & -- & 6,263,248 & six 192-dimensional memory tokens; 96-dimensional semantic vector \\
 \bottomrule
 \end{tabularx}
-\end{table}
+\end{table*}
 
 The shared decoder predicts tree structure, operator arity, and visible activities. Its copy component can reuse activities represented in source memory. During generation, a small automaton tracks open child slots and masks illegal tokens. End-of-sequence is available only when every slot is filled; if the search budget is exhausted, deterministic completion closes the remaining slots. The decoder therefore guarantees a well-formed tree within the supported grammar, but this guarantee says nothing about behavioral accuracy. The evaluated synthetic policy restricts activities to the source alphabet and suppresses repeated visible labels. Because repeated labels can be legitimate, the external-log cases also evaluate the same latent with that mask disabled.
 
@@ -310,7 +315,8 @@ The complete objective is
 \end{align}
 Table~\ref{tab:loss-weights} resolves these groups into the actual checkpoint coefficients. A zero Kullback--Leibler weight is consistent with the deterministic semantic latent: the model does not sample from a learned latent distribution.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Principal objective coefficients in the selected checkpoint.}
 \label{tab:loss-weights}
 \begin{tabular}{@{}lr@{\qquad}lr@{}}
@@ -330,11 +336,12 @@ EOS / length / slots / completion & 0.05 each & Duplicate-activity penalty & 0 \
 Kullback--Leibler & 0 & Tree-complexity penalty & 0 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 The stored corpus contains clean logs. Simulated incomplete or noisy log presentations, when used by the observation-consistency objective, are generated only during training. The model is trained through simple, medium, and complex structural curricula, with family-aware batches and activity-label remapping. Table~\ref{tab:hyperparameters} gives the settings needed to interpret and reproduce the run.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Training and decoding hyperparameters.}
 \label{tab:hyperparameters}
 \small
@@ -355,15 +362,16 @@ Scheduled sampling & maximum 0.20 & Start / ramp & epoch 15 / 20 epochs \\
 Test beam / budget & 2 / 512 & Behavioral simulations & 16 \\
 \bottomrule
 \end{tabular}
-\end{table}
-
-\input{figures/training}
+\end{table*}
 
 Checkpoint eligibility begins only in the complex curriculum, where macro and worst-case validation measures are available across all complexity levels. The score displayed for epoch~10 came from the preceding curriculum and was not eligible for final selection. Epoch~11 was the first complete, eligible evaluation and produced the selected checkpoint; later eligible epochs did not improve the selection key. Test results were not used for this choice.
 
 Adaptive validation balancing changes source reconstruction multipliers slightly. At the selected epoch they are 1.000 for process-tree input, 1.099 for event-log input, 1.064 for Petri-net input, and 1.122 for fusion. Figure~\ref{fig:training} and Table~\ref{tab:history} report the full optimization history, including epochs that were not yet eligible for final selection.
 
-\begin{table}[!b]
+\input{figures/training}
+
+\begin{table*}[!t]
+\centering
 \caption{Complete training history. Final-selection eligibility begins with the complex curriculum.}
 \label{tab:history}
 \begin{tabular}{@{}rrrrcr@{}}
@@ -389,7 +397,7 @@ Epoch & Training loss & Validation loss & Selection score & Eligible & Learning 
 17 & 8.919 & 7.220  & 0.719 & Yes & $1.875\times10^{-5}$ \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 \FloatBarrier
 \section{Data and experimental design}\label{sec:experiment}
@@ -398,7 +406,8 @@ Epoch & Training loss & Validation loss & Selection score & Eligible & Learning 
 
 Table~\ref{tab:generator-config} gives the resolved settings used to generate every curriculum. Labels are assigned only after topology sampling so that the activity floor can be satisfied without changing the requested root operator. Each accepted family contains two Petri-net realizations and two clean event-log observations. The two-by-two expansion creates training rows but does not create four independent families.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Resolved generator configuration.}
 \label{tab:generator-config}
 \begin{tabularx}{\textwidth}{@{}p{0.22\textwidth}p{0.31\textwidth}Y@{}}
@@ -415,7 +424,6 @@ Format & schema 5; normalization \texttt{pm4py-fold-v1} & Generator/manifest ver
 \bottomrule
 \end{tabularx}
 \vspace{1mm}
-\centering
 \begin{tabular}{@{}lrrrr@{}}
 \toprule
 Profile & Recursion cap & Min. folded depth & Folded nodes & Visible labels \\
@@ -425,7 +433,7 @@ Medium & 5 & 3 & 12--19 & 5--14 \\
 Complex & 7 & 4 & 20--80 & 8--28 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 Within each complexity level, the training quotas are 3,056 ordinary, 347 duplicate-prefix, 347 concurrency, and 346 M-pattern families. Validation and test use 376, 45, 46, and 45 families, respectively. The command below fixes the family counts, seed, representation multiplicity, observation multiplicity, and view construction; resolved defaults and post-generation checks are also stored in the manifest.
 
@@ -442,7 +450,8 @@ Within each complexity level, the training quotas are 3,056 ordinary, 347 duplic
 
 The synthetic corpus contains independently generated simple, medium, and complex curricula. Table~\ref{tab:corpus} reports family counts and held-out structural statistics. Each family contributes the four rows defined in Section~\ref{sec:setting}. All representations of a family remain in one split.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Synthetic corpus by complexity level. Size and depth describe folded canonical trees; trace length describes stored event-log observations.}
 \label{tab:corpus}
 \setlength{\tabcolsep}{3.4pt}
@@ -457,7 +466,7 @@ Complex & 4,096 & 512 & 512 & 29.91 & 6.33 & 17.84 \\
 Total & 12,288 & 1,536 & 1,536 & -- & -- & -- \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 Training and quantitative testing use the same generator design. The test split is family-unseen, but independent families can still share a visible language or canonical tree across splits. The experiments therefore measure generalization to newly generated families, not to a different data-generating process. Section~\ref{sec:generation} states the relation checks, and Section~\ref{sec:data-specification} states the resolved generation settings.
 
@@ -483,7 +492,8 @@ Uncertainty is estimated by resampling complete families, never individual rows,
 
 Table~\ref{tab:rq-metrics} maps each question to its evaluation. Grammar validity is not treated as a learned performance metric because the decoder enforces it by construction.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Evaluation design aligned with the research questions.}
 \label{tab:rq-metrics}
 \begin{tabularx}{\textwidth}{@{}p{0.13\textwidth}p{0.20\textwidth}Yp{0.25\textwidth}@{}}
@@ -495,7 +505,7 @@ Question & Evaluation unit & Main metrics & Baselines \\
 \RQthree: utility & Query/gallery or event log & Recall@1, MRR, footprint fitness, precision, and F1 & Random retrieval and Inductive Miner \\
 \bottomrule
 \end{tabularx}
-\end{table}
+\end{table*}
 
 Normalized tree-edit distance is the ordered tree-edit cost divided by the larger folded-tree size, and exact match is equality after parsing and semantic folding. Within-modality invariance uses family identifiers. Cross-modal retrieval uses the strongest relation identifier available in the fixed subset. Cosine distance is $1-\vect z_i^{\top}\vect z_j$ because each modality vector is normalized. Footprint fitness and precision compare directly-follows, parallel, start, and end relations derived from a log with those of a process tree; F1 is their harmonic mean when both are available. These footprint values are not alignment-based conformance scores and should not be compared numerically across conformance definitions.
 
@@ -509,7 +519,8 @@ For \RQthree, the row-level retrieval gallery retains the balanced expansion: th
 
 Two supplied XES logs provide an out-of-distribution check: the receipt phase of a Dutch municipal permit process from the CoSeLoG project \citep{Buijs2014Receipt}, and a 100-case extract from the road-traffic fine management log \citep{DeLeoni2015RoadTraffic}. Table~\ref{tab:real-log-data} describes the files as parsed by the same artifact interface used for inference. Receipt is reduced to 128 cases by deterministic frequency-preserving variant allocation with seed 13; the road-traffic extract already contains fewer than the encoder limit, so all cases are used. No trace is clipped.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Real event logs used for the illustrative external comparison. ``Selected'' is the exact sample used both by the encoder and by conformance evaluation.}
 \label{tab:real-log-data}
 \begin{tabular}{@{}lrrrrrr@{}}
@@ -520,7 +531,7 @@ Receipt & 1,434 & 8,577 & 27 & 116 & 128 & 22 \\
 Road traffic & 100 & 390 & 10 & 10 & 100 & 10 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 Each selected sample is canonicalized and encoded once. The same event-log latent, source-memory evidence, beam width of two, and token budget of 512 are then decoded under two policies: repeated visible labels allowed, or repeated visible labels masked after their first occurrence. Both policies retain the source-alphabet constraint. Inductive Miner is fitted to the same selected cases. PM4Py extensive-log footprint fitness and precision are computed on those cases, so the only change between the two neural rows is the duplicate-label mask.
 
@@ -534,7 +545,8 @@ These cases are descriptive rather than a benchmark: the logs were available in 
 
 The shared representation aligns related artifacts across the fixed evaluation subset. Table~\ref{tab:geometry} compares its agreement with the supervised operational behavioral distance against learned single-modality representations and deterministic features. The fused representation gives the strongest listed correlation for medium and complex families. On simple families, the trace-variant baseline is stronger. This pattern supports a shared cross-artifact geometry, but not universal superiority over features tailored to the evaluation descriptor.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Spearman correlation between representation distance and the operational behavioral distance $d_B$. Higher values indicate stronger agreement. Intervals are family-bootstrap intervals for the fused representation.}
 \label{tab:geometry}
 \begin{tabular}{@{}lccc@{}}
@@ -562,7 +574,7 @@ Petri-net count features & 0.206 & 0.562 & 0.581 \\
 PM4Py Petri-net Node2Vec & 0.189 & 0.201 & 0.535 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 Figure~\ref{fig:geometry-bars} emphasizes the changing balance between the learned and deterministic representations across complexity levels.
 
@@ -570,7 +582,8 @@ Figure~\ref{fig:geometry-bars} emphasizes the changing balance between the learn
 
 Alternate observations and realizations are also stable within each modality: family Recall@1 is 1.000 throughout the subset. Event-log embeddings have the smallest nearest-positive margin because finite observations vary even when they come from the same family. Table~\ref{tab:invariance} reports the complete within-modality diagnostic.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Within-modality family invariance. Within and between are mean cosine similarities; margin is the closest-positive similarity minus the closest-negative similarity.}
 \label{tab:invariance}
 \begin{tabular}{@{}llrrrr@{}}
@@ -593,7 +606,7 @@ Level & Encoder & Within & Between & Margin & Recall@1 \\
  & Process tree & 0.999 & 0.065 & 0.372 & 1.000 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 Figure~\ref{fig:pca} provides only a two-dimensional illustration of this neighborhood structure. Retrieval and distance calculations use the full semantic vectors.
 
@@ -609,7 +622,8 @@ Behavior-family supervision aligns the modalities well enough for related-artifa
 
 Every decoding run terminates, satisfies the prefix grammar, uses the permitted activity inventory, and converts to a Petri net. This verifies the decoder constraints; it is not evidence of learned semantic accuracy. Table~\ref{tab:decode} therefore reports only properties that the model can fail, together with evaluator coverage.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Semantic preservation under constrained decoding. Evaluable is the percentage for which behavioral simulation completed; behavioral-distance means are conditional on those outputs. Lower values indicate better behavioral and structural agreement.}
 \label{tab:decode}
 \begin{tabular}{@{}llrrrr@{}}
@@ -635,13 +649,14 @@ Level & Source & Evaluable (\%) & Exact (\%) & $d_B$ $\downarrow$ & Tree edit $\
  & Fusion       & 93.8  & 0.0  & 1.273 & 0.676 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 Exact reconstruction is limited even when the input is the reference process tree, and no event-log input exactly reconstructs the canonical target. Event-log outputs are often structurally related to the target, but their behavioral distances remain large. Fusion does not improve reconstruction over the best single source. The small loss of evaluator coverage comes from very large grammar-valid trees whose simulated behavior cannot be computed reliably within the evaluation procedure.
 
 Table~\ref{tab:motif-decode} shows that degradation is concentrated in larger ordinary and looping processes rather than the small controlled fragments. This supports the interpretation that grammar constraints solve closure, while long-range control-flow placement remains a learned and unresolved problem.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Event-log-to-tree decoding by generator motif, shown as behavioral distance / normalized tree-edit distance. Lower values indicate better agreement.}
 \label{tab:motif-decode}
 \begin{tabular}{@{}lccc@{}}
@@ -654,7 +669,7 @@ M-pattern & 1.175 / 0.378 & 1.170 / 0.378 & 1.130 / 0.378 \\
 Ordinary & 1.224 / 0.662 & 1.580 / 0.798 & 1.715 / 0.832 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 \paragraph{\RQtwo answer.}
 The decoder reliably returns executable syntax, but it preserves insufficient semantic information for unattended reconstruction. Generated trees should be treated as candidates that require conformance checks and human inspection.
@@ -664,7 +679,8 @@ The decoder reliably returns executable syntax, but it preserves insufficient se
 
 Cross-modal retrieval is consistently above the random family baseline. Table~\ref{tab:retrieval} presents Recall@1 and MRR in every direction. Event-log queries retrieving process trees are the hardest direction; process-tree queries retrieving event logs are the strongest.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Directional cross-modal retrieval as Recall@1 / MRR. The candidate gallery contains 64 rows from 16 families; all four rows of the matching family are relevant.}
 \label{tab:retrieval}
 \begin{tabular}{@{}lccc@{}}
@@ -679,13 +695,14 @@ Process tree $\rightarrow$ Petri net & 0.812 / 0.867 & 0.875 / 0.908 & 0.875 / 0
 Process tree $\rightarrow$ event log & 0.875 / 0.905 & 0.875 / 0.905 & 0.875 / 0.905 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 The balanced expansion described in Section~\ref{sec:experiment} is retained in this gallery. Every family has the same four gallery instances, so the expansion does not alter the family prior, but it does provide several positive views. The values therefore characterize balanced row-level retrieval rather than a deduplicated unique-artifact gallery. Repeated instances can also affect tie ordering for MRR, which is why Recall@1 is the primary measure.
 
 Table~\ref{tab:discovery} compares event-log decoding with Inductive Miner. \model remains substantially below the specialized method on footprint F1 and has lower evaluator coverage. The comparison defines the current role of the model: its benefit is a shared representation and cross-modal retrieval, not improved end-to-end process discovery.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Event-log-to-model discovery using footprint conformance. Evaluable is the percentage of outputs for which the footprint routine completed. Intervals are family-bootstrap intervals for F1.}
 \label{tab:discovery}
 \begin{tabular}{@{}llrrrrl@{}}
@@ -705,11 +722,12 @@ Level & Method & Evaluable (\%) & Fitness & Precision & F1 & 95\% interval \\
  & Inductive Miner & 100.0 & 1.000 & 0.907 & 0.938 & [0.868, 0.991] \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 The real-log cases in Table~\ref{tab:real-log-results} show the same ordering outside the generator. Allowing repeated labels changes neither top-ranked neural tree because each unconstrained result already uses each visible label at most once. This null result does not imply that the policies are generally equivalent. The decoded receipt tree retains only six of the log's 27 activities, while the road-traffic tree retains eight of ten. Inductive Miner attains higher footprint F1 on both samples, although its receipt model trades perfect fitness for relatively low precision.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Illustrative real-log discovery comparison on the exact encoder samples. ``Repeat'' counts visible leaves beyond the first occurrence of each label.}
 \label{tab:real-log-results}
 \small
@@ -729,7 +747,7 @@ Log & Method & Size & Repeat & Fitness & Precision & F1 \\
  & Inductive Miner & 29 & 0 & 1.000 & 0.621 & \best{0.766} \\
 \bottomrule
 \end{tabularx}
-\end{table}
+\end{table*}
 
 Figure~\ref{fig:real-log-tree} shows the road-traffic output using the process-tree representation and layout supplied by PM4Py. Its compact structure makes the underfitting visible: several activities are grouped under one parallel branch, while two appeal activities are placed directly in the top-level sequence.
 
@@ -743,7 +761,8 @@ The representation supports useful directional retrieval on the fixed gallery. L
 
 The external running example confirms that all supported file types can pass through the same interface. Table~\ref{tab:running} summarizes the translations. Petri-net input produces the closest tree, but even direct process-tree reconstruction changes routing.
 
-\begin{table}[!htbp]
+\begin{table*}[!t]
+\centering
 \caption{Running-example translation. Conformance compares each decoded model with the source event log; lower tree edit and higher conformance indicate better agreement.}
 \label{tab:running}
 \begin{tabular}{@{}lrrrrrr@{}}
@@ -756,7 +775,7 @@ Event log & 14 & 5 & 0.545 & 0.737 & 0.400 & 0.519 \\
 Petri net & 14 & 5 & \best{0.182} & \best{0.860} & \best{0.700} & \best{0.772} \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 Figure~\ref{fig:running-example} compares the loop fragments of the source tree and the best decoded tree. The decoded version moves the decision and reinitiation sequence from the loop body/redo boundary. The complete folded prefix forms follow the figure so that the qualitative comparison is auditable without detached material.
 
