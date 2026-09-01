@@ -6,9 +6,9 @@ the article.
 
 ## Primary files
 
-- `main.tex` — core manuscript source and appendices. Section 4 and Appendix A
-  contain the self-contained, code-current data-generation specification; no
-  detached generation document is required to interpret the corpus.
+- `main.tex` — core manuscript source. The method and data sections contain the
+  self-contained, code-current data-generation specification; no detached
+  generation document or appendix is required to interpret the corpus.
 - `figures/*.tex` — the TikZ/PGFPlots figures included directly by
   `main.tex`.
 - `references.bib` — bibliography.
@@ -17,6 +17,10 @@ the article.
 - `cover_letter.tex` — journal-specific cover-letter source.
 - `evaluation_evidence.json` — machine-readable scope, point estimates,
   uncertainty intervals, qualitative results, report hashes, and limitations.
+- `real_log_evaluation.json` — deterministic duplicate-policy and Inductive
+  Miner comparison for the supplied receipt and road-traffic logs.
+- `generate_real_log_evaluation.py` — regenerates the real-log result record
+  and the PM4Py/Graphviz-layout TikZ process-tree figure without creating PDFs.
 - `checkpoint_provenance.json` — evaluated model configuration, training
   provenance, and hashes.
 - `curriculum_manifest.json` — resolved corpus manifest for the evaluated run.

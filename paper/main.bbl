@@ -1,4 +1,4 @@
-\begin{thebibliography}{20}
+\begin{thebibliography}{22}
 \providecommand{\natexlab}[1]{#1}
 \providecommand{\url}[1]{{#1}}
 \providecommand{\urlprefix}{URL }
@@ -36,6 +36,11 @@ Berti A, van~der Aalst WMP (2026) An in-context foundation model for predictive
 \bibitem[{Berti et~al.(2023)Berti, van Zelst, and Schuster}]{Berti2023PM4Py}
 Berti A, van Zelst SJ, Schuster D (2023) {PM4Py}: A process mining library for
   python. Software Impacts 17:100556. \doi{10.1016/j.simpa.2023.100556}
+
+\bibitem[{Buijs(2014)}]{Buijs2014Receipt}
+Buijs J (2014) Receipt phase of an environmental permit application process
+  ({WABO}), {CoSeLoG} project. 4TU.ResearchData,
+  \doi{10.4121/uuid:a07386a5-7be3-4367-9535-70bc9e77dbe6}
 
 \bibitem[{Colonna et~al.(2024)Colonna, Fares, Duarte, and Sousa}]{Colonna2024}
 Colonna JG, Fares AA, Duarte M, et~al (2024) Process mining embeddings:
@@ -92,6 +97,10 @@ Leemans SJJ, Fahland D, van~der Aalst WMP (2013) Discovering block-structured
   process models from event logs: A constructive approach. In: Application and
   Theory of Petri Nets and Concurrency, Lecture Notes in Computer Science, vol
   7927. Springer, pp 311--329, \doi{10.1007/978-3-642-38697-8_17}
+
+\bibitem[{de~Leoni and Mannhardt(2015)}]{DeLeoni2015RoadTraffic}
+de~Leoni M, Mannhardt F (2015) Road traffic fine management process.
+  4TU.ResearchData, \doi{10.4121/uuid:270fd440-1057-4fb9-89a9-b699b47990f5}
 
 \bibitem[{Radford et~al.(2021)Radford, Kim, Hallacy, Ramesh, Goh, Agarwal,
   Sastry, Askell, Mishkin, Clark, Krueger, and Sutskever}]{Radford2021}

@@ -5,7 +5,7 @@
 - [x] Springer Nature template v3.1 (December 2024).
 - [x] Core manuscript source includes each figure from `figures/*.tex`.
 - [x] All figures remain repository-native vector TikZ/PGFPlots content.
-- [x] Manuscript source compiles locally to a 27-page A4 PDF; generated PDF is
+- [x] Manuscript source compiles locally to a 28-page A4 PDF; generated PDF is
   intentionally untracked.
 - [x] Journal-specific cover-letter source compiles locally; generated PDF is
   intentionally untracked.
@@ -22,11 +22,13 @@
 - [x] Family-level bootstrap intervals reported for principal claims.
 - [x] Strong deterministic embedding baselines included.
 - [x] Inductive Miner comparison included and negative result disclosed.
+- [x] Supplied real logs compared with duplicate labels both allowed and
+  disallowed; the observed null policy effect is disclosed.
 - [x] Syntax validity separated from semantic fidelity and evaluator coverage.
 - [x] Synthetic-data, split-overlap, single-seed, missing-ablation, and
   finite-semantics limitations disclosed.
-- [x] Current data generation is specified inside Section 4 and Appendix A;
-  no detached legacy generation document is required.
+- [x] Current data generation is specified inside the method and data sections;
+  no detached legacy generation document or appendix is required.
 - [x] Code revision, resolved model configuration, and corpus record are
   included with the manuscript source.
 
