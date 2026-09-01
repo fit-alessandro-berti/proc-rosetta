@@ -45,6 +45,7 @@
 
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 \newcommand{\model}{\textsc{ProcRosetta}\xspace}
 \newcommand{\RQone}{\textbf{RQ1}}
 \newcommand{\RQtwo}{\textbf{RQ2}}
@@ -57,6 +58,10 @@
 \renewcommand{\arraystretch}{1.05}
 \AtBeginEnvironment{table}{\small\setlength{\tabcolsep}{4.5pt}}
 \AtBeginEnvironment{table*}{\small\setlength{\tabcolsep}{4.5pt}}
+\apptocmd{\thebibliography}{\raggedright}{}{}
+% The Springer output routine reports harmless underfull page boxes on
+% float-heavy pages; retain the visually preferable flexible page depth.
+\vbadness=10000
 \raggedbottom
 
 \begin{document}
@@ -384,7 +389,7 @@ The encoders differ because each artifact requires a different inductive bias:
 \centering
 \caption{Encoder rationale by modality.}
 \label{tab:encoders}
-\begin{tabularx}{\textwidth}{@{}p{0.18\textwidth}Yp{0.27\textwidth}@{}}
+\begin{tabularx}{\textwidth}{@{}L{0.18\textwidth}YL{0.27\textwidth}@{}}
 \toprule
 Modality & Required inductive bias & Encoder choice \\
 \midrule
@@ -489,7 +494,7 @@ Advancement is competence based rather than a fixed epoch schedule. A transition
 \label{tab:hyperparameters}
 \small
 \setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}p{0.29\textwidth}p{0.19\textwidth}p{0.28\textwidth}p{0.18\textwidth}@{}}
+\begin{tabular}{@{}L{0.29\textwidth}L{0.19\textwidth}L{0.28\textwidth}L{0.18\textwidth}@{}}
 \toprule
 Hyperparameter & Value & Hyperparameter & Value \\
 \midrule
@@ -524,7 +529,7 @@ Table~\ref{tab:generator-config} gives the resolved settings used to generate ea
 \centering
 \caption{Resolved generator configuration. The simple, medium, and complex profile bounds apply only to ordinary random-tree families; controlled anchors are generated separately in 4--12-node randomized contexts.}
 \label{tab:generator-config}
-\begin{tabularx}{\textwidth}{@{}p{0.22\textwidth}p{0.31\textwidth}Y@{}}
+\begin{tabularx}{\textwidth}{@{}L{0.22\textwidth}L{0.31\textwidth}Y@{}}
 \toprule
 Component & Setting & Interpretation \\
 \midrule
@@ -601,7 +606,7 @@ Table~\ref{tab:rq-metrics} maps each question to its evaluation. Grammar validit
 \centering
 \caption{Evaluation design aligned with the research questions.}
 \label{tab:rq-metrics}
-\begin{tabularx}{\textwidth}{@{}p{0.13\textwidth}p{0.20\textwidth}Yp{0.25\textwidth}@{}}
+\begin{tabularx}{\textwidth}{@{}L{0.13\textwidth}L{0.20\textwidth}YL{0.25\textwidth}@{}}
 \toprule
 Question & Evaluation unit & Main metrics & Baselines \\
 \midrule
@@ -1088,21 +1093,21 @@ Epoch & Training loss & Validation loss & Selection score & Eligible & Learning 
 The complete folded prefix forms underlying Table~\ref{tab:running} and Fig.~\ref{fig:running-example} are listed below.
 
 \paragraph{Source tree.}
-\begin{quote}\ttfamily\small
+\begin{quote}\ttfamily\small\raggedright
 SEQ(register request, LOOP(SEQ(AND(check ticket,
 XOR(examine thoroughly, examine casually)), decide),
 reinitiate request), XOR(reject request, pay compensation)).
 \end{quote}
 
 \paragraph{Decoded from process-tree input.}
-\begin{quote}\ttfamily\small
+\begin{quote}\ttfamily\small\raggedright
 SEQ(register request, LOOP(AND(examine casually,
 XOR(decide, AND(examine thoroughly, reinitiate request))),
 SEQ(pay compensation, reject request)), XOR(tau, check ticket)).
 \end{quote}
 
 \paragraph{Decoded from event-log input.}
-\begin{quote}\ttfamily\small
+\begin{quote}\ttfamily\small\raggedright
 SEQ(register request, XOR(examine casually,
 AND(check ticket, decide, reinitiate request,
 LOOP(examine thoroughly, pay compensation))),
@@ -1110,7 +1115,7 @@ XOR(tau, reject request)).
 \end{quote}
 
 \paragraph{Decoded from Petri-net input.}
-\begin{quote}\ttfamily\small
+\begin{quote}\ttfamily\small\raggedright
 SEQ(register request, LOOP(AND(check ticket,
 XOR(examine thoroughly, examine casually)),
 SEQ(decide, reinitiate request)),
