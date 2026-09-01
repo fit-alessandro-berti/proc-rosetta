@@ -14,7 +14,6 @@
 - [x] No overfull boxes in the final manuscript or cover letter logs.
 - [x] Machine-readable evaluation evidence, checkpoint provenance, and corpus
   manifest included.
-- [x] Source/evidence ZIP created, checksum-indexed, and integrity-tested.
 
 ## Scientific reporting
 

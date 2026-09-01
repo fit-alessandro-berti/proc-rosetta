@@ -20,14 +20,10 @@ the article.
   provenance, and hashes.
 - `curriculum_manifest.json` — exact persisted corpus manifest used by the
   evaluated checkpoint.
-- `SHA256SUMS` — integrity hashes for every archived source and evidence
-  file.
-- `proc-rosetta-process-science-submission.zip` — portal-ready source and
-  evidence archive (the cover letter PDF can also be uploaded separately).
 - `SUBMISSION_CHECKLIST.md` — final portal and archival checks.
 
-Generated manuscript and cover-letter PDFs are intentionally not versioned.
-Build them locally from the LaTeX sources when they are needed for submission.
+Generated manuscript and cover-letter PDFs and submission archives are
+intentionally not versioned. Build them locally when needed for submission.
 
 ## Build
 
