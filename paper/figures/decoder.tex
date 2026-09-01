@@ -9,13 +9,13 @@
 \node[state,fill=prlightblue] (open) {open child slots};
 \node[state,fill=prlightteal,right=12mm of open] (mask) {mask illegal\\tokens};
 \node[state,fill=prlightgold,right=12mm of mask] (emit) {emit token and\\update slots};
-\node[state,fill=prlightteal,right=12mm of emit] (eos) {slots empty\\enable EOS};
+\node[state,fill=prlightteal,right=20mm of emit] (eos) {slots empty\\enable EOS};
 \node[state,fill=prlightred,below=15mm of emit] (budget) {budget exhausted};
 \node[state,fill=prlightblue,right=12mm of budget] (complete) {deterministic\\legal completion};
 
 \draw[flow] (open)--(mask);
 \draw[flow] (mask)--(emit);
-\draw[flow] (emit)--node[above,font=\scriptsize]{slots empty}(eos);
+\draw[flow] (emit)--node[above=0.5mm,font=\scriptsize]{slots empty}(eos);
 \draw[flow] (emit) to[bend left=27] node[below,font=\scriptsize]{slots remain} (open);
 \draw[branch] (emit)--(budget);
 \draw[branch] (budget)--(complete);

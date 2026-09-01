@@ -6,7 +6,7 @@
  xlabel={PC1 (25.4\%)},ylabel={PC2 (15.0\%)},
  xmin=-1.15,xmax=0.78,ymin=-0.78,ymax=0.72,
  grid=major,grid style={prgray!12},
- legend style={at={(0.5,-0.18)},anchor=north,legend columns=3,draw=none,font=\scriptsize},
+ legend style={at={(0.5,-0.18)},anchor=north,legend columns=3,draw=none,font=\scriptsize,column sep=1.2ex},
 ]
 % family connectors
 \foreach \xa/\ya/\xb/\yb/\xc/\yc in {
@@ -22,7 +22,7 @@
 0.226/0.534/0.048/0.588/0.141/0.509,
 0.058/-0.233/-0.011/-0.576/0.109/-0.572,
 -0.390/-0.122/-0.376/-0.068/-0.358/-0.091}{
-  \addplot[prgray!35,thin,no marks] coordinates {(
+  \addplot[prgray!35,thin,no marks,forget plot] coordinates {(
   \xa,\ya) (\xb,\yb) (\xc,\yc) (\xa,\ya)};
 }
 \addplot[only marks,mark=*,mark size=2.4pt,prblue] coordinates {

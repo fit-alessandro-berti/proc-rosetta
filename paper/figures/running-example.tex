@@ -11,14 +11,14 @@
 \begin{scope}[local bounding box=source]
 \node[font=\small\bfseries] at (0,3.25) {Source loop fragment};
 \node[op] (sl) at (0,2.55) {LOOP};
-\node[op] (ss) at (-1.45,1.55) {SEQ};
-\node[moved] (sr) at (1.65,1.55) {reinitiate};
-\node[op,fill=prlightteal] (sa) at (-2.2,0.55) {AND};
-\node[moved] (sd) at (-0.45,0.55) {decide};
-\node[leaf] (sc) at (-3.0,-0.45) {check ticket};
-\node[op] (sx) at (-1.4,-0.45) {XOR};
-\node[leaf] (st) at (-2.05,-1.45) {examine\\thoroughly};
-\node[leaf] (su) at (-0.75,-1.45) {examine\\casually};
+\node[op] (ss) at (-1.55,1.55) {SEQ};
+\node[moved] (sr) at (1.75,1.55) {reinitiate};
+\node[op,fill=prlightteal] (sa) at (-2.5,0.55) {AND};
+\node[moved] (sd) at (-0.55,0.55) {decide};
+\node[leaf] (sc) at (-3.45,-0.45) {check ticket};
+\node[op] (sx) at (-1.45,-0.45) {XOR};
+\node[leaf] (st) at (-2.4,-1.45) {examine\\thoroughly};
+\node[leaf] (su) at (-0.5,-1.45) {examine\\casually};
 \draw[arr] (sl)--(ss); \draw[arr] (sl)--(sr);
 \draw[arr] (ss)--(sa); \draw[arr] (ss)--(sd);
 \draw[arr] (sa)--(sc); \draw[arr] (sa)--(sx);
@@ -26,17 +26,17 @@
 \end{scope}
 \node[panel,fit=(source)] {};
 
-\begin{scope}[xshift=8.2cm,local bounding box=decoded]
+\begin{scope}[xshift=8.6cm,local bounding box=decoded]
 \node[font=\small\bfseries] at (0,3.25) {Petri-net-derived loop fragment};
 \node[op] (dl) at (0,2.55) {LOOP};
-\node[op,fill=prlightteal] (da) at (-1.45,1.55) {AND};
-\node[op,fill=prlightred] (ds) at (1.45,1.55) {SEQ};
-\node[leaf] (dc) at (-2.2,0.55) {check ticket};
-\node[op] (dx) at (-0.7,0.55) {XOR};
-\node[moved] (dd) at (0.85,0.55) {decide};
-\node[moved] (dr) at (2.05,0.55) {reinitiate};
-\node[leaf] (dt) at (-1.35,-0.45) {examine\\thoroughly};
-\node[leaf] (du) at (-0.05,-0.45) {examine\\casually};
+\node[op,fill=prlightteal] (da) at (-1.7,1.55) {AND};
+\node[op,fill=prlightred] (ds) at (1.7,1.55) {SEQ};
+\node[leaf] (dc) at (-2.75,0.55) {check ticket};
+\node[op] (dx) at (-0.85,0.55) {XOR};
+\node[moved] (dd) at (0.75,0.55) {decide};
+\node[moved] (dr) at (2.7,0.55) {reinitiate};
+\node[leaf] (dt) at (-1.8,-0.45) {examine\\thoroughly};
+\node[leaf] (du) at (0.1,-0.45) {examine\\casually};
 \draw[arr] (dl)--(da); \draw[arr] (dl)--(ds);
 \draw[arr] (da)--(dc); \draw[arr] (da)--(dx);
 \draw[arr] (dx)--(dt); \draw[arr] (dx)--(du);
@@ -44,7 +44,7 @@
 \end{scope}
 \node[panel,fit=(decoded)] {};
 
-\node[draw=prred,fill=prlightred,rounded corners=2pt,font=\scriptsize] at (4.1,-2.0)
+\node[draw=prred,fill=prlightred,rounded corners=2pt,font=\scriptsize] at (3.6,-2.95)
   {highlighted nodes cross the loop body/redo boundary};
 \end{tikzpicture}%
 }

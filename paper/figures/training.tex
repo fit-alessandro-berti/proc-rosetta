@@ -6,12 +6,12 @@
  xlabel={epoch},ylabel={loss},
  xmin=1,xmax=17,xtick={1,3,5,7,9,11,13,15,17},
  ymin=3,ymax=11,
- legend style={at={(0.02,0.97)},anchor=north west,draw=none,fill=white,font=\scriptsize},
+ legend style={at={(0.98,0.03)},anchor=south east,draw=prgray!40,fill=white,font=\scriptsize},
  grid=major,grid style={prgray!15},
 ]
-\addplot[draw=prgold!25,fill=prgold!12] coordinates {(1,3) (1,11) (5.5,11) (5.5,3)} -- cycle;
-\addplot[draw=prteal!25,fill=prteal!10] coordinates {(5.5,3) (5.5,11) (10.5,11) (10.5,3)} -- cycle;
-\addplot[draw=prred!20,fill=prred!8] coordinates {(10.5,3) (10.5,11) (17,11) (17,3)} -- cycle;
+\addplot[draw=prgold!25,fill=prgold!12,forget plot] coordinates {(1,3) (1,11) (5.5,11) (5.5,3)} -- cycle;
+\addplot[draw=prteal!25,fill=prteal!10,forget plot] coordinates {(5.5,3) (5.5,11) (10.5,11) (10.5,3)} -- cycle;
+\addplot[draw=prred!20,fill=prred!8,forget plot] coordinates {(10.5,3) (10.5,11) (17,11) (17,3)} -- cycle;
 \addplot[very thick,prblue,mark=*] coordinates {
  (1,5.1793) (2,4.5964) (3,5.0277) (4,5.4844) (5,6.1091)
  (6,8.2306) (7,7.9042) (8,7.8554) (9,7.6334) (10,7.5883)
@@ -25,7 +25,7 @@
  (16,7.2410) (17,7.2200)};
 \addlegendentry{macro validation loss}
 \draw[dashed,thick,prred] (axis cs:11,3)--(axis cs:11,11)
- node[pos=0.93,right,font=\scriptsize,text=prred]{selected};
+ node[pos=0.83,right,font=\scriptsize,text=prred]{selected};
 \node[font=\scriptsize,text=prgray] at (axis cs:3.2,10.55) {simple};
 \node[font=\scriptsize,text=prgray] at (axis cs:8.0,10.55) {medium mix};
 \node[font=\scriptsize,text=prgray] at (axis cs:13.8,10.55) {complex mix};

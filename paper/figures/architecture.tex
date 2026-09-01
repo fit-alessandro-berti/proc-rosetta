@@ -27,28 +27,28 @@
 \node[latent] (lz) at (8.5,0) {$\vect z_L$};
 \node[latent] (nz) at (8.5,-2.3) {$\vect z_N$};
 
-\node[task,fill=prlightteal] (retrieve) at (12.1,2.3) {retrieval and\\behavioral comparison};
-\node[task,fill=prlightgold] (fuse) at (11.0,-2.3) {mean semantic vectors\\and project to memory};
+\node[task,fill=prlightteal] (retrieve) at (12.3,3.8) {retrieval and\\behavioral comparison};
+\node[task,fill=prlightgold] (fuse) at (11.0,-3.8) {mean semantic vectors\\and project to memory};
 \node[task,fill=prlightred] (decode) at (14.5,0) {shared process-tree\\decoder};
 \node[task,fill=prlightblue] (out) at (18.0,0) {executable\\process tree};
 
 \foreach \a/\b in {t/te,l/le,n/ne,te/tm,le/lm,ne/nm}{\draw[direct] (\a)--(\b);}
-\draw[direct] (tm) to[bend left=13] (decode);
-\draw[direct] (lm) -- (decode);
-\draw[direct] (nm) to[bend right=13] (decode);
+\draw[direct] (tm.east) to[out=-28,in=162] (decode.160);
+\draw[direct] (lm.east) to[out=-38,in=178] (decode.184);
+\draw[direct] (nm.east) to[out=28,in=198] (decode.208);
 
 \foreach \a/\b in {tm/tz,lm/lz,nm/nz,tz/retrieve,lz/retrieve,nz/retrieve}{\draw[semantic] (\a)--(\b);}
-\draw[fusion] (tz) to[bend right=16] (fuse);
-\draw[fusion] (lz) to[bend right=8] (fuse);
+\draw[fusion] (tz) to[bend left=14] (fuse);
+\draw[fusion] (lz) to[bend left=8] (fuse);
 \draw[fusion] (nz) -- (fuse);
-\draw[fusion] (fuse)--(decode);
+\draw[fusion] (fuse) to[bend right=10] (decode);
 \draw[direct] (decode)--(out);
 
-\node[draw=prblue,fill=white,rounded corners,font=\scriptsize] at (3.0,-3.55)
+\node[draw=prblue,fill=white,rounded corners,font=\scriptsize] at (2.6,-5.1)
   {\textcolor{prblue}{\rule{8mm}{1.2pt}} direct translation via source memory};
-\node[draw=prteal,fill=white,rounded corners,font=\scriptsize] at (9.0,-3.55)
+\node[draw=prteal,fill=white,rounded corners,font=\scriptsize] at (8.6,-5.1)
   {\textcolor{prteal}{\rule{8mm}{1.2pt}} normalized semantic path};
-\node[draw=prgold,fill=white,rounded corners,font=\scriptsize] at (14.8,-3.55)
+\node[draw=prgold,fill=white,rounded corners,font=\scriptsize] at (14.4,-5.1)
   {dashed: fusion conditioning};
 \end{tikzpicture}%
 }

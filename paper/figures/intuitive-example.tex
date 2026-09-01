@@ -21,26 +21,26 @@
 };
 \node[font=\scriptsize,text=prred] at (0,-1.1) {finite observations};
 
-\node[panel] (treepanel) at (5.4,0) {};
+\node[panel,minimum width=46mm] (treepanel) at (5.4,0) {};
 \node[head] at (5.4,1.15) {Process tree};
 \node[op] (seq) at (5.4,0.55) {$\rightarrow$};
-\node[leaf] (reg) at (4.35,-0.35) {register};
+\node[leaf] (reg) at (4.3,-0.35) {register};
 \node[op] (xor) at (6.35,-0.35) {$\times$};
-\node[leaf] (acc) at (5.75,-1.15) {accept};
-\node[leaf] (rej) at (6.95,-1.15) {reject};
+\node[leaf] (acc) at (5.6,-1.15) {accept};
+\node[leaf] (rej) at (7.05,-1.15) {reject};
 \draw[-{Stealth[length=1.4mm]}] (seq)--(reg);
 \draw[-{Stealth[length=1.4mm]}] (seq)--(xor);
 \draw[-{Stealth[length=1.4mm]}] (xor)--(acc);
 \draw[-{Stealth[length=1.4mm]}] (xor)--(rej);
 
-\node[panel] (netpanel) at (10.8,0) {};
-\node[head] at (10.8,1.15) {Petri net};
-\node[place,fill=black] (p0) at (9.25,0.25) {};
-\node[trans] (treg) at (10.15,0.25) {register};
-\node[place] (p1) at (11.05,0.25) {};
-\node[trans] (tacc) at (12.0,0.75) {accept};
-\node[trans] (trej) at (12.0,-0.45) {reject};
-\node[place,double] (pf) at (13.0,0.15) {};
+\node[panel,minimum width=54mm] (netpanel) at (11.2,0) {};
+\node[head] at (11.2,1.15) {Petri net};
+\node[place,fill=black] (p0) at (9.15,-0.1) {};
+\node[trans] (treg) at (10.2,-0.1) {register};
+\node[place] (p1) at (11.25,-0.1) {};
+\node[trans] (tacc) at (12.25,0.45) {accept};
+\node[trans] (trej) at (12.25,-0.65) {reject};
+\node[place,double] (pf) at (13.35,-0.1) {};
 \draw[-{Stealth[length=1.4mm]}] (p0)--(treg);
 \draw[-{Stealth[length=1.4mm]}] (treg)--(p1);
 \draw[-{Stealth[length=1.4mm]}] (p1)--(tacc);
