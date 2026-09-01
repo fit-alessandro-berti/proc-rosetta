@@ -221,7 +221,7 @@ nohup.out
 # Generated paper outputs
 paper/main.pdf
 paper/cover_letter.pdf
-paper/proc-rosetta-process-science-submission.zip
+paper/*.zip
 paper/SHA256SUMS
 
 # proc-rosetta generated artifacts

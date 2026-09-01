@@ -5,20 +5,20 @@
 - [x] Springer Nature template v3.1 (December 2024).
 - [x] Core manuscript source includes each figure from `figures/*.tex`.
 - [x] All figures remain repository-native vector TikZ/PGFPlots content.
-- [x] Manuscript source compiles locally to a 29-page A4 PDF; generated PDF is
+- [x] Manuscript source compiles locally to a 27-page A4 PDF; generated PDF is
   intentionally untracked.
 - [x] Journal-specific cover-letter source compiles locally; generated PDF is
   intentionally untracked.
 - [x] Bibliography resolves with `sn-basic.bst`.
 - [x] No undefined citations or cross-references.
 - [x] No overfull boxes in the final manuscript or cover letter logs.
-- [x] Machine-readable evaluation evidence, checkpoint provenance, and corpus
+- [x] Machine-readable evaluation results, model provenance, and corpus
   manifest included.
 
 ## Scientific reporting
 
 - [x] Research questions and claims are explicitly scoped.
-- [x] Fixed audit size and full-test size are distinguished.
+- [x] Fixed evaluation-subset size and full-test size are distinguished.
 - [x] Family-level bootstrap intervals reported for principal claims.
 - [x] Strong deterministic embedding baselines included.
 - [x] Inductive Miner comparison included and negative result disclosed.
@@ -27,9 +27,8 @@
   finite-semantics limitations disclosed.
 - [x] Current data generation is specified inside Section 4 and Appendix A;
   no detached legacy generation document is required.
-- [x] No public checkpoint URL or model-weights availability claim is made.
-- [x] Code revision, schema, normalization, checkpoint hash, and manifest hash
-  reported.
+- [x] Code revision, resolved model configuration, and corpus record are
+  included with the manuscript source.
 
 ## Declarations
 

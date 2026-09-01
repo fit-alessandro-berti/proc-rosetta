@@ -46,7 +46,7 @@
     "duplicate_visible_activities_allowed": false,
     "source_activity_constraint": true,
     "full_test_families_per_curriculum": 512,
-    "scope_warning": "Point estimates are fixed-audit results and are not full-test estimates."
+    "scope_warning": "Point estimates come from the fixed evaluation subset and are not full-test estimates."
   },
   "source_report_hashes": {
     "simple": "dafc89e94ce650a7daa02faf582bacfd6a67ba57a739f1a5c69cbe69d1e813b7",
@@ -61,22 +61,22 @@
       "duplicate_free_rate": 1.0
     },
     "simple": {
-      "tree": {"exact_rate": 0.344, "behavior_l1": 0.861, "normalized_edit": 0.509},
-      "log": {"exact_rate": 0.0, "behavior_l1": 1.169, "normalized_edit": 0.519},
-      "petri": {"exact_rate": 0.125, "behavior_l1": 1.094, "normalized_edit": 0.661},
-      "fused": {"exact_rate": 0.031, "behavior_l1": 1.148, "normalized_edit": 0.589}
+      "tree": {"evaluable_rate": 1.0, "exact_rate": 0.344, "behavior_l1": 0.861, "normalized_edit": 0.509},
+      "log": {"evaluable_rate": 1.0, "exact_rate": 0.0, "behavior_l1": 1.169, "normalized_edit": 0.519},
+      "petri": {"evaluable_rate": 1.0, "exact_rate": 0.125, "behavior_l1": 1.094, "normalized_edit": 0.661},
+      "fused": {"evaluable_rate": 1.0, "exact_rate": 0.031, "behavior_l1": 1.148, "normalized_edit": 0.589}
     },
     "medium": {
-      "tree": {"exact_rate": 0.281, "behavior_l1": 0.950, "normalized_edit": 0.549},
-      "log": {"exact_rate": 0.0, "behavior_l1": 1.246, "normalized_edit": 0.553},
-      "petri": {"exact_rate": 0.062, "behavior_l1": 1.130, "normalized_edit": 0.645},
-      "fused": {"exact_rate": 0.0, "behavior_l1": 1.222, "normalized_edit": 0.668}
+      "tree": {"evaluable_rate": 1.0, "exact_rate": 0.281, "behavior_l1": 0.950, "normalized_edit": 0.549},
+      "log": {"evaluable_rate": 0.969, "exact_rate": 0.0, "behavior_l1": 1.246, "normalized_edit": 0.553},
+      "petri": {"evaluable_rate": 1.0, "exact_rate": 0.062, "behavior_l1": 1.130, "normalized_edit": 0.645},
+      "fused": {"evaluable_rate": 1.0, "exact_rate": 0.0, "behavior_l1": 1.222, "normalized_edit": 0.668}
     },
     "complex": {
-      "tree": {"exact_rate": 0.156, "behavior_l1": 1.105, "normalized_edit": 0.645},
-      "log": {"exact_rate": 0.0, "behavior_l1": 1.291, "normalized_edit": 0.562},
-      "petri": {"exact_rate": 0.062, "behavior_l1": 1.245, "normalized_edit": 0.673},
-      "fused": {"exact_rate": 0.0, "behavior_l1": 1.273, "normalized_edit": 0.676}
+      "tree": {"evaluable_rate": 1.0, "exact_rate": 0.156, "behavior_l1": 1.105, "normalized_edit": 0.645},
+      "log": {"evaluable_rate": 1.0, "exact_rate": 0.0, "behavior_l1": 1.291, "normalized_edit": 0.562},
+      "petri": {"evaluable_rate": 1.0, "exact_rate": 0.062, "behavior_l1": 1.245, "normalized_edit": 0.673},
+      "fused": {"evaluable_rate": 0.938, "exact_rate": 0.0, "behavior_l1": 1.273, "normalized_edit": 0.676}
     }
   },
   "fused_behavior_distance_spearman": {
@@ -203,7 +203,7 @@
   "limitations": [
     "Synthetic quantitative evaluation under the same generator family as training.",
     "Family identifiers are split-disjoint, but exact behaviors and normalized trees are not guaranteed globally disjoint.",
-    "Routine audit contains 16 families per curriculum and one training seed.",
+    "The fixed evaluation subset contains 16 families per curriculum and one training seed.",
     "Behavior distance overlaps features represented in training signatures and deterministic baselines.",
     "No retrained architecture or objective ablation is reported.",
     "Grammar validity does not imply semantic fidelity or downstream footprint evaluability."

@@ -1,0 +1,53 @@
+\begin{figure}[!htbp]
+\centering
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}[
+ panel/.style={draw=prgray!55,rounded corners=3pt,inner sep=5mm},
+ op/.style={circle,draw,fill=prlightgold,minimum size=7mm,font=\scriptsize,inner sep=0pt},
+ leaf/.style={draw,rounded corners=2pt,fill=prlightblue,minimum width=17mm,minimum height=6mm,font=\scriptsize,align=center},
+ moved/.style={draw,rounded corners=2pt,fill=prlightred,minimum width=17mm,minimum height=6mm,font=\scriptsize,align=center},
+ arr/.style={-{Stealth[length=1.5mm]},thin}
+]
+\begin{scope}[local bounding box=source]
+\node[font=\small\bfseries] at (0,3.25) {Source loop fragment};
+\node[op] (sl) at (0,2.55) {LOOP};
+\node[op] (ss) at (-1.45,1.55) {SEQ};
+\node[moved] (sr) at (1.65,1.55) {reinitiate};
+\node[op,fill=prlightteal] (sa) at (-2.2,0.55) {AND};
+\node[moved] (sd) at (-0.45,0.55) {decide};
+\node[leaf] (sc) at (-3.0,-0.45) {check ticket};
+\node[op] (sx) at (-1.4,-0.45) {XOR};
+\node[leaf] (st) at (-2.05,-1.45) {examine\\thoroughly};
+\node[leaf] (su) at (-0.75,-1.45) {examine\\casually};
+\draw[arr] (sl)--(ss); \draw[arr] (sl)--(sr);
+\draw[arr] (ss)--(sa); \draw[arr] (ss)--(sd);
+\draw[arr] (sa)--(sc); \draw[arr] (sa)--(sx);
+\draw[arr] (sx)--(st); \draw[arr] (sx)--(su);
+\end{scope}
+\node[panel,fit=(source)] {};
+
+\begin{scope}[xshift=8.2cm,local bounding box=decoded]
+\node[font=\small\bfseries] at (0,3.25) {Petri-net-derived loop fragment};
+\node[op] (dl) at (0,2.55) {LOOP};
+\node[op,fill=prlightteal] (da) at (-1.45,1.55) {AND};
+\node[op,fill=prlightred] (ds) at (1.45,1.55) {SEQ};
+\node[leaf] (dc) at (-2.2,0.55) {check ticket};
+\node[op] (dx) at (-0.7,0.55) {XOR};
+\node[moved] (dd) at (0.85,0.55) {decide};
+\node[moved] (dr) at (2.05,0.55) {reinitiate};
+\node[leaf] (dt) at (-1.35,-0.45) {examine\\thoroughly};
+\node[leaf] (du) at (-0.05,-0.45) {examine\\casually};
+\draw[arr] (dl)--(da); \draw[arr] (dl)--(ds);
+\draw[arr] (da)--(dc); \draw[arr] (da)--(dx);
+\draw[arr] (dx)--(dt); \draw[arr] (dx)--(du);
+\draw[arr] (ds)--(dd); \draw[arr] (ds)--(dr);
+\end{scope}
+\node[panel,fit=(decoded)] {};
+
+\node[draw=prred,fill=prlightred,rounded corners=2pt,font=\scriptsize] at (4.1,-2.0)
+  {highlighted nodes cross the loop body/redo boundary};
+\end{tikzpicture}%
+}
+\caption{Source and best decoded loop fragments for the running example; the common registration prefix and final choice are omitted. The decoded tree moves \emph{decide} and \emph{reinitiate} into the loop's redo sequence.}
+\label{fig:running-example}
+\end{figure}

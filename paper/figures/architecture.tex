@@ -1,36 +1,57 @@
-\begin{figure}[htbp]
+\begin{figure}[!htbp]
 \centering
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
- input/.style={draw,rounded corners,minimum width=27mm,minimum height=9mm,align=center,font=\small},
- enc/.style={draw,rounded corners,minimum width=31mm,minimum height=13mm,align=center,font=\small,fill=prlightblue},
- mem/.style={draw,rounded corners,minimum width=25mm,minimum height=9mm,align=center,font=\scriptsize,fill=prlightteal},
- latent/.style={circle,draw,minimum size=15mm,align=center,font=\scriptsize,fill=prlightgold},
- dec/.style={draw,rounded corners,minimum width=35mm,minimum height=16mm,align=center,font=\small,fill=prlightred},
- outputbox/.style={draw,rounded corners,minimum width=31mm,minimum height=9mm,align=center,font=\small},
- flow/.style={-{Stealth[length=2mm]},thick,prgray}
+ input/.style={draw,rounded corners,minimum width=23mm,minimum height=8mm,align=center,font=\small,fill=prlightgold},
+ enc/.style={draw,rounded corners,minimum width=27mm,minimum height=10mm,align=center,font=\small,fill=prlightblue},
+ mem/.style={draw,rounded corners,minimum width=18mm,minimum height=8mm,align=center,font=\small,fill=prlightteal},
+ latent/.style={circle,draw,minimum size=10mm,align=center,font=\small,fill=prlightgold},
+ task/.style={draw,rounded corners,minimum width=29mm,minimum height=12mm,align=center,font=\small},
+ direct/.style={-{Stealth[length=2mm]},very thick,prblue},
+ semantic/.style={-{Stealth[length=2mm]},very thick,prteal},
+ fusion/.style={-{Stealth[length=2mm]},very thick,dashed,prgold}
 ]
-\node[input,fill=prlightgold] (t) at (0,2.4) {process tree};
-\node[input,fill=prlightgold] (l) at (0,0) {event log};
-\node[input,fill=prlightgold] (n) at (0,-2.4) {marked Petri net};
-\node[enc] (te) at (4.0,2.4) {prefix Transformer\\3 layers};
-\node[enc] (le) at (4.0,0) {biGRU + set attention\\1 + 1 layers};
-\node[enc] (ne) at (4.0,-2.4) {edge-aware residual GNN\\5 message steps};
-\node[mem] (tm) at (7.45,2.4) {$6\times192$ memory};
-\node[mem] (lm) at (7.45,0) {$6\times192$ memory};
-\node[mem] (nm) at (7.45,-2.4) {$6\times192$ memory};
-\node[latent] (z) at (10.2,0) {$\vect z$\\96-D};
-\node[dec] (d) at (13.1,0) {cross-attentive tree decoder\\grammar + copy + completion};
-\node[outputbox,fill=prlightteal] (o) at (16.5,0) {valid tree\\and Petri net};
+\node[input] (t) at (0,2.3) {process tree};
+\node[input] (l) at (0,0) {event log};
+\node[input] (n) at (0,-2.3) {Petri net};
 
-\foreach \a/\b in {t/te,l/le,n/ne,te/tm,le/lm,ne/nm,tm/z,lm/z,nm/z,z/d,d/o}{\draw[flow] (\a)--(\b);}
-\draw[flow,dashed] (tm) to[bend left=12] (d);
-\draw[flow,dashed] (lm) -- (d);
-\draw[flow,dashed] (nm) to[bend right=12] (d);
-\node[font=\scriptsize,text=prgray,above=2mm of z] {normalized semantic content};
-\node[font=\scriptsize,text=prgray,below=2mm of d] {shared 3-layer Transformer};
-\end{tikzpicture}
+\node[enc] (te) at (3.1,2.3) {process-tree encoder};
+\node[enc] (le) at (3.1,0) {event-log encoder};
+\node[enc] (ne) at (3.1,-2.3) {Petri-net encoder};
+
+\node[mem] (tm) at (6.1,2.3) {$H_T$};
+\node[mem] (lm) at (6.1,0) {$H_L$};
+\node[mem] (nm) at (6.1,-2.3) {$H_N$};
+
+\node[latent] (tz) at (8.5,2.3) {$\vect z_T$};
+\node[latent] (lz) at (8.5,0) {$\vect z_L$};
+\node[latent] (nz) at (8.5,-2.3) {$\vect z_N$};
+
+\node[task,fill=prlightteal] (retrieve) at (12.1,2.3) {retrieval and\\behavioral comparison};
+\node[task,fill=prlightgold] (fuse) at (11.0,-2.3) {mean semantic vectors\\and project to memory};
+\node[task,fill=prlightred] (decode) at (14.5,0) {shared process-tree\\decoder};
+\node[task,fill=prlightblue] (out) at (18.0,0) {executable\\process tree};
+
+\foreach \a/\b in {t/te,l/le,n/ne,te/tm,le/lm,ne/nm}{\draw[direct] (\a)--(\b);}
+\draw[direct] (tm) to[bend left=13] (decode);
+\draw[direct] (lm) -- (decode);
+\draw[direct] (nm) to[bend right=13] (decode);
+
+\foreach \a/\b in {tm/tz,lm/lz,nm/nz,tz/retrieve,lz/retrieve,nz/retrieve}{\draw[semantic] (\a)--(\b);}
+\draw[fusion] (tz) to[bend right=16] (fuse);
+\draw[fusion] (lz) to[bend right=8] (fuse);
+\draw[fusion] (nz) -- (fuse);
+\draw[fusion] (fuse)--(decode);
+\draw[direct] (decode)--(out);
+
+\node[draw=prblue,fill=white,rounded corners,font=\scriptsize] at (3.0,-3.55)
+  {\textcolor{prblue}{\rule{8mm}{1.2pt}} direct translation via source memory};
+\node[draw=prteal,fill=white,rounded corners,font=\scriptsize] at (9.0,-3.55)
+  {\textcolor{prteal}{\rule{8mm}{1.2pt}} normalized semantic path};
+\node[draw=prgold,fill=white,rounded corners,font=\scriptsize] at (14.8,-3.55)
+  {dashed: fusion conditioning};
+\end{tikzpicture}%
 }
-\caption{\model architecture. Solid paths identify the shared semantic interface and fused path; dashed paths show direct source-memory conditioning for modality reconstruction. Total trainable parameters: 6,263,248.}
+\caption{\model architecture and conditioning paths. Source memory supports direct translation, normalized semantic vectors support retrieval, and their mean is projected back into memory for fusion-based decoding.}
 \label{fig:architecture}
 \end{figure}

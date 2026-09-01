@@ -21,22 +21,24 @@
 
 \opening{Dear Editors,}
 
-Please consider our original research article, ``\textbf{ProcRosetta: A Behavior-Supervised Multimodal Foundation Model for Process Mining},'' by Alessandro Berti and Wil M. P. van der Aalst, for publication in \textit{Process Science}.
+Please consider our original research article, ``\textbf{ProcRosetta: Behavior-Supervised Alignment and Translation of Process Mining Artifacts},'' by Alessandro Berti and Wil M. P. van der Aalst, for publication in \textit{Process Science}.
 
-Process mining relies on event logs, process trees, and Petri nets to describe the same process from different perspectives. Existing learned representations usually remain tied to one artifact type. Our article introduces a certificate-aware model that maps all three artifact types into one deterministic semantic space and decodes each through a shared process-tree grammar. We believe this combination of behavioral semantics, representation learning, process discovery, and executable model generation is directly aligned with the journal's focus.
+Process mining relies on event logs, process trees, and Petri nets to describe related behavior from different perspectives. Existing learned representations usually remain tied to one artifact type. Our article introduces a behavior-supervised model that maps all three artifact types into one semantic space and translates each supported input through a shared process-tree grammar. We believe this combination of behavioral semantics, representation learning, retrieval, and executable model generation is directly aligned with the journal's focus.
 
 The submission makes four principal contributions:
 
 \begin{itemize}[leftmargin=1.6em,itemsep=0.25em,topsep=0.2em]
-\item a behavior-family generator producing 15,360 grouped families (61,440 aligned rows) across three structural curricula, with exact-language or structural-isomorphism evidence;
+\item a behavior-family generator producing 15,360 grouped families (61,440 aligned rows) across three structural curricula, with documented relation strengths;
 \item a 6.26-million-parameter architecture with specialized tree, event-log, and Petri-net encoders, a normalized 96-dimensional semantic interface, and a shared grammar-constrained decoder;
 \item a deterministic training objective combining multi-source reconstruction, exact and hierarchical metric learning, observation consistency, behavior regression/ranking, and anti-collapse regularization; and
-\item an evidence-oriented evaluation with family-complete sampling, deterministic baselines, a classical Inductive Miner comparison, motif diagnostics, family-bootstrap intervals, and machine-readable provenance.
+\item an RQ-aligned evaluation with a fixed family-complete subset, deterministic baselines, a classical Inductive Miner comparison, motif diagnostics, family-bootstrap intervals, and machine-readable results.
 \end{itemize}
 
-The results are promising but deliberately bounded. On fixed audits of 16 complete held-out families per curriculum, fused embedding distance reaches Spearman correlations of 0.577, 0.743, and 0.791 with operational behavioral distance, while cross-modal family Recall@1 ranges from 0.656 to 0.875. All 768 audited deployment decodes are syntactically valid, duplicate-free, and Petri-convertible. At the same time, exact log-to-tree reconstruction is zero and Inductive Miner is clearly superior for discovery conformance. The manuscript treats these negative results as central evidence: ProcRosetta is currently a shared retrieval and candidate-generation substrate, not a replacement for mature process discovery.
+The results are promising but deliberately narrow in scope. On a fixed evaluation subset of held-out synthetic families, fused embedding distance agrees increasingly with the supervised operational behavioral distance, while cross-modal family Recall@1 ranges from 0.656 to 0.875. Grammar constraints make every evaluated output syntactically valid and Petri-convertible. At the same time, exact event-log-to-tree reconstruction is zero and Inductive Miner gives substantially better discovery conformance. The manuscript makes this distinction central: ProcRosetta provides a useful shared representation and retrieval layer, while translated candidates still require validation.
 
-The manuscript is original, is not under consideration by another journal, and has been approved by both authors. The authors declare the Celonis affiliation shown in the manuscript and no other relevant competing interests. No human participants, personal data, or animals are involved. Code and deterministic generation instructions are publicly accessible; the submission bundle includes the exact corpus manifest, evidence tables, hashes, and compilation sources. The manuscript also transparently discloses the use of OpenAI Codex during preparation and the authors' responsibility for verification.
+\newpage
+
+The manuscript is original, is not under consideration by another journal, and has been approved by both authors. The authors declare the Celonis affiliation shown in the manuscript and no other relevant competing interests. No human participants, personal data, or animals are involved. Code and deterministic generation instructions are publicly accessible; the manuscript sources include the corpus manifest, machine-readable result tables, and compilation dependencies. The manuscript also discloses the use of OpenAI Codex during preparation and the authors' responsibility for verification.
 
 The corresponding author is Alessandro Berti (\href{mailto:a.berti@pads.rwth-aachen.de}{a.berti@pads.rwth-aachen.de}; ORCID \href{https://orcid.org/0000-0002-3279-4795}{0000-0002-3279-4795}). Wil M. P. van der Aalst's ORCID is \href{https://orcid.org/0000-0002-0955-6940}{0000-0002-0955-6940}.
 

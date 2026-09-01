@@ -1,7 +1,7 @@
 # ProcRosetta — Process Science submission bundle
 
 This directory contains the submission-ready journal manuscript, cover letter,
-Springer Nature source dependencies, and the machine-readable evidence used in
+Springer Nature source dependencies, and the machine-readable records used in
 the article.
 
 ## Primary files
@@ -17,10 +17,9 @@ the article.
 - `cover_letter.tex` — journal-specific cover-letter source.
 - `evaluation_evidence.json` — machine-readable scope, point estimates,
   uncertainty intervals, qualitative results, report hashes, and limitations.
-- `checkpoint_provenance.json` — checkpoint identity, architecture, training
+- `checkpoint_provenance.json` — evaluated model configuration, training
   provenance, and hashes.
-- `curriculum_manifest.json` — exact persisted corpus manifest used by the
-  evaluated checkpoint.
+- `curriculum_manifest.json` — resolved corpus manifest for the evaluated run.
 - `SUBMISSION_CHECKLIST.md` — final portal and archival checks.
 
 Generated manuscript and cover-letter PDFs and submission archives are
@@ -49,13 +48,7 @@ The verified build environment uses pdfTeX 1.40.25 and LatexMk 4.83. The final
 log contains no undefined citations/references and no overfull manuscript
 boxes.
 
-## Evidence provenance
-
-The balanced checkpoint is `checkpoints/proc_rosetta.best.pt`, SHA-256:
-
-```text
-5ed9abf8496ee5571a941becf016186d2f44441a1015c288bea07e416495aeaa
-```
+## Reproduction record
 
 The exact corpus manifest SHA-256 is:
 
@@ -70,8 +63,8 @@ The evaluated code revision is:
 ```
 
 The quantitative paper claims are deliberately scoped to the deterministic,
-family-complete routine audit: 16 families (64 rows) per curriculum, four
-decode sources, beam width 2, maximum decode length 512, and 16 behavior
+family-complete fixed evaluation subset: 16 families (64 rows) per curriculum,
+four decode sources, beam width 2, maximum decode length 512, and 16 behavior
 simulation traces. The complete test split contains 512 families per
 curriculum. `evaluation_evidence.json` records this distinction explicitly.
 

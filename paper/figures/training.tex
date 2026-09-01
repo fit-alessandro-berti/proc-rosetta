@@ -1,4 +1,4 @@
-\begin{figure}[t]
+\begin{figure}[!htbp]
 \centering
 \begin{tikzpicture}
 \begin{axis}[
@@ -31,6 +31,6 @@
 \node[font=\scriptsize,text=prgray] at (axis cs:13.8,10.55) {complex mix};
 \end{axis}
 \end{tikzpicture}
-\caption{Recorded training and macro validation objectives. Stage transitions change task difficulty, so loss is not expected to be monotone across epochs 5--6 and 10--11. The balanced checkpoint is epoch 11; training stops after epoch 17.}
+\caption{Training and macro validation objectives. Stage transitions change task difficulty. Epoch 10 is not eligible for final selection; epoch 11 is the first eligible complex-stage evaluation and is selected.}
 \label{fig:training}
 \end{figure}

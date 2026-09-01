@@ -1,31 +1,32 @@
-\begin{figure}[t]
+\begin{figure}[!htbp]
 \centering
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
-  node distance=6mm and 7mm,
-  box/.style={draw,rounded corners=2pt,minimum height=9mm,align=center,font=\small,inner xsep=5pt},
-  flow/.style={-{Stealth[length=2mm]},thick,prgray},
-  note/.style={font=\scriptsize,align=center,text=prgray}
+ stage/.style={draw,rounded corners=3pt,minimum width=33mm,minimum height=21mm,align=center,font=\small,inner xsep=4pt},
+ flow/.style={-{Stealth[length=2mm]},very thick,prblue},
+ tag/.style={font=\scriptsize\bfseries,text=prgray}
 ]
-\node[box,fill=prlightgold] (choice) {ordinary tree\\or controlled motif};
-\node[box,fill=prlightblue,right=of choice] (tree) {canonical\\process tree};
-\node[box,fill=prlightteal,right=of tree] (nets) {two Petri\\realizations};
-\node[box,fill=prlightred,right=of nets] (cert) {exact / bounded /\\isomorphic evidence};
-\node[box,fill=prlightblue,below=10mm of nets] (pool) {certified or sampled\\trace pool};
-\node[box,fill=prlightteal,left=of pool] (views) {two clean views\\128 traces each};
-\node[box,fill=prlightgold,left=of views] (rows) {four aligned rows\\per family};
+\node[stage,fill=prlightgold] (generate) at (0,0)
+  {random process\\or controlled motif};
+\node[tag,above=1mm of generate] {generate};
 
-\draw[flow] (choice) -- (tree);
-\draw[flow] (tree) -- (nets);
-\draw[flow] (nets) -- (cert);
-\draw[flow] (cert) |- (pool);
-\draw[flow] (nets) -- (pool);
-\draw[flow] (pool) -- (views);
-\draw[flow] (views) -- (rows);
-\draw[flow] (tree) |- (rows);
-\node[note,below=1mm of rows] {tree + log + marked graph + IDs + 128-D signature};
-\end{tikzpicture}
+\node[stage,fill=prlightblue] (models) at (4.4,0)
+  {two process-model\\realizations\\$N^{(1)},N^{(2)}$};
+\node[tag,above=1mm of models] {construct};
+
+\node[stage,fill=prlightteal] (observe) at (8.8,0)
+  {relation evidence\\and two log observations\\$L^{(u)},L^{(r)}$};
+\node[tag,above=1mm of observe] {relate and observe};
+
+\node[stage,fill=prlightred,minimum width=38mm] (rows) at (13.5,0)
+  {canonicalize labels\\pair models with logs\\\textbf{one family $\rightarrow$ four rows}};
+\node[tag,above=1mm of rows] {align};
+
+\draw[flow] (generate)--(models);
+\draw[flow] (models)--(observe);
+\draw[flow] (observe)--(rows);
+\end{tikzpicture}%
 }
-\caption{Family-level generation. Family grouping is established before flattening, so all alternative realizations and observations remain in one data split.}
+\caption{Behavior-family construction in four stages. Family membership is established before row expansion, so both model realizations and both log observations remain in the same data split.}
 \label{fig:corpus}
 \end{figure}
