@@ -4,6 +4,7 @@
 \documentclass[pdflatex,sn-basic]{sn-jnl}
 
 \usepackage{graphicx}
+\usepackage{etoolbox}
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{amsthm}
 \usepackage{xcolor}
@@ -53,7 +54,9 @@
 \newcommand{\best}[1]{\textbf{#1}}
 \newcommand{\lowerbetter}{\ensuremath{\downarrow}}
 \newcommand{\higherbetter}{\ensuremath{\uparrow}}
-\renewcommand{\arraystretch}{1.10}
+\renewcommand{\arraystretch}{1.05}
+\AtBeginEnvironment{table}{\small\setlength{\tabcolsep}{4.5pt}}
+\AtBeginEnvironment{table*}{\small\setlength{\tabcolsep}{4.5pt}}
 \raggedbottom
 
 \begin{document}
@@ -256,7 +259,7 @@ The concurrency pair makes the separation concrete. Both realizations generate $
 
 \begin{figure*}[!t]
 \centering
-\resizebox{\textwidth}{!}{%
+\resizebox{0.94\textwidth}{!}{%
 \begin{tikzpicture}[
  pnplace/.style={circle,draw=prgray,minimum size=5.5mm,inner sep=0pt,fill=white},
  pnfinal/.style={pnplace,double,double distance=0.7pt},
@@ -804,6 +807,7 @@ Table~\ref{tab:discovery} compares event-log decoding with Inductive Miner. \mod
 \centering
 \caption{Event-log-to-model discovery using footprint conformance. Evaluable is the percentage of outputs for which the footprint routine completed. Intervals are family-bootstrap intervals for F1.}
 \label{tab:discovery}
+\setlength{\tabcolsep}{4pt}
 \begin{tabular}{@{}llrrrrl@{}}
 \toprule
 Level & Method & Evaluable (\%) & Fitness & Precision & F1 & 95\% interval \\
@@ -952,7 +956,7 @@ Figure~\ref{fig:tree-sampler} separates recursive topology construction from acc
 
 \begin{figure*}[!t]
 \centering
-\resizebox{\textwidth}{!}{%
+\resizebox{0.94\textwidth}{!}{%
 \begin{tikzpicture}[
  flowbox/.style={draw=prgray!70,rounded corners=2pt,align=center,minimum height=10mm,text width=27mm,inner sep=3pt},
  flowdecision/.style={diamond,draw=prgray!70,aspect=2.0,align=center,text width=17mm,inner sep=1pt},
@@ -986,7 +990,7 @@ Figure~\ref{fig:tree-sampler} separates recursive topology construction from acc
 
 \begin{figure*}[!t]
 \centering
-\resizebox{\textwidth}{!}{%
+\resizebox{0.94\textwidth}{!}{%
 \begin{tikzpicture}[
  familybox/.style={draw=prgray!70,rounded corners=2pt,fill=prlightgold,align=center,minimum height=18mm,text width=32mm},
  viewbox/.style={draw=prgray!70,rounded corners=2pt,fill=prlightblue,align=center,minimum height=11mm,text width=25mm},
