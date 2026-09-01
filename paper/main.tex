@@ -67,7 +67,7 @@
   \orgaddress{\street{Ahornstrasse 55}, \city{Aachen}, \postcode{52074}, \country{Germany}}}
 \affil[2]{\orgname{Celonis}, \orgaddress{\city{Munich}, \country{Germany}}}
 
-\abstract{Process mining describes behavior through event logs, process trees, and Petri nets. Their structures differ enough that learning methods usually treat them separately. We introduce \model, a behavior-supervised multimodal model that embeds these artifacts in a shared space and translates any supported input into a process tree. Training groups alternative process realizations and log observations into behavior families while distinguishing exact relations from weaker analogies. The quantitative evaluation uses held-out synthetic families drawn from the same generator design as the training data, so it measures in-distribution generalization rather than transfer to real processes. The shared space supports cross-modal retrieval and agrees with an operational behavioral ordering; this is the central result. Grammar-constrained decoding guarantees well-formed, executable candidates, but semantic reconstruction remains weak, particularly from event logs, and specialized discovery gives better conformance. Illustrative real-log cases show the same limitation. Because the output language is restricted to block-structured process trees, it also cannot express every Petri net exactly. \model is therefore most useful as a representation and retrieval layer whose translated candidates require validation. The generator, code, and experimental artifacts support reproduction.}
+\abstract{Process mining represents behavior through event logs, process trees, and Petri nets, yet learning systems usually handle these structures separately. We introduce \model, a behavior-supervised multimodal model that embeds all three artifacts in a shared space and translates any supported input into a process tree. Training groups one canonical tree, alternative Petri-net realizations, and finite log observations into behavior families, while recording which visible-trace and partial-order properties each pair shares. On held-out synthetic families from the same generator design, the shared space supports cross-modal retrieval and follows an operational behavioral ordering. Grammar-constrained decoding always returns a well-formed, executable block-structured tree, but often fails to preserve behavior, particularly from event logs, and gives lower conformance than specialized discovery. \model is therefore best used as a representation and retrieval layer whose translated candidates are validated with established process-mining methods; the real-log cases are illustrative rather than evidence of industrial transfer.}
 
 \keywords{process mining, multimodal representation learning, behavior supervision, process trees, Petri nets, event logs, grammar-constrained decoding}
 
@@ -81,9 +81,9 @@ Figure~\ref{fig:intuitive-example} illustrates the opportunity. A small process 
 
 \input{figures/intuitive-example}
 
-We introduce \model to learn such a shared representation for event logs, process trees, and Petri nets. Modality-specific encoders map the artifacts into one semantic space, while a grammar-constrained decoder returns a block-structured process tree. Training is organized around \emph{behavior families} that pair alternative model realizations with different log observations and record the strength of their relation.
+We introduce \model to learn such a shared representation for event logs, process trees, and Petri nets. Modality-specific encoders map the artifacts into one semantic space, while a grammar-constrained decoder returns a block-structured process tree. Training is organized around \emph{behavior families} that pair alternative model realizations with different log observations and record which behavioral properties they share.
 
-The evaluation scope is deliberately narrow. Quantitative experiments use held-out synthetic families produced by the same generator design as the training data. They do not establish transfer to industrial event logs. The decoder can return only process trees, so arbitrary non-block-structured Petri nets lie outside its output language. Within this scope, the paper asks:
+The evaluation is deliberately scoped to family-unseen synthetic data and process-tree outputs; Sections~\ref{sec:experiment} and~\ref{sec:threats} state the resulting generalization and expressivity limits. Within this scope, the paper asks:
 
 \begin{description}
 \item[\RQone:] Does the shared space align related artifacts and preserve behavioral ordering?
@@ -111,11 +111,45 @@ A concurrent direction uses in-context learning on event logs for predictive mon
 
 \subsection{Multimodal alignment and constrained generation}
 
-Contrastive multimodal learning demonstrates that paired observations can define a shared space without requiring identical encoders \citep{Radford2021}. Supervised contrastive objectives allow all members of a semantic class to act as positives \citep{Khosla2020}. Our classes are behavior families rather than image--text pairs, and the recorded relation strength controls which pairs may be used as exact positives. Variance and covariance regularization reduce collapse without imposing a probabilistic prior \citep{Bardes2022}.
+Contrastive multimodal learning demonstrates that paired observations can define a shared space without requiring identical encoders \citep{Radford2021}. Supervised contrastive objectives allow all members of a semantic class to act as positives \citep{Khosla2020}. Our classes are behavior families rather than image--text pairs, and the separately recorded visible-language and partial-order semantics determine which pairs may be used as strong positives. Variance and covariance regularization reduce collapse without imposing a probabilistic prior \citep{Bardes2022}.
 
 Transformers provide the attention mechanism used in the process-tree encoder, set-attention component, and decoder \citep{Vaswani2017}. The event-log encoder must additionally be invariant to trace order, motivating set attention \citep{Lee2019}. For output, grammar-constrained decoding can guarantee syntactic structure even when model probabilities are imperfect \citep{Geng2023}. Our decoder extends this principle with explicit operator arities, source-activity masking, contextual copy scores, and deterministic completion when the search budget is exhausted.
 
 \section{Problem formulation and research questions}\label{sec:setting}
+
+Training examples are generated as families rather than as independent triples. Consider the duplicate-prefix behavior
+\begin{equation}
+T=\mathsf{XOR}\bigl(
+  \mathsf{SEQ}(\textsf{register},\textsf{accept}),
+  \mathsf{SEQ}(\textsf{register},\textsf{reject})
+\bigr).
+\label{eq:worked-family}
+\end{equation}
+One Petri-net realization, $N^{(1)}$, has a distinct transition labeled \textsf{register} on each choice branch. A second realization, $N^{(2)}$, uses one shared \textsf{register} transition followed by two silent routing transitions. Their internal structures differ, but both allow exactly
+\[
+\langle\textsf{register},\textsf{accept}\rangle
+\quad\text{and}\quad
+\langle\textsf{register},\textsf{reject}\rangle.
+\]
+The generator creates two finite logs from this common trace pool. The cycled-coverage view repeats available variants evenly before shuffling, whereas the resampled view draws variants independently with replacement. Pairing each log with each realization gives the four observations in Table~\ref{tab:worked-family}.
+
+\begin{table*}[!t]
+\centering
+\caption{Four rows produced by the worked duplicate-prefix family.}
+\label{tab:worked-family}
+\begin{tabularx}{\textwidth}{@{}cC{0.12\textwidth}p{0.34\textwidth}Y@{}}
+\toprule
+Row & Tree target & Petri-net realization & Event-log observation \\
+\midrule
+1 & $T$ & duplicated visible prefix $N^{(1)}$ & cycled-coverage view \\
+2 & $T$ & shared prefix with silent routing $N^{(2)}$ & cycled-coverage view \\
+3 & $T$ & duplicated visible prefix $N^{(1)}$ & independent resample \\
+4 & $T$ & shared prefix with silent routing $N^{(2)}$ & independent resample \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+These rows are four observations of one behavior family, not four independently sampled behaviors. The family is both the unit of supervision and the unit assigned to a data split. We now formalize the artifact types and tasks illustrated by this example.
 
 Let $\mathcal{A}$ be a finite activity alphabet and $\tauact$ an invisible activity. A trace is a word $\sigma\in\mathcal{A}^{*}$, and an event log $L$ is a finite multiset of traces. A process tree $T$ is generated by
 \begin{equation}
@@ -125,9 +159,9 @@ T ::= a \mid \tauact \mid \mathsf{SEQ}_{k}(T_1,\ldots,T_k)
  \mid \mathsf{LOOP}(T_1,T_2),
 \label{eq:grammar}
 \end{equation}
-where $a\in\mathcal{A}$ and $k\geq2$. A labeled Petri net is a tuple $N=(P,U,F,\ell,m_0,m_f)$ with places $P$, transitions $U$, flow relation $F$, labels $\ell:U\rightarrow\mathcal{A}\cup\{\tauact\}$, and initial and final markings $m_0,m_f$. Petri nets can express non-block-structured behavior that the tree grammar cannot.
+where $a\in\mathcal{A}$ and $k\geq2$. A labeled Petri net is a tuple $N=(P,U,F,\ell,m_0,m_f)$ with places $P$, transitions $U$, flow relation $F$, labels $\ell:U\rightarrow\mathcal{A}\cup\{\tauact\}$, and initial and final markings $m_0,m_f$. We use a process tree as the canonical exchange representation because its compact grammar supports constrained generation and conversion into a sound workflow net. This makes supervised decoding possible, but limits the output to block-structured behavior; Petri nets can express structures outside that grammar.
 
-A \emph{behavior family} $f$ contains a canonical tree $T_f$, two Petri-net realizations $N_f^{(1)},N_f^{(2)}$, and two event-log observations $L_f^{(u)},L_f^{(r)}$. Their pairing is
+A \emph{behavior family} $f$ contains a canonical tree $T_f$, two Petri-net realizations $N_f^{(1)},N_f^{(2)}$, and two event-log observations $L_f^{(u)},L_f^{(r)}$, where $u$ denotes the cycled-coverage implementation mode and $r$ the independent resample. Their pairing is
 \[
 \begin{array}{c|cc}
  & L_f^{(u)} & L_f^{(r)}\\
@@ -138,107 +172,200 @@ N_f^{(2)} & (T_f,N_f^{(2)},L_f^{(u)}) & (T_f,N_f^{(2)},L_f^{(r)})
 \]
 Thus one family produces four aligned rows. The same underlying tree is paired with every row; each log observation and Petri-net realization participates in two rows.
 
-For modality $m\in\{T,L,N\}$, an encoder returns source memory $H_m$ and a normalized semantic vector $\vect z_m$. The shared-embedding task places related family members near one another despite their different structures. Cross-modal retrieval ranks candidate artifacts by cosine similarity between these vectors. Direct translation conditions a decoder on $H_m$ and returns a tree in Eq.~\eqref{eq:grammar}. For optional fusion, the available semantic vectors are averaged,
+For modality $m\in\{T,L,N\}$, an encoder produces two outputs. Contextual source memory $H_m$ retains local information used by the decoder, while a compact normalized vector $\vect z_m$ summarizes the artifact for retrieval and comparison. The shared-embedding task places related family members near one another despite their different structures. Cross-modal retrieval ranks candidate artifacts by cosine similarity between these vectors. Direct translation conditions a decoder on $H_m$ and returns a tree in Eq.~\eqref{eq:grammar}. For optional fusion, the available semantic vectors are averaged,
 \begin{equation}
 \vect z_{\mathrm{fuse}}=\frac{1}{|S|}\sum_{m\in S}\vect z_m,
 \qquad S\subseteq\{T,L,N\},
 \label{eq:fusion}
 \end{equation}
-and projected into decoder memory. Translation is therefore always into a process tree, even when the source is a Petri net. These tasks instantiate \RQone--\RQthree from the Introduction.
+and projected into decoder memory. Translation is therefore always into a process tree, even when the source is a Petri net. These tasks instantiate \RQone--\RQthree{} from the Introduction.
 
 \FloatBarrier
 \section{The ProcRosetta method}\label{sec:model}
 
-\subsection{Behavior-family supervision}\label{sec:corpus}
+\subsection{Behavior families as the supervision unit}\label{sec:corpus}
 
-Figure~\ref{fig:corpus} summarizes corpus construction. The generator follows four conceptual stages:
+The multiplicity inside a family has a distinct purpose. Two Petri-net realizations teach that internal place names, transition identifiers, silent routing, and one serialization are not themselves the behavior. Isomorphic copies provide an easy instance of this invariance; controlled families add structurally different realizations so that graph correspondence alone is insufficient. Two event-log observations teach that a finite sample and its empirical frequencies are not the complete process. One canonical tree gives the decoder a unique supervised target even though several models may be compatible with the observations.
 
+Starting from one behavior, the generator performs six steps:
 \begin{enumerate}
-\item Generate an ordinary random process tree or insert a controlled motif.
-\item Construct two process-model realizations of the resulting process.
-\item Establish the relation between the realizations and generate two clean event-log observations.
-\item Canonicalize activity labels and pair the model and log views into four aligned rows.
+\item choose an ordinary random family or a controlled anchor motif;
+\item construct the canonical process tree;
+\item construct two Petri-net realizations;
+\item record visible-language evidence and partial-order information;
+\item construct a trace pool and two finite log observations; and
+\item relabel each observation consistently across modalities and expand the family into four rows.
 \end{enumerate}
+Figure~\ref{fig:corpus} groups these steps into four visual stages. Family membership is fixed before the final Cartesian product; Appendix Fig.~\ref{fig:row-expansion} makes the view-specific relabeling and four-row expansion explicit.
 
 \input{figures/corpus}
 
-The relation attached to a pair determines how it may supervise the shared space. Table~\ref{tab:certificate-taxonomy} gives the taxonomy, and the implementation procedure and its finite-search boundaries follow below.
+All four rows from a family are assigned to the same split. Thus neither the two log observations nor the two Petri-net realizations of one generated family can cross a train--test boundary. The generator does not globally deduplicate canonical trees or complete visible languages across independently sampled families, however. The experiment therefore measures generalization to unseen generated families, not strict behavior-disjoint or generator-shift generalization.
 
-\begin{table*}[!t]
-\centering
-\caption{Relation taxonomy for behavior-family supervision.}
-\label{tab:certificate-taxonomy}
-\begin{tabularx}{\textwidth}{@{}p{0.16\textwidth}p{0.34\textwidth}Y@{}}
-\toprule
-Relation & Basis & Use in training \\
-\midrule
-Exact & Visible language and relevant partial-order evidence agree. & May define a strong cross-modal positive. \\
-Isomorphic & Equivalence follows from a structure-preserving construction. & May define a strong within-family positive. \\
-Analogue & A related behavioral pattern is retained, but exact equivalence is not claimed. & Provides weaker geometric supervision only. \\
-\bottomrule
-\end{tabularx}
-\end{table*}
+\subsection{Ordinary random families and controlled anchor families}
 
-Ordinary families pair a tree-derived workflow net with an isomorphically renamed realization. Controlled families introduce the duplicate-prefix, concurrency/interleaving, and non-free-choice M-pattern contrasts in Fig.~\ref{fig:motifs}. The same activity notation is used across all panels. The controlled fragments are placed inside randomized contexts so that the model cannot succeed by recognizing a single fixed template.
+Ordinary families are generated topology first. The sampler plans a root operator, recursively samples an unlabeled topology, and rejects a topology that cannot meet the required number of distinct activities. It then assigns distinct labels until that floor is met, applies label reuse only to later leaves, canonicalizes XOR and AND child order, folds the tree, and measures the target that the decoder will actually see. A candidate is accepted only if this folded target meets the ordinary profile; otherwise sampling restarts, and exhausting 4,000 attempts raises an error rather than relaxing the bounds. No artificial sequence padding is inserted to satisfy an activity floor. Appendix Fig.~\ref{fig:tree-sampler} visualizes this acceptance loop.
+
+Controlled families instead place one of three small contrasts inside the same randomized context for both realizations. These contexts contain 4--12 nodes and are generated separately from the ordinary size, depth, and activity filters. The duplicate-prefix, concurrency/interleaving, and non-free-choice M-pattern anchors remain present at every complexity level: the anchors provide stable representation contrasts while the ordinary random trees become larger and deeper. Figure~\ref{fig:motifs} summarizes their structures.
 
 \input{figures/controlled-motifs}
 
 \FloatBarrier
 
-Each family supplies two clean log observations derived from a common trace pool: a coverage-oriented view and an independently resampled view. No corruption is stored in the evaluated corpus. Incomplete or noisy presentations occur only as training-time augmentation. For each log view, a first-seen map converts activities to $A_0,A_1,\ldots$ and is applied to that view's tree, log, and Petri net. This removes arbitrary source names as a shortcut while preserving a mapping back to external labels.
+\subsection{Relation records and event-log observations}\label{sec:relations}
+
+For every model pair, the generator records three questions separately: how the relationship was established, which behavioral semantics agree, and how the pair may be used during training. Table~\ref{tab:relation-evidence} describes the certificate mechanisms. Isomorphism is a proof mechanism, not a semantic class weaker than equality.
+
+\begin{table*}[!t]
+\centering
+\caption{Visible-language evidence stored for a pair of model realizations.}
+\label{tab:relation-evidence}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.23\textwidth}Y>{\raggedright\arraybackslash}p{0.28\textwidth}@{}}
+\toprule
+Evidence status & Meaning & Consequence for training \\
+\midrule
+Exact enumeration & Both marking searches terminate and return the same complete visible language. & Supplies an exact trace-language identifier. \\
+Bounded search & Collected trace sets agree, but at least one search reaches a resource bound. Complete-language equality is not claimed. & Supplies no exact positive; the resolved training policy rejects such families. \\
+Isomorphic construction & The second net is obtained by structure-preserving renaming, including arcs, labels, and markings. & Certifies ordinary looping pairs without enumerating an infinite language. \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+Partial-order identity is stored independently from visible-language identity. A record may denote the same shared class, a concurrent realization, an explicitly interleaved realization, or unavailable information. A strong positive requires both the strong behavior identifier and the partial-order identifier to agree. A pair with the same exact visible-language identifier but different partial-order identifiers is used as a weaker analogue; bounded agreement never creates an exact positive. Table~\ref{tab:motif-cert} applies these rules to each family type.
+
+\begin{table*}[!t]
+\centering
+\caption{Representation contrasts, recorded semantics, and supervision roles.}
+\label{tab:motif-cert}
+\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.18\textwidth}>{\raggedright\arraybackslash}p{0.28\textwidth}>{\raggedright\arraybackslash}p{0.23\textwidth}Y@{}}
+\toprule
+Family & Structural contrast & Recorded relation & Training role \\
+\midrule
+Ordinary non-loop & Tree conversion versus renamed copy & Exact visible language when exploration completes; shared partial-order ID & Strong positive \\
+Ordinary loop & Tree conversion versus renamed copy & Isomorphic construction; shared partial-order ID & Strong positive without exhaustive enumeration \\
+Duplicate prefix & Duplicated visible transition versus shared transition and silent routing & Exact visible language; shared partial-order ID & Strong positive \\
+Concurrency/\newline interleaving & True parallel fragment versus two explicit serial branches & Exact visible language; different partial-order IDs & Weaker trace-equivalent analogue \\
+M-pattern & Block-structured versus non-free-choice routing & Exact visible language in the accepted context; shared recorded partial-order class & Strong positive; no claim beyond the accepted context \\
+Bounded comparison & Any search stopped by a safeguard & Collected traces only; no exact identifier & Not an exact positive and not retained for training \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+The concurrency pair makes the separation concrete. Both realizations generate $\langle A_0,A_1\rangle$ and $\langle A_1,A_0\rangle$, but only the parallel net can enable $A_0$ and $A_1$ simultaneously. The pair is therefore equal under complete visible-trace language, but not under the recorded partial-order semantics. Figure~\ref{fig:concurrency-nets} shows the two full Petri-net fragments.
+
+\begin{figure*}[!t]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+ pnplace/.style={circle,draw=prgray,minimum size=5.5mm,inner sep=0pt,fill=white},
+ pnfinal/.style={pnplace,double,double distance=0.7pt},
+ pnvisible/.style={rectangle,draw=prgray,fill=prlightteal,minimum width=8mm,minimum height=6mm,font=\scriptsize},
+ pnsilent/.style={rectangle,draw=prgray,fill=prgray!20,minimum width=2mm,minimum height=7mm,inner sep=0pt},
+ pnarc/.style={-{Stealth[length=1.5mm]},semithick,draw=prgray},
+ pntitle/.style={font=\small\bfseries,align=center}
+]
+% True-concurrency realization.
+\node[pntitle] at (3.3,1.75) {$N^{(1)}$: true concurrency};
+\node[pnplace] (c0) at (0,0) {};
+\fill (c0.center) circle (1.1pt);
+\node[pnsilent] (cs) at (1.0,0) {};
+\node[pnplace] (cp0) at (2.0,0.65) {};
+\node[pnplace] (cp1) at (2.0,-0.65) {};
+\node[pnvisible] (ca0) at (3.2,0.65) {$A_0$};
+\node[pnvisible] (ca1) at (3.2,-0.65) {$A_1$};
+\node[pnplace] (cq0) at (4.4,0.65) {};
+\node[pnplace] (cq1) at (4.4,-0.65) {};
+\node[pnsilent] (cj) at (5.4,0) {};
+\node[pnfinal] (cf) at (6.4,0) {};
+\draw[pnarc] (c0)--(cs);
+\draw[pnarc] (cs)--(cp0);
+\draw[pnarc] (cs)--(cp1);
+\draw[pnarc] (cp0)--(ca0);
+\draw[pnarc] (cp1)--(ca1);
+\draw[pnarc] (ca0)--(cq0);
+\draw[pnarc] (ca1)--(cq1);
+\draw[pnarc] (cq0)--(cj);
+\draw[pnarc] (cq1)--(cj);
+\draw[pnarc] (cj)--(cf);
+
+% Explicit-interleaving realization.
+\node[pntitle] at (11.1,1.75) {$N^{(2)}$: explicit interleavings};
+\node[pnplace] (i0) at (7.8,0) {};
+\fill (i0.center) circle (1.1pt);
+\node[pnsilent] (iu) at (8.8,0.70) {};
+\node[pnsilent] (il) at (8.8,-0.70) {};
+\node[pnplace] (ip0) at (9.8,0.70) {};
+\node[pnplace] (ip1) at (9.8,-0.70) {};
+\node[pnvisible] (ia0u) at (10.9,0.70) {$A_0$};
+\node[pnvisible] (ia1l) at (10.9,-0.70) {$A_1$};
+\node[pnplace] (iq0) at (12.0,0.70) {};
+\node[pnplace] (iq1) at (12.0,-0.70) {};
+\node[pnvisible] (ia1u) at (13.1,0.70) {$A_1$};
+\node[pnvisible] (ia0l) at (13.1,-0.70) {$A_0$};
+\node[pnfinal] (if) at (14.4,0) {};
+\draw[pnarc] (i0)--(iu);
+\draw[pnarc] (i0)--(il);
+\draw[pnarc] (iu)--(ip0);
+\draw[pnarc] (il)--(ip1);
+\draw[pnarc] (ip0)--(ia0u);
+\draw[pnarc] (ip1)--(ia1l);
+\draw[pnarc] (ia0u)--(iq0);
+\draw[pnarc] (ia1l)--(iq1);
+\draw[pnarc] (iq0)--(ia1u);
+\draw[pnarc] (iq1)--(ia0l);
+\draw[pnarc] (ia1u)--(if);
+\draw[pnarc] (ia0l)--(if);
+
+\node[font=\scriptsize,align=center,text=prgray] at (3.2,-1.55)
+  {both activities may be enabled together};
+\node[font=\scriptsize,align=center,text=prgray] at (11.1,-1.55)
+  {one of two serial orders is chosen};
+\end{tikzpicture}%
+}
+\caption{Full concurrency/interleaving contrast. Both nets generate $\langle A_0,A_1\rangle$ and $\langle A_1,A_0\rangle$, but only $N^{(1)}$ enables the activities concurrently. The pair shares an exact visible-language identifier, has different partial-order identifiers, and is not a strong positive. Black rectangles denote silent transitions.}
+\label{fig:concurrency-nets}
+\end{figure*}
+
+The trace pool is constructed before either log view. For finite non-looping families, the generator enumerates the complete visible traces of both Petri-net realizations, verifies equality of the collected sets, and marks the result exact only when both searches terminate. An ordinary looping tree may have an infinite language, so its pair is certified by construction isomorphism instead; 512 seeded tree playouts are simulated, deduplicated, and sorted to form a finite pool.
+
+Both stored log observations are then drawn from this pool. The \emph{cycled-coverage view} (implementation mode \texttt{uniform\_variants}) cycles through the deterministic pool until 128 traces have been selected and then shuffles them with a derived seed. If the pool has more than 128 variants, only its first 128 sorted variants enter this view. The \emph{independent resample} draws 128 traces with replacement. For example, from $\{ab,ac,ad\}$ a six-trace coverage view contains two copies of each variant before shuffling, whereas a resample might be $ab,ab,ac,ab,ad,ac$. Coverage-view frequencies are a sampling device, not an estimated operational distribution. Persisted logs remain clean so evaluation is not confounded by unknown corruption; incomplete and noisy presentations are generated only as training-time augmentation for observation consistency.
+
+Finally, each log view receives its own first-seen activity map. If one worked-example view begins with \textsf{register}, \textsf{accept}, then \textsf{register} becomes $A_0$, \textsf{accept} becomes $A_1$, and \textsf{reject} becomes $A_2$. If the other begins with \textsf{register}, \textsf{reject}, the last two canonical names are reversed. Family labels absent from the finite view are appended in stable tree/trace-pool order. The view-specific map is applied consistently to its tree, every trace, and all visible Petri-net transitions. Literal labels and first-appearance order therefore cannot identify a family; the stored behavior and partial-order identifiers determine positive pairs.
 
 \subsection{Generator implementation and relation checks}\label{sec:generation}
 
-Algorithm~\ref{alg:generation} makes the data-generation procedure explicit. A global seed is expanded with BLAKE2b into family-specific streams for the process model, representation, playout, log view, and augmentation. Structural sampling is therefore independent from observation sampling. Ordinary topologies are retried until the requested profile constraints are met, with a limit of 4,000 attempts.
+Algorithm~\ref{alg:generation} summarizes the implementation after the preceding narrative. A global seed is expanded with BLAKE2b into family-specific streams for the process model, representation, playout, log view, and augmentation, so structural and observation sampling are independent.
 
 \begin{algorithm*}[!t]
 \centering
 \caption{Behavior-family generation}
 \label{alg:generation}
 \begin{algorithmic}[1]
-\Require curriculum profile $c$, family target $n$, deterministic seed $s$
+\Require complexity profile $c$, family target $n$, deterministic seed $s$
 \State initialize split-local family list $\mathcal{F}\leftarrow\varnothing$
-\State allocate motif and ordinary-root quotas
+\State allocate controlled-motif and ordinary-root quotas
 \While{$|\mathcal{F}|<n$}
   \State derive family-specific random streams from $s$
-  \State sample an ordinary tree or place a controlled motif in a shared context
+  \State sample an ordinary tree under $c$ or place a controlled motif in a shared context
   \State construct paired Petri-net realizations $N^{(1)},N^{(2)}$
   \State reject failed conversion, reachability, or dead-transition checks
   \If{$T$ is an ordinary looping tree}
-    \State establish the paired construction as isomorphic
-    \State simulate seeded tree playouts to form a clean trace pool
+    \State record construction isomorphism and simulate a seeded trace pool
   \Else
     \State enumerate each visible language under the configured safeguards
     \State reject empty or unequal collected languages
-    \State record exact evidence if both explorations exhaust; bounded evidence otherwise
+    \State record exact evidence if both searches finish; bounded evidence otherwise
   \EndIf
-  \State derive coverage-oriented and resampled clean log observations
-  \State canonicalize each view and flatten two model variants by two log views
+  \State construct cycled-coverage and independently resampled log views
+  \State apply each first-seen map and flatten two model variants by two log views
   \State store relation metadata, targets, seeds, and four rows
 \EndWhile
 \State verify coverage constraints and commit the split
 \end{algorithmic}
 \end{algorithm*}
 
-For non-looping families, marking exploration stops after 5,000 visited states, 10,000 completed traces, visible length 32, or the silent-transition firing safeguard. Exhausting both state spaces establishes exact visible-language evidence; reaching a limit establishes only a bounded comparison, which is never used as an exact positive. For ordinary looping pairs, exact supervision instead follows from the construction-level isomorphism. Normalized language hashes and partial-order identifiers record these distinctions without extending the claim beyond the available certificate.
-
-\begin{table*}[!t]
-\centering
-\caption{Controlled-motif intent and relation boundary.}
-\label{tab:motif-cert}
-\begin{tabularx}{\textwidth}{@{}p{0.20\textwidth}YYY@{}}
-\toprule
-Motif & Representation contrast & Relation retained & Explicit non-claim \\
-\midrule
-Duplicate prefix & Duplicate visible transitions versus shared transition and silent routing & Exact normalized visible language and shared partial-order identity & Equal internal routing structure \\
-Concurrency & True parallel fragment versus explicit sequence interleavings & Exact visible language but different partial-order identities & Equal concurrency or causal semantics \\
-M-pattern & Block-structured fragment versus non-free-choice realization & Exact normalized visible language in accepted contexts & Universal equivalence under other contexts or bounds \\
-Ordinary & Canonical tree conversion versus isomorphic renaming & Exact language for non-loops; construction isomorphism for loops & Cross-family language identity for loops \\
-\bottomrule
-\end{tabularx}
-\end{table*}
-
-The generator rejects unsound conversions, unreachable final markings, and dead transitions before storing a family. It also verifies motif coverage and split-local identifiers after generation. The resulting certificates are part of each row rather than reconstructed later from surface similarity.
+For non-looping families, marking exploration stops after 5,000 visited states, 10,000 completed traces, visible length 32, or the silent-transition firing safeguard. Reaching one of these limits records only bounded evidence; such families may remain in held-out splits but are excluded from training by the resolved exact-only policy. The generator also rejects unreachable final markings and dead transitions, verifies motif and representation-slot coverage, and stores the relation certificate in every row rather than reconstructing it later from surface similarity.
 
 \subsection{Multimodal architecture}\label{sec:architecture}
 
@@ -291,17 +418,30 @@ The shared decoder predicts tree structure, operator arity, and visible activiti
 \input{figures/decoder}
 
 \FloatBarrier
-\subsection{Training objectives and checkpoint selection}\label{sec:training}
+\subsection{Training objectives}\label{sec:training}
 
-Training combines three groups of objectives:
+The fields produced by the generator determine which loss can be applied. Table~\ref{tab:data-to-loss} gives this connection before the formal objective.
 
-\begin{description}
-\item[Reconstruction.] Single-modality and fused representations are trained to generate the canonical process tree.
-\item[Alignment.] Exact-pair contrast, relation hierarchy, alternate-observation consistency, and operational behavioral geometry organize the shared space.
-\item[Regularization.] Variance, covariance, termination, length, and structural-completion terms discourage collapse and unstable generation.
-\end{description}
+\begin{table*}[!t]
+\centering
+\caption{From generated relationships to learning signals.}
+\label{tab:data-to-loss}
+\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.31\textwidth}>{\raggedright\arraybackslash}p{0.22\textwidth}Y@{}}
+\toprule
+Generated relationship & Learning signal & Intended effect \\
+\midrule
+A row and its canonical tree & Reconstruction & Decode the designated exchange representation from any source modality or fusion. \\
+Same family, different log observations & Observation consistency & Ignore finite-sample frequencies and trace presentation order. \\
+Same strong behavior and partial-order identifiers & Strong contrastive positive & Align artifact views known to share both recorded semantics. \\
+Same exact trace-language ID, different partial-order IDs & Hierarchical analogue & Keep trace-equivalent artifacts closer than unrelated ones without erasing their causal distinction. \\
+Different families and operational behavior descriptors & Geometry and ranking & Preserve the supervised operational ordering. \\
+All semantic vectors & Variance and covariance regularization & Prevent representation collapse. \\
+\bottomrule
+\end{tabularx}
+\end{table*}
 
-The complete objective is
+These signals form three conceptual groups: reconstruction from single modalities and fusion; alignment through strong-pair contrast, relation hierarchy, observation consistency, and operational geometry; and regularization for latent diversity and stable structured generation. The complete objective is
 \begin{align}
 \mathcal{L}={}&
  \mathcal{L}_{\mathrm{recon}}
@@ -313,32 +453,32 @@ The complete objective is
  +\mathcal{L}_{\mathrm{reg}}.
 \label{eq:objective}
 \end{align}
-Table~\ref{tab:loss-weights} resolves these groups into the actual checkpoint coefficients. A zero Kullback--Leibler weight is consistent with the deterministic semantic latent: the model does not sample from a learned latent distribution.
+The four principal reconstruction weights are 1.00; exact cross-modal contrast is weighted 0.30, hierarchical ordering and observation consistency 0.15 each, and soft behavioral geometry 0.25. Appendix~\ref{app:training-details} reports the complete coefficient table, including inactive terms. The semantic latent is deterministic, so the Kullback--Leibler coefficient is zero rather than a probabilistic prior.
+
+\subsection{Curriculum learning and checkpoint selection}\label{sec:curriculum}
+
+We distinguish a \emph{complexity profile} (the ordinary-tree generator bounds), a \emph{complexity corpus} or level (an independently generated simple, medium, or complex dataset), and a \emph{curriculum stage} (the batch mixture currently used for training). Curriculum learning is the competence-gated progression between these mixtures.
+
+The progression separates several coupled tasks. The model must align three modalities, identify activities consistently, and generate a valid tree prefix autoregressively. Beginning with trees of up to 80 nodes makes these skills difficult to acquire together: an incorrect operator or arity changes the number of open child positions and can affect every later token. The simple stage therefore emphasizes grammar closure, activity copying, and initial alignment on short structures. Later stages introduce deeper nesting, more labels, and longer-range dependencies. Easier rehearsal batches remain active to reduce forgetting, while the controlled motifs remain at every level as stable representation anchors.
 
 \begin{table*}[!t]
 \centering
-\caption{Principal objective coefficients in the selected checkpoint.}
-\label{tab:loss-weights}
-\begin{tabular}{@{}lr@{\qquad}lr@{}}
+\caption{Implemented curriculum schedule. Mixtures are base batch-selection weights before validation-deficit adjustment, not percentages of individual rows.}
+\label{tab:curriculum-schedule}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.13\textwidth}>{\raggedright\arraybackslash}p{0.29\textwidth}C{0.14\textwidth}Y@{}}
 \toprule
-Term & Weight & Term & Weight \\
+Stage & Base batch mixture & Epochs in this run & Main purpose \\
 \midrule
-Tree reconstruction & 1.00 & Event-log reconstruction & 1.00 \\
-Petri-net reconstruction & 1.00 & Fused reconstruction & 1.00 \\
-Fused subset reconstruction & 0.25 & Constrained reconstruction & 0.25 \\
-Exact cross-modal contrast & 0.30 & Within-modality contrast & 0.25 \\
-Semantic exact contrast & 0.15 & Cross-batch memory contrast & 0.10 \\
-Hierarchical metric ordering & 0.15 & Observation consistency & 0.15 \\
-Soft behavioral geometry & 0.25 & Observed-distance regression & 0.20 \\
-Observed-distance ranking & 0.20 & Latent alignment & 0.075 \\
-Variance regularization & 0.10 & Covariance regularization & 0.01 \\
-EOS / length / slots / completion & 0.05 each & Duplicate-activity penalty & 0 \\
-Kullback--Leibler & 0 & Tree-complexity penalty & 0 \\
+Simple & 100\% simple & 1--5 & Basic grammar, activity handling, and initial cross-modal alignment \\
+Medium & 25\% simple; 75\% medium & 6--10 & Deeper and longer structures with rehearsal of simple examples \\
+Complex & 10\% simple; 20\% medium; 70\% complex & 11--17 & Target structural range while retaining earlier competencies \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table*}
 
-The stored corpus contains clean logs. Simulated incomplete or noisy log presentations, when used by the observation-consistency objective, are generated only during training. The model is trained through simple, medium, and complex structural curricula, with family-aware batches and activity-label remapping. Table~\ref{tab:hyperparameters} gives the settings needed to interpret and reproduce the run.
+Each batch is homogeneous in complexity level. Effective batch sizes are 128, 96, and 64 for simple, medium, and complex batches, so the weights in Table~\ref{tab:curriculum-schedule} do not imply the same proportions of individual rows. Before each epoch, the base weights are tilted toward active levels with larger validation deficits and renormalized.
+
+Advancement is competence based rather than a fixed epoch schedule. A transition requires at least five epochs in the current stage; termination, grammar validity, Petri-net conversion, and behavioral-evaluation rates of at least 0.95; and improvements of at least 0.005 in both decoding and retrieval scores relative to the stage baseline. Leaving the medium stage additionally requires the simple validation score to remain within 0.02 of its best value. At a transition the active mixture changes, and the learning-rate scheduler and early-stopping patience are reset. These changes explain the loss jumps at epochs 6 and 11; losses across stages describe different mixtures and are not directly comparable.
 
 \begin{table*}[!t]
 \centering
@@ -364,51 +504,22 @@ Test beam / budget & 2 / 512 & Behavioral simulations & 16 \\
 \end{tabular}
 \end{table*}
 
-Checkpoint eligibility begins only in the complex curriculum, where macro and worst-case validation measures are available across all complexity levels. The score displayed for epoch~10 came from the preceding curriculum and was not eligible for final selection. Epoch~11 was the first complete, eligible evaluation and produced the selected checkpoint; later eligible epochs did not improve the selection key. Test results were not used for this choice.
+A checkpoint trained only on simple or medium data cannot be selected as the final model because it has not seen the full target mixture. Eligibility therefore begins in the complex stage and uses validation measures aggregated across all three levels, including macro and worst-case components. Epoch~10 has the numerically higher displayed score (0.796 versus 0.787), but belongs to the medium stage and is ineligible. Epoch~11 is the first complex-stage checkpoint, wins the final robust selection key, and remains the selected checkpoint because no later eligible epoch improves that key. Test results are not used for selection.
 
-Adaptive validation balancing changes source reconstruction multipliers slightly. At the selected epoch they are 1.000 for process-tree input, 1.099 for event-log input, 1.064 for Petri-net input, and 1.122 for fusion. Figure~\ref{fig:training} and Table~\ref{tab:history} report the full optimization history, including epochs that were not yet eligible for final selection.
+Adaptive validation balancing also changes source reconstruction multipliers slightly. At the selected epoch they are 1.000 for process-tree input, 1.099 for event-log input, 1.064 for Petri-net input, and 1.122 for fusion. Figure~\ref{fig:training} shows the optimization history and stage changes; Appendix~\ref{app:training-details} gives all 17 rows.
 
 \input{figures/training}
-
-\begin{table*}[!t]
-\centering
-\caption{Complete training history. Final-selection eligibility begins with the complex curriculum.}
-\label{tab:history}
-\begin{tabular}{@{}rrrrcr@{}}
-\toprule
-Epoch & Training loss & Validation loss & Selection score & Eligible & Learning rate \\
-\midrule
-1  & 5.179 & 10.018 & 0.595 & No  & $3.00\times10^{-4}$ \\
-2  & 4.596 & 9.111  & 0.610 & No  & $3.00\times10^{-4}$ \\
-3  & 5.028 & 6.693  & 0.643 & No  & $3.00\times10^{-4}$ \\
-4  & 5.484 & 5.863  & 0.644 & No  & $3.00\times10^{-4}$ \\
-5  & 6.109 & 5.472  & 0.679 & No  & $3.00\times10^{-4}$ \\
-6  & 8.231 & 6.661  & 0.763 & No  & $3.00\times10^{-4}$ \\
-7  & 7.904 & 6.136  & 0.707 & No  & $3.00\times10^{-4}$ \\
-8  & 7.855 & 5.878  & 0.705 & No  & $1.50\times10^{-4}$ \\
-9  & 7.633 & 5.716  & 0.715 & No  & $1.50\times10^{-4}$ \\
-10 & 7.588 & 5.605  & 0.796 & No  & $1.50\times10^{-4}$ \\
-11 & 9.194 & 7.794  & 0.787 & Yes & $1.50\times10^{-4}$ \\
-12 & 9.162 & 7.550  & 0.703 & Yes & $1.50\times10^{-4}$ \\
-13 & 9.137 & 7.412  & 0.713 & Yes & $7.50\times10^{-5}$ \\
-14 & 9.449 & 7.334  & 0.707 & Yes & $7.50\times10^{-5}$ \\
-15 & 9.040 & 7.284  & 0.721 & Yes & $3.75\times10^{-5}$ \\
-16 & 9.144 & 7.241  & 0.716 & Yes & $3.75\times10^{-5}$ \\
-17 & 8.919 & 7.220  & 0.719 & Yes & $1.875\times10^{-5}$ \\
-\bottomrule
-\end{tabular}
-\end{table*}
 
 \FloatBarrier
 \section{Data and experimental design}\label{sec:experiment}
 
 \subsection{Resolved synthetic-data specification}\label{sec:data-specification}
 
-Table~\ref{tab:generator-config} gives the resolved settings used to generate every curriculum. Labels are assigned only after topology sampling so that the activity floor can be satisfied without changing the requested root operator. Each accepted family contains two Petri-net realizations and two clean event-log observations. The two-by-two expansion creates training rows but does not create four independent families.
+Table~\ref{tab:generator-config} gives the resolved settings used to generate each complexity-specific corpus. Labels are assigned only after topology sampling so that the activity floor can be satisfied without changing the requested root operator. Each accepted family contains two Petri-net realizations and two clean event-log observations. The two-by-two expansion creates training rows but does not create four independent families.
 
 \begin{table*}[!t]
 \centering
-\caption{Resolved generator configuration.}
+\caption{Resolved generator configuration. The simple, medium, and complex profile bounds apply only to ordinary random-tree families; controlled anchors are generated separately in 4--12-node randomized contexts.}
 \label{tab:generator-config}
 \begin{tabularx}{\textwidth}{@{}p{0.22\textwidth}p{0.31\textwidth}Y@{}}
 \toprule
@@ -418,7 +529,7 @@ Tree topology & arity $\leq3$; leaf probability 0.55; label-reuse probability 0.
 Operators & root: SEQ 0.70, XOR/AND/LOOP 0.10 each; non-root: 0.25 each & Root counts are quota-controlled for ordinary families; non-root operators are sampled. \\
 Family mixture & ordinary 0.75; each controlled motif $1/12$ & Minimum motif coverage is enforced in every split. \\
 Representations & two Petri-net variants per family & Canonical conversion plus isomorphism, or motif-specific realizations. \\
-Observations & two clean views; 128 traces per view; trace length $\leq128$ & Coverage-oriented and resampled views are stored; configured noise operators are inactive. \\
+Observations & two clean views; 128 traces per view; trace length $\leq128$ & Cycled-coverage and independently resampled views are stored; configured noise operators are inactive. \\
 Language search & 5,000 states; 10,000 traces; visible length $\leq32$ & Exhaustion yields exact evidence; hitting a limit yields bounded evidence. \\
 Format & schema 5; normalization \texttt{pm4py-fold-v1} & Generator/manifest version 7, activity vocabulary 30, global seed 13. \\
 \bottomrule
@@ -426,7 +537,7 @@ Format & schema 5; normalization \texttt{pm4py-fold-v1} & Generator/manifest ver
 \vspace{1mm}
 \begin{tabular}{@{}lrrrr@{}}
 \toprule
-Profile & Recursion cap & Min. folded depth & Folded nodes & Visible labels \\
+Ordinary profile & Recursion cap & Min. folded depth & Folded nodes & Visible labels \\
 \midrule
 Simple & 3 & 2 & 5--11 & 3--6 \\
 Medium & 5 & 3 & 12--19 & 5--14 \\
@@ -435,24 +546,15 @@ Complex & 7 & 4 & 20--80 & 8--28 \\
 \end{tabular}
 \end{table*}
 
-Within each complexity level, the training quotas are 3,056 ordinary, 347 duplicate-prefix, 347 concurrency, and 346 M-pattern families. Validation and test use 376, 45, 46, and 45 families, respectively. The command below fixes the family counts, seed, representation multiplicity, observation multiplicity, and view construction; resolved defaults and post-generation checks are also stored in the manifest.
-
-\begin{lstlisting}[basicstyle=\ttfamily\footnotesize,frame=single,breaklines=true]
-./sample.py --data-dir data --train-families 4096 \
-  --validation-families 512 --test-families 512 --seed 13 \
-  --generator behavior_families --activity-vocab-size 30 \
-  --traces-per-sample 128 --max-trace-length 128 \
-  --variants-per-behavior 2 --log-views-per-behavior 2 \
-  --log-view-modes uniform_variants,resampled
-\end{lstlisting}
+The displayed size, depth, and activity intervals are acceptance criteria for ordinary folded decoder targets, not global ranges for every family. Controlled anchors bypass these profile filters and remain present at all three levels, so aggregate statistics may legitimately fall outside an ordinary-profile interval. Within each level, the training quotas are 3,056 ordinary, 347 duplicate-prefix, 347 concurrency, and 346 M-pattern families. Validation and test use 376, 45, 46, and 45 families, respectively. The exact generation command appears in Section~\ref{sec:reproduction}; resolved defaults and post-generation checks are stored in the manifest.
 
 \subsection{Dataset at a glance}
 
-The synthetic corpus contains independently generated simple, medium, and complex curricula. Table~\ref{tab:corpus} reports family counts and held-out structural statistics. Each family contributes the four rows defined in Section~\ref{sec:setting}. All representations of a family remain in one split.
+The synthetic corpus contains three independently generated complexity-specific corpora: simple, medium, and complex. Table~\ref{tab:corpus} reports family counts and held-out structural statistics. Each family contributes the four rows defined in Section~\ref{sec:setting}. All representations of a family remain in one split.
 
 \begin{table*}[!t]
 \centering
-\caption{Synthetic corpus by complexity level. Size and depth describe folded canonical trees; trace length describes stored event-log observations.}
+\caption{Synthetic corpus by complexity level. The aggregate tree statistics combine ordinary families and controlled anchors; size and depth describe folded canonical trees, and trace length describes stored log observations.}
 \label{tab:corpus}
 \setlength{\tabcolsep}{3.4pt}
 \begin{tabular}{@{}lrrrrrr@{}}
@@ -543,7 +645,8 @@ These cases are descriptive rather than a benchmark: the logs were available in 
 
 \subsection{\RQone: Representation alignment and behavioral ordering}
 
-The shared representation aligns related artifacts across the fixed evaluation subset. Table~\ref{tab:geometry} compares its agreement with the supervised operational behavioral distance against learned single-modality representations and deterministic features. The fused representation gives the strongest listed correlation for medium and complex families. On simple families, the trace-variant baseline is stronger. This pattern supports a shared cross-artifact geometry, but not universal superiority over features tailored to the evaluation descriptor.
+\paragraph{\RQone answer.}
+Behavior-family supervision aligns the modalities well enough for related-artifact neighborhoods and an operational behavioral ordering. This supports a common interface, not a general semantic metric or universal superiority over specialized features. Table~\ref{tab:geometry} compares the shared representation with learned single-modality representations and deterministic features. The fused representation gives the strongest listed correlation for medium and complex families; on simple families, the trace-variant baseline is stronger.
 
 \begin{table*}[!t]
 \centering
@@ -614,13 +717,11 @@ Figure~\ref{fig:pca} provides only a two-dimensional illustration of this neighb
 
 The geometry result must be interpreted in light of its supervision. Components of $d_B$ also contribute to the training descriptor, so correlation measures agreement with the optimized operational ordering. Retrieval below and footprint conformance provide complementary evidence that does not reuse this exact scalar target.
 
-\paragraph{\RQone answer.}
-Behavior-family supervision aligns the modalities well enough for related-artifact neighborhoods and an operational behavioral ordering. The result is strongest as evidence for a common interface, not for a general semantic metric.
-
 \FloatBarrier
 \subsection{\RQtwo: Constrained decoding guarantees syntax but not behavioral accuracy}\label{sec:decode-results}
 
-Every decoding run terminates, satisfies the prefix grammar, uses the permitted activity inventory, and converts to a Petri net. This verifies the decoder constraints; it is not evidence of learned semantic accuracy. Table~\ref{tab:decode} therefore reports only properties that the model can fail, together with evaluator coverage.
+\paragraph{\RQtwo answer.}
+The decoder reliably returns executable syntax, but preserves too little behavior for unattended reconstruction, especially from event logs. Generated trees therefore require conformance checks and human inspection. Every decoding run terminates, satisfies the prefix grammar, uses the permitted activity inventory, and converts to a Petri net; these are enforced constraints rather than evidence of learned semantic accuracy. Table~\ref{tab:decode} reports properties that the model can fail, together with evaluator coverage.
 
 \begin{table*}[!t]
 \centering
@@ -671,13 +772,11 @@ Ordinary & 1.224 / 0.662 & 1.580 / 0.798 & 1.715 / 0.832 \\
 \end{tabular}
 \end{table*}
 
-\paragraph{\RQtwo answer.}
-The decoder reliably returns executable syntax, but it preserves insufficient semantic information for unattended reconstruction. Generated trees should be treated as candidates that require conformance checks and human inspection.
-
 \FloatBarrier
 \subsection{\RQthree: Cross-modal retrieval and specialized discovery}
 
-Cross-modal retrieval is consistently above the random family baseline. Table~\ref{tab:retrieval} presents Recall@1 and MRR in every direction. Event-log queries retrieving process trees are the hardest direction; process-tree queries retrieving event logs are the strongest.
+\paragraph{\RQthree answer.}
+The representation supports useful directional retrieval on the fixed gallery, but log-to-tree decoding does not match the conformance of a specialized discovery algorithm. Table~\ref{tab:retrieval} shows that cross-modal retrieval is consistently above the random family baseline. Event-log queries retrieving process trees are the hardest direction; process-tree queries retrieving event logs are the strongest.
 
 \begin{table*}[!t]
 \centering
@@ -753,9 +852,6 @@ Figure~\ref{fig:real-log-tree} shows the road-traffic output using the process-t
 
 \input{figures/real-log-tree}
 
-\paragraph{\RQthree answer.}
-The representation supports useful directional retrieval on the fixed gallery. Log-to-tree decoding does not match the conformance of a specialized discovery algorithm.
-
 \FloatBarrier
 \subsection{Illustrative running example}
 
@@ -777,39 +873,9 @@ Petri net & 14 & 5 & \best{0.182} & \best{0.860} & \best{0.700} & \best{0.772} \
 \end{tabular}
 \end{table*}
 
-Figure~\ref{fig:running-example} compares the loop fragments of the source tree and the best decoded tree. The decoded version moves the decision and reinitiation sequence from the loop body/redo boundary. The complete folded prefix forms follow the figure so that the qualitative comparison is auditable without detached material.
+Figure~\ref{fig:running-example} compares the loop fragments of the source tree and the best decoded tree. The decoded version moves the decision and reinitiation sequence from the loop body/redo boundary. Appendix~\ref{app:serialized-example} gives the complete folded prefix forms for auditability.
 
 \input{figures/running-example}
-
-\paragraph{Source tree.}
-\begin{quote}\ttfamily\small
-SEQ(register request, LOOP(SEQ(AND(check ticket,
-XOR(examine thoroughly, examine casually)), decide),
-reinitiate request), XOR(reject request, pay compensation)).
-\end{quote}
-
-\paragraph{Decoded from process-tree input.}
-\begin{quote}\ttfamily\small
-SEQ(register request, LOOP(AND(examine casually,
-XOR(decide, AND(examine thoroughly, reinitiate request))),
-SEQ(pay compensation, reject request)), XOR(tau, check ticket)).
-\end{quote}
-
-\paragraph{Decoded from event-log input.}
-\begin{quote}\ttfamily\small
-SEQ(register request, XOR(examine casually,
-AND(check ticket, decide, reinitiate request,
-LOOP(examine thoroughly, pay compensation))),
-XOR(tau, reject request)).
-\end{quote}
-
-\paragraph{Decoded from Petri-net input.}
-\begin{quote}\ttfamily\small
-SEQ(register request, LOOP(AND(check ticket,
-XOR(examine thoroughly, examine casually)),
-SEQ(decide, reinitiate request)),
-XOR(reject request, pay compensation)).
-\end{quote}
 
 \FloatBarrier
 \section{Reproducibility and software use}\label{sec:reproduction}
@@ -817,6 +883,12 @@ XOR(reject request, pay compensation)).
 The software encodes XES event logs, PTML process trees, and PNML Petri nets; retrieves artifacts by cosine similarity; translates supported inputs into PTML; fuses available semantic vectors; and exports validation reports. External labels are canonicalized internally and restored after decoding. The corpus manifest, checkpoint provenance, machine-readable synthetic results, and real-log result record accompany the manuscript source.
 
 \begin{lstlisting}[basicstyle=\ttfamily\footnotesize,frame=single,breaklines=true]
+./sample.py --data-dir data --train-families 4096 \
+  --validation-families 512 --test-families 512 --seed 13 \
+  --generator behavior_families --activity-vocab-size 30 \
+  --traces-per-sample 128 --max-trace-length 128 \
+  --variants-per-behavior 2 --log-views-per-behavior 2 \
+  --log-view-modes uniform_variants,resampled
 ./train.py --data-dir data \
   --checkpoint checkpoints/proc_rosetta.pt \
   --epochs 100 --batch-size 128
@@ -835,7 +907,7 @@ The last command repeats both duplicate-label policies on the fixed real-log sam
 
 \subsection{\RQone: Why multimodal alignment succeeds}
 
-Behavior families provide a supervision unit above surface syntax. Alternate event-log observations teach invariance to sampling, while paired Petri-net realizations teach invariance to representation. Separating exact, isomorphic, and analogue relations prevents a useful structural contrast from becoming a false identity. The result is a space that can support neighborhoods and retrieval even when the encoders share no input format.
+Behavior families provide a supervision unit above surface syntax. Alternate event-log observations teach invariance to sampling, while paired Petri-net realizations teach invariance to representation. Separating certificate mechanism, visible-language identity, and partial-order identity prevents a useful structural contrast from becoming a false identity. The result is a space that can support neighborhoods and retrieval even when the encoders share no input format.
 
 The behavioral-ordering result is narrower. Its target is an operational descriptor related to training supervision, and deterministic features remain competitive. The contribution is therefore the availability of one learned interface from every modality, not the replacement of all modality-specific similarity measures.
 
@@ -869,6 +941,177 @@ The limitation is that the study compares with deterministic representation base
 \section{Conclusion}\label{sec:conclusion}
 
 \model aligns event logs, process trees, and Petri nets through behavior-family supervision and a shared semantic interface. The representation supports cross-artifact retrieval and operational behavioral ordering, while grammar-constrained translation remains semantically unreliable despite guaranteed syntax. Illustrative real-log cases confirm the discovery gap and show that allowing repeated labels alone does not repair it. The model is therefore best used to retrieve related artifacts and propose candidates that are subsequently validated. The most important next experiment is evaluation on a behavior-disjoint multi-artifact benchmark containing real processes and structures outside the process-tree grammar.
+
+\FloatBarrier
+
+\appendix
+
+\section{Generator schematics}\label{app:generator-schematics}
+
+Figure~\ref{fig:tree-sampler} separates recursive topology construction from acceptance of the folded decoder target. Figure~\ref{fig:row-expansion} then shows how one accepted family becomes four rows without crossing a split boundary.
+
+\begin{figure*}[!t]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+ flowbox/.style={draw=prgray!70,rounded corners=2pt,align=center,minimum height=10mm,text width=27mm,inner sep=3pt},
+ flowdecision/.style={diamond,draw=prgray!70,aspect=2.0,align=center,text width=17mm,inner sep=1pt},
+ flowarrow/.style={-{Stealth[length=1.7mm]},semithick,draw=prblue}
+]
+\node[flowbox,fill=prlightgold] (root) at (0,0) {plan root operator};
+\node[flowbox,fill=prlightteal] (topology) at (3.6,0) {sample unlabeled topology};
+\node[flowdecision,fill=prlightgold] (capacity) at (7.0,0) {activity capacity?};
+\node[flowbox,fill=prlightblue] (labels) at (10.2,0) {assign activities after topology};
+\node[flowbox,fill=prlightblue] (fold) at (13.8,0) {canonicalize, fold, and measure};
+\node[flowdecision,fill=prlightgold] (profile) at (17.2,0) {ordinary profile met?};
+\node[flowbox,fill=prlightteal] (accept) at (20.4,0) {accept decoder target};
+\node[flowbox,fill=prlightred] (retry) at (13.8,-2.3) {reject candidate};
+\node[flowbox,fill=prlightred] (error) at (18.8,-2.3) {attempt budget exhausted: error};
+\draw[flowarrow] (root)--(topology);
+\draw[flowarrow] (topology)--(capacity);
+\draw[flowarrow] (capacity)--node[above,font=\scriptsize]{yes}(labels);
+\draw[flowarrow] (labels)--(fold);
+\draw[flowarrow] (fold)--(profile);
+\draw[flowarrow] (profile)--node[above,font=\scriptsize]{yes}(accept);
+\draw[flowarrow] (capacity.south) |- node[pos=0.25,left,font=\scriptsize]{no} (retry.west);
+\draw[flowarrow] (profile.south) |- node[pos=0.25,right,font=\scriptsize]{no} (retry.east);
+\draw[flowarrow] (retry)--(error);
+\draw[flowarrow] (retry.south) to[out=-90,in=-90,looseness=1.4]
+  node[below,font=\scriptsize]{attempt remains} (topology.south);
+\end{tikzpicture}%
+}
+\caption{Topology-first sampling for ordinary families. Activity requirements are checked without padding, and acceptance is based on the folded target seen by the decoder.}
+\label{fig:tree-sampler}
+\end{figure*}
+
+\begin{figure*}[!t]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+ familybox/.style={draw=prgray!70,rounded corners=2pt,fill=prlightgold,align=center,minimum height=18mm,text width=32mm},
+ viewbox/.style={draw=prgray!70,rounded corners=2pt,fill=prlightblue,align=center,minimum height=11mm,text width=25mm},
+ mapbox/.style={draw=prgray!70,rounded corners=2pt,fill=prlightteal,align=center,minimum height=11mm,text width=29mm},
+ rowbox/.style={draw=prgray!70,rounded corners=2pt,fill=white,align=center,minimum height=8mm,text width=39mm,font=\scriptsize},
+ rowarrow/.style={-{Stealth[length=1.7mm]},semithick,draw=prblue}
+]
+\node[familybox] (family) at (0,0)
+  {one family\\$T,\ N^{(1)},\ N^{(2)}$\\shared trace pool};
+\node[viewbox] (coverage) at (4.0,1.0) {cycled-coverage\\$L^{(u)}$};
+\node[viewbox] (resample) at (4.0,-1.0) {independent resample\\$L^{(r)}$};
+\node[mapbox] (mapu) at (8.1,1.0) {apply first-seen map $M_u$\\to tree, log, and both nets};
+\node[mapbox] (mapr) at (8.1,-1.0) {apply first-seen map $M_r$\\to tree, log, and both nets};
+\node[rowbox] (u1) at (12.8,1.5) {row 1: $(T_u,N_u^{(1)},L_u)$};
+\node[rowbox] (u2) at (12.8,0.5) {row 2: $(T_u,N_u^{(2)},L_u)$};
+\node[rowbox] (r1) at (12.8,-0.5) {row 3: $(T_r,N_r^{(1)},L_r)$};
+\node[rowbox] (r2) at (12.8,-1.5) {row 4: $(T_r,N_r^{(2)},L_r)$};
+\node[draw=prred,dashed,rounded corners=3pt,fit=(u1)(u2)(r1)(r2),inner sep=4mm,
+  label={[font=\scriptsize\bfseries,text=prred]above:all four rows remain in one split}] (split) {};
+\draw[rowarrow] (family)--(coverage);
+\draw[rowarrow] (family)--(resample);
+\draw[rowarrow] (coverage)--(mapu);
+\draw[rowarrow] (resample)--(mapr);
+\draw[rowarrow] (mapu)--(u1);
+\draw[rowarrow] (mapu)--(u2);
+\draw[rowarrow] (mapr)--(r1);
+\draw[rowarrow] (mapr)--(r2);
+\end{tikzpicture}%
+}
+\caption{View-specific relabeling and row expansion. Subscript $u$ or $r$ denotes the corresponding mapped artifact. Each first-seen map is applied consistently across modalities before the two log views and two Petri-net realizations form their $2\times2$ Cartesian product.}
+\label{fig:row-expansion}
+\end{figure*}
+
+\section{Training details}\label{app:training-details}
+
+Table~\ref{tab:loss-weights} resolves the conceptual objective groups in Section~\ref{sec:training} into the coefficients used by the selected checkpoint. The weights shown are the configured full-strength values; scheduled ramps and the source-specific adaptive reconstruction multipliers described in Section~\ref{sec:curriculum} are applied during training.
+
+\begin{table*}[!t]
+\centering
+\caption{Complete objective coefficients for the selected checkpoint.}
+\label{tab:loss-weights}
+\begin{tabularx}{\textwidth}{@{}Yr@{\qquad}Yr@{}}
+\toprule
+Term & Weight & Term & Weight \\
+\midrule
+Tree reconstruction & 1.00 & Event-log reconstruction & 1.00 \\
+Petri-net reconstruction & 1.00 & Fused reconstruction & 1.00 \\
+Fused subset reconstruction & 0.25 & Constrained reconstruction & 0.25 \\
+Exact cross-modal contrast & 0.30 & Within-modality contrast & 0.25 \\
+Semantic exact contrast & 0.15 & Cross-batch memory contrast & 0.10 \\
+Hierarchical metric ordering & 0.15 & Observation consistency & 0.15 \\
+Soft behavioral geometry & 0.25 & Observed-distance regression & 0.20 \\
+Observed-distance ranking & 0.20 & Latent alignment & 0.075 \\
+Beam minimum-risk & 0.05 & Variance regularization & 0.10 \\
+Covariance regularization & 0.01 & EOS / length / slots / completion & 0.05 each \\
+Tree-complexity penalty & 0 & Duplicate-activity penalty & 0 \\
+Kullback--Leibler & 0 & -- & -- \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+Table~\ref{tab:history} reports every completed epoch. The loss discontinuities at epochs 6 and 11 coincide with curriculum transitions and therefore do not compare the same training mixture.
+
+\begin{table*}[!t]
+\centering
+\caption{Complete training history. Final-selection eligibility begins with the complex stage.}
+\label{tab:history}
+\begin{tabular}{@{}rrrrcr@{}}
+\toprule
+Epoch & Training loss & Validation loss & Selection score & Eligible & Learning rate \\
+\midrule
+1  & 5.179 & 10.018 & 0.595 & No  & $3.00\times10^{-4}$ \\
+2  & 4.596 & 9.111  & 0.610 & No  & $3.00\times10^{-4}$ \\
+3  & 5.028 & 6.693  & 0.643 & No  & $3.00\times10^{-4}$ \\
+4  & 5.484 & 5.863  & 0.644 & No  & $3.00\times10^{-4}$ \\
+5  & 6.109 & 5.472  & 0.679 & No  & $3.00\times10^{-4}$ \\
+6  & 8.231 & 6.661  & 0.763 & No  & $3.00\times10^{-4}$ \\
+7  & 7.904 & 6.136  & 0.707 & No  & $3.00\times10^{-4}$ \\
+8  & 7.855 & 5.878  & 0.705 & No  & $1.50\times10^{-4}$ \\
+9  & 7.633 & 5.716  & 0.715 & No  & $1.50\times10^{-4}$ \\
+10 & 7.588 & 5.605  & 0.796 & No  & $1.50\times10^{-4}$ \\
+11 & 9.194 & 7.794  & 0.787 & Yes & $1.50\times10^{-4}$ \\
+12 & 9.162 & 7.550  & 0.703 & Yes & $1.50\times10^{-4}$ \\
+13 & 9.137 & 7.412  & 0.713 & Yes & $7.50\times10^{-5}$ \\
+14 & 9.449 & 7.334  & 0.707 & Yes & $7.50\times10^{-5}$ \\
+15 & 9.040 & 7.284  & 0.721 & Yes & $3.75\times10^{-5}$ \\
+16 & 9.144 & 7.241  & 0.716 & Yes & $3.75\times10^{-5}$ \\
+17 & 8.919 & 7.220  & 0.719 & Yes & $1.875\times10^{-5}$ \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\section{Running-example serializations}\label{app:serialized-example}
+
+The complete folded prefix forms underlying Table~\ref{tab:running} and Fig.~\ref{fig:running-example} are listed below.
+
+\paragraph{Source tree.}
+\begin{quote}\ttfamily\small
+SEQ(register request, LOOP(SEQ(AND(check ticket,
+XOR(examine thoroughly, examine casually)), decide),
+reinitiate request), XOR(reject request, pay compensation)).
+\end{quote}
+
+\paragraph{Decoded from process-tree input.}
+\begin{quote}\ttfamily\small
+SEQ(register request, LOOP(AND(examine casually,
+XOR(decide, AND(examine thoroughly, reinitiate request))),
+SEQ(pay compensation, reject request)), XOR(tau, check ticket)).
+\end{quote}
+
+\paragraph{Decoded from event-log input.}
+\begin{quote}\ttfamily\small
+SEQ(register request, XOR(examine casually,
+AND(check ticket, decide, reinitiate request,
+LOOP(examine thoroughly, pay compensation))),
+XOR(tau, reject request)).
+\end{quote}
+
+\paragraph{Decoded from Petri-net input.}
+\begin{quote}\ttfamily\small
+SEQ(register request, LOOP(AND(check ticket,
+XOR(examine thoroughly, examine casually)),
+SEQ(decide, reinitiate request)),
+XOR(reject request, pay compensation)).
+\end{quote}
 
 \FloatBarrier
 
