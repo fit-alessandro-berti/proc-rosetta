@@ -1,0 +1,50 @@
+\documentclass[11pt]{letter}
+\usepackage[a4paper,margin=28mm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,urlcolor=blue]{hyperref}
+\usepackage{enumitem}
+
+\setlength{\parskip}{0.65em}
+\setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{2em}
+\definecolor{heading}{HTML}{2F6B9A}
+
+\signature{Alessandro Berti\\on behalf of both authors}
+\address{Process and Data Science Group\\RWTH Aachen University\\Ahornstrasse 55\\52074 Aachen, Germany\\\href{mailto:a.berti@pads.rwth-aachen.de}{a.berti@pads.rwth-aachen.de}}
+\date{1 September 2026}
+
+\begin{document}
+
+\begin{letter}{Editors-in-Chief\\\textit{Process Science}\\Springer Nature}
+
+\opening{Dear Editors,}
+
+Please consider our original research article, ``\textbf{ProcRosetta: A Behavior-Supervised Multimodal Foundation Model for Process Mining},'' by Alessandro Berti and Wil M. P. van der Aalst, for publication in \textit{Process Science}.
+
+Process mining relies on event logs, process trees, and Petri nets to describe the same process from different perspectives. Existing learned representations usually remain tied to one artifact type. Our article introduces a certificate-aware model that maps all three artifact types into one deterministic semantic space and decodes each through a shared process-tree grammar. We believe this combination of behavioral semantics, representation learning, process discovery, and executable model generation is directly aligned with the journal's focus.
+
+The submission makes four principal contributions:
+
+\begin{itemize}[leftmargin=1.6em,itemsep=0.25em,topsep=0.2em]
+\item a behavior-family generator producing 15,360 grouped families (61,440 aligned rows) across three structural curricula, with exact-language or structural-isomorphism evidence;
+\item a 6.26-million-parameter architecture with specialized tree, event-log, and Petri-net encoders, a normalized 96-dimensional semantic interface, and a shared grammar-constrained decoder;
+\item a deterministic training objective combining multi-source reconstruction, exact and hierarchical metric learning, observation consistency, behavior regression/ranking, and anti-collapse regularization; and
+\item an evidence-oriented evaluation with family-complete sampling, deterministic baselines, a classical Inductive Miner comparison, motif diagnostics, family-bootstrap intervals, and machine-readable provenance.
+\end{itemize}
+
+The results are promising but deliberately bounded. On fixed audits of 16 complete held-out families per curriculum, fused embedding distance reaches Spearman correlations of 0.577, 0.743, and 0.791 with operational behavioral distance, while cross-modal family Recall@1 ranges from 0.656 to 0.875. All 768 audited deployment decodes are syntactically valid, duplicate-free, and Petri-convertible. At the same time, exact log-to-tree reconstruction is zero and Inductive Miner is clearly superior for discovery conformance. The manuscript treats these negative results as central evidence: ProcRosetta is currently a shared retrieval and candidate-generation substrate, not a replacement for mature process discovery.
+
+An early project prototype was posted on Preprints.org in July 2026 (\href{https://doi.org/10.20944/preprints202607.0463.v1}{preprint DOI}). The manuscript cites this preprint and includes a dedicated comparison table. The journal version materially replaces the corpus, data model, architecture, latent formulation, objective, deployment decoder, checkpoint-selection protocol, and evaluation; it does not recycle the obsolete preprint's numerical claims as evidence.
+
+The manuscript is original, is not under consideration by another journal, and has been approved by both authors. The authors declare the Celonis affiliation shown in the manuscript and no other relevant competing interests. No human participants, personal data, or animals are involved. Code and deterministic generation instructions are publicly accessible; the submission bundle includes the exact corpus manifest, evidence tables, hashes, and compilation sources. The manuscript also transparently discloses the use of OpenAI Codex during preparation and the authors' responsibility for verification.
+
+The corresponding author is Alessandro Berti (\href{mailto:a.berti@pads.rwth-aachen.de}{a.berti@pads.rwth-aachen.de}; ORCID \href{https://orcid.org/0000-0002-3279-4795}{0000-0002-3279-4795}). Wil M. P. van der Aalst's ORCID is \href{https://orcid.org/0000-0002-0955-6940}{0000-0002-0955-6940}.
+
+Thank you for considering this work. We would be pleased to respond to editorial or reviewer requests and to provide the generated corpus archive directly if required by the submission system.
+
+\closing{Sincerely,}
+
+\end{letter}
+\end{document}

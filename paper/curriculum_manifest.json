@@ -1,0 +1,3484 @@
+{
+  "activity_vocab_size": 30,
+  "behavior_overlap_policy": "independently_sampled",
+  "canonical_tree_hashes_disjoint_across_all_curricula_and_splits": false,
+  "curricula": {
+    "complex": {
+      "exact_behavior_signature_counts": {
+        "test": 119,
+        "training": 560,
+        "validation": 120
+      },
+      "metadata": "complex/metadata.json",
+      "profile": {
+        "max_depth": 7,
+        "max_generated_activities": 28,
+        "max_tree_size": 80,
+        "min_generated_activities": 8,
+        "min_tree_depth": 4,
+        "min_tree_size": 20,
+        "name": "complex"
+      },
+      "recommended_profile": {
+        "max_depth": 7,
+        "max_generated_activities": 28,
+        "max_tree_size": 80,
+        "min_generated_activities": 8,
+        "min_tree_depth": 4,
+        "min_tree_size": 20,
+        "name": "complex"
+      },
+      "splits": {
+        "test": {
+          "class_coverage": {
+            "active_motifs": [
+              "ordinary_tree",
+              "duplicate_vs_silent",
+              "concurrent_vs_interleaved",
+              "m_nonfreechoice"
+            ],
+            "actual_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "deficits_by_motif": {},
+            "exact_quota_match": true,
+            "meets_minimum": true,
+            "minimum_families_per_motif": 4,
+            "minimum_rows_per_representation_slot": 8,
+            "mode": "strict",
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 92,
+                "parallel": 92
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 90,
+                "silent_routing": 90
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 90,
+                "m_nonfreechoice": 90
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 752,
+                "isomorphic_renaming": 752
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 92,
+                "1": 92
+              },
+              "duplicate_vs_silent": {
+                "0": 90,
+                "1": 90
+              },
+              "m_nonfreechoice": {
+                "0": 90,
+                "1": 90
+              },
+              "ordinary_tree": {
+                "0": 752,
+                "1": 752
+              }
+            },
+            "planned_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "planned_meets_minimum": true,
+            "representation_slot_deficits_by_motif": {},
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 184,
+              "duplicate_vs_silent": 180,
+              "m_nonfreechoice": 180,
+              "ordinary_tree": 1504
+            },
+            "unit": "behavior_family"
+          },
+          "path": "test/samples.jsonl",
+          "statistics": {
+            "avg_trace_count": 128.0,
+            "avg_trace_length": 17.842857360839844,
+            "avg_tree_depth": 6.333984375,
+            "avg_tree_size": 29.9140625,
+            "behavior_count": 512,
+            "bounded_behavior_count": 371,
+            "complexity_distributions": {
+              "activity_count": {
+                "count": 512,
+                "maximum": 28.0,
+                "mean": 16.423828125,
+                "median": 16.0,
+                "p10": 5.0,
+                "p90": 28.0,
+                "standard_deviation": 8.051473721962893
+              },
+              "operator_count": {
+                "count": 512,
+                "maximum": 29.0,
+                "mean": 10.845703125,
+                "median": 10.0,
+                "p10": 4.0,
+                "p90": 19.0,
+                "standard_deviation": 5.992314502708051
+              },
+              "petri_edge_count": {
+                "count": 1024,
+                "maximum": 178.0,
+                "mean": 66.1083984375,
+                "median": 58.0,
+                "p10": 28.0,
+                "p90": 116.0,
+                "standard_deviation": 34.34295335423626
+              },
+              "petri_node_count": {
+                "count": 1024,
+                "maximum": 138.0,
+                "mean": 54.634765625,
+                "median": 48.0,
+                "p10": 26.0,
+                "p90": 94.0,
+                "standard_deviation": 26.75334752608201
+              },
+              "trace_length": {
+                "count": 131072,
+                "maximum": 128.0,
+                "mean": 17.842857360839844,
+                "median": 12.0,
+                "p10": 3.0,
+                "p90": 40.0,
+                "standard_deviation": 19.191565729976503
+              },
+              "tree_depth": {
+                "count": 512,
+                "maximum": 8.0,
+                "mean": 6.333984375,
+                "median": 7.0,
+                "p10": 4.0,
+                "p90": 8.0,
+                "standard_deviation": 1.5982709602116467
+              },
+              "tree_size": {
+                "count": 512,
+                "maximum": 77.0,
+                "mean": 29.9140625,
+                "median": 28.0,
+                "p10": 9.0,
+                "p90": 52.900000000000034,
+                "standard_deviation": 16.64907905849731
+              }
+            },
+            "complexity_level_counts": {
+              "complex": 512
+            },
+            "count": 2048,
+            "exact_behavior_count": 119,
+            "family_count": 512,
+            "family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "loop_family_prevalence": 0.724609375,
+            "max_petri_edges": 178,
+            "max_petri_nodes": 138,
+            "max_trace_length": 128,
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 92,
+                "parallel": 92
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 90,
+                "silent_routing": 90
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 90,
+                "m_nonfreechoice": 90
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 752,
+                "isomorphic_renaming": 752
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 92,
+                "1": 92
+              },
+              "duplicate_vs_silent": {
+                "0": 90,
+                "1": 90
+              },
+              "m_nonfreechoice": {
+                "0": 90,
+                "1": 90
+              },
+              "ordinary_tree": {
+                "0": 752,
+                "1": 752
+              }
+            },
+            "nested_loop_prevalence": 0.53515625,
+            "operator_probability_audit": {
+              "expected_non_root_operator_probabilities": {
+                "and": 0.25,
+                "loop": 0.25,
+                "seq": 0.25,
+                "xor": 0.25
+              },
+              "expected_root_operator_probabilities": {
+                "and": 0.1,
+                "loop": 0.1,
+                "seq": 0.7,
+                "xor": 0.1
+              },
+              "folded_non_root_operator_counts": {
+                "and": 1044,
+                "loop": 1486,
+                "seq": 994,
+                "xor": 1098
+              },
+              "folded_root_operator_counts": {
+                "and": 38,
+                "loop": 38,
+                "seq": 263,
+                "xor": 37
+              },
+              "maximum_absolute_probability_deviation": 0.01424023403889177,
+              "observed_non_root_operator_counts": {
+                "and": 1370,
+                "loop": 1486,
+                "seq": 1469,
+                "xor": 1486
+              },
+              "observed_non_root_operator_probabilities": {
+                "and": 0.23575976596110823,
+                "loop": 0.25572190672861816,
+                "seq": 0.25279642058165547,
+                "xor": 0.25572190672861816
+              },
+              "observed_root_operator_counts": {
+                "and": 38,
+                "loop": 38,
+                "seq": 263,
+                "xor": 37
+              },
+              "observed_root_operator_probabilities": {
+                "and": 0.10106382978723404,
+                "loop": 0.10106382978723404,
+                "seq": 0.699468085106383,
+                "xor": 0.09840425531914894
+              },
+              "ordinary_family_count": 376,
+              "scope": "ordinary_tree_families"
+            },
+            "representation_counts": {
+              "canonical_block_pm4py": 842,
+              "duplicate_prefix": 90,
+              "explicit_interleaving": 92,
+              "isomorphic_renaming": 752,
+              "m_nonfreechoice": 90,
+              "parallel": 92,
+              "silent_routing": 90
+            },
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 184,
+              "duplicate_vs_silent": 180,
+              "m_nonfreechoice": 180,
+              "ordinary_tree": 1504
+            },
+            "statistics_units": {
+              "petri_graph": "behavior_family_representation_variant",
+              "trace": "behavior_family_log_view",
+              "tree_activity_operator_and_loop": "behavior_family"
+            },
+            "unexpected_truncation_count": 0
+          }
+        },
+        "training": {
+          "class_coverage": {
+            "active_motifs": [
+              "ordinary_tree",
+              "duplicate_vs_silent",
+              "concurrent_vs_interleaved",
+              "m_nonfreechoice"
+            ],
+            "actual_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 347,
+              "duplicate_vs_silent": 347,
+              "m_nonfreechoice": 346,
+              "ordinary_tree": 3056
+            },
+            "deficits_by_motif": {},
+            "exact_quota_match": true,
+            "meets_minimum": true,
+            "minimum_families_per_motif": 8,
+            "minimum_rows_per_representation_slot": 16,
+            "mode": "strict",
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 694,
+                "parallel": 694
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 694,
+                "silent_routing": 694
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 692,
+                "m_nonfreechoice": 692
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 6112,
+                "isomorphic_renaming": 6112
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 694,
+                "1": 694
+              },
+              "duplicate_vs_silent": {
+                "0": 694,
+                "1": 694
+              },
+              "m_nonfreechoice": {
+                "0": 692,
+                "1": 692
+              },
+              "ordinary_tree": {
+                "0": 6112,
+                "1": 6112
+              }
+            },
+            "planned_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 347,
+              "duplicate_vs_silent": 347,
+              "m_nonfreechoice": 346,
+              "ordinary_tree": 3056
+            },
+            "planned_meets_minimum": true,
+            "representation_slot_deficits_by_motif": {},
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 1388,
+              "duplicate_vs_silent": 1388,
+              "m_nonfreechoice": 1384,
+              "ordinary_tree": 12224
+            },
+            "unit": "behavior_family"
+          },
+          "path": "training/samples.jsonl",
+          "statistics": {
+            "avg_trace_count": 128.0,
+            "avg_trace_length": 17.982558250427246,
+            "avg_tree_depth": 6.41455078125,
+            "avg_tree_size": 30.514892578125,
+            "behavior_count": 4096,
+            "bounded_behavior_count": 3021,
+            "complexity_distributions": {
+              "activity_count": {
+                "count": 4096,
+                "maximum": 28.0,
+                "mean": 16.628173828125,
+                "median": 17.0,
+                "p10": 5.0,
+                "p90": 28.0,
+                "standard_deviation": 8.032294264858812
+              },
+              "operator_count": {
+                "count": 4096,
+                "maximum": 33.0,
+                "mean": 11.094482421875,
+                "median": 10.0,
+                "p10": 4.0,
+                "p90": 20.0,
+                "standard_deviation": 6.171903388042593
+              },
+              "petri_edge_count": {
+                "count": 8192,
+                "maximum": 192.0,
+                "mean": 67.867431640625,
+                "median": 60.0,
+                "p10": 28.0,
+                "p90": 120.0,
+                "standard_deviation": 35.11593179547522
+              },
+              "petri_node_count": {
+                "count": 8192,
+                "maximum": 155.0,
+                "mean": 56.004638671875,
+                "median": 50.0,
+                "p10": 26.0,
+                "p90": 96.0,
+                "standard_deviation": 27.279285223605992
+              },
+              "trace_length": {
+                "count": 1048576,
+                "maximum": 128.0,
+                "mean": 17.982558250427246,
+                "median": 12.0,
+                "p10": 3.0,
+                "p90": 41.0,
+                "standard_deviation": 19.44463592756998
+              },
+              "tree_depth": {
+                "count": 4096,
+                "maximum": 8.0,
+                "mean": 6.41455078125,
+                "median": 7.0,
+                "p10": 4.0,
+                "p90": 8.0,
+                "standard_deviation": 1.5842311304746586
+              },
+              "tree_size": {
+                "count": 4096,
+                "maximum": 80.0,
+                "mean": 30.514892578125,
+                "median": 29.0,
+                "p10": 9.0,
+                "p90": 55.0,
+                "standard_deviation": 17.070647462050665
+              }
+            },
+            "complexity_level_counts": {
+              "complex": 4096
+            },
+            "count": 16384,
+            "exact_behavior_count": 560,
+            "family_count": 4096,
+            "family_counts_by_motif": {
+              "concurrent_vs_interleaved": 347,
+              "duplicate_vs_silent": 347,
+              "m_nonfreechoice": 346,
+              "ordinary_tree": 3056
+            },
+            "loop_family_prevalence": 0.737548828125,
+            "max_petri_edges": 192,
+            "max_petri_nodes": 155,
+            "max_trace_length": 128,
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 694,
+                "parallel": 694
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 694,
+                "silent_routing": 694
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 692,
+                "m_nonfreechoice": 692
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 6112,
+                "isomorphic_renaming": 6112
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 694,
+                "1": 694
+              },
+              "duplicate_vs_silent": {
+                "0": 694,
+                "1": 694
+              },
+              "m_nonfreechoice": {
+                "0": 692,
+                "1": 692
+              },
+              "ordinary_tree": {
+                "0": 6112,
+                "1": 6112
+              }
+            },
+            "nested_loop_prevalence": 0.556884765625,
+            "operator_probability_audit": {
+              "expected_non_root_operator_probabilities": {
+                "and": 0.25,
+                "loop": 0.25,
+                "seq": 0.25,
+                "xor": 0.25
+              },
+              "expected_root_operator_probabilities": {
+                "and": 0.1,
+                "loop": 0.1,
+                "seq": 0.7,
+                "xor": 0.1
+              },
+              "folded_non_root_operator_counts": {
+                "and": 9176,
+                "loop": 11855,
+                "seq": 8181,
+                "xor": 9033
+              },
+              "folded_root_operator_counts": {
+                "and": 306,
+                "loop": 306,
+                "seq": 2139,
+                "xor": 305
+              },
+              "maximum_absolute_probability_deviation": 0.0009423234854387119,
+              "observed_non_root_operator_counts": {
+                "and": 11876,
+                "loop": 11855,
+                "seq": 11841,
+                "xor": 11917
+              },
+              "observed_non_root_operator_probabilities": {
+                "and": 0.2500789656552044,
+                "loop": 0.24963675798605994,
+                "seq": 0.24934195287329697,
+                "xor": 0.2509423234854387
+              },
+              "observed_root_operator_counts": {
+                "and": 306,
+                "loop": 306,
+                "seq": 2139,
+                "xor": 305
+              },
+              "observed_root_operator_probabilities": {
+                "and": 0.10013089005235602,
+                "loop": 0.10013089005235602,
+                "seq": 0.699934554973822,
+                "xor": 0.09980366492146597
+              },
+              "ordinary_family_count": 3056,
+              "scope": "ordinary_tree_families"
+            },
+            "representation_counts": {
+              "canonical_block_pm4py": 6804,
+              "duplicate_prefix": 694,
+              "explicit_interleaving": 694,
+              "isomorphic_renaming": 6112,
+              "m_nonfreechoice": 692,
+              "parallel": 694,
+              "silent_routing": 694
+            },
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 1388,
+              "duplicate_vs_silent": 1388,
+              "m_nonfreechoice": 1384,
+              "ordinary_tree": 12224
+            },
+            "statistics_units": {
+              "petri_graph": "behavior_family_representation_variant",
+              "trace": "behavior_family_log_view",
+              "tree_activity_operator_and_loop": "behavior_family"
+            },
+            "unexpected_truncation_count": 0
+          }
+        },
+        "validation": {
+          "class_coverage": {
+            "active_motifs": [
+              "ordinary_tree",
+              "duplicate_vs_silent",
+              "concurrent_vs_interleaved",
+              "m_nonfreechoice"
+            ],
+            "actual_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "deficits_by_motif": {},
+            "exact_quota_match": true,
+            "meets_minimum": true,
+            "minimum_families_per_motif": 4,
+            "minimum_rows_per_representation_slot": 8,
+            "mode": "strict",
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 92,
+                "parallel": 92
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 90,
+                "silent_routing": 90
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 90,
+                "m_nonfreechoice": 90
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 752,
+                "isomorphic_renaming": 752
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 92,
+                "1": 92
+              },
+              "duplicate_vs_silent": {
+                "0": 90,
+                "1": 90
+              },
+              "m_nonfreechoice": {
+                "0": 90,
+                "1": 90
+              },
+              "ordinary_tree": {
+                "0": 752,
+                "1": 752
+              }
+            },
+            "planned_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "planned_meets_minimum": true,
+            "representation_slot_deficits_by_motif": {},
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 184,
+              "duplicate_vs_silent": 180,
+              "m_nonfreechoice": 180,
+              "ordinary_tree": 1504
+            },
+            "unit": "behavior_family"
+          },
+          "path": "validation/samples.jsonl",
+          "statistics": {
+            "avg_trace_count": 128.0,
+            "avg_trace_length": 17.507766723632812,
+            "avg_tree_depth": 6.4140625,
+            "avg_tree_size": 29.99609375,
+            "behavior_count": 512,
+            "bounded_behavior_count": 373,
+            "complexity_distributions": {
+              "activity_count": {
+                "count": 512,
+                "maximum": 28.0,
+                "mean": 16.220703125,
+                "median": 16.0,
+                "p10": 5.0,
+                "p90": 28.0,
+                "standard_deviation": 7.968205930798678
+              },
+              "operator_count": {
+                "count": 512,
+                "maximum": 32.0,
+                "mean": 10.955078125,
+                "median": 10.0,
+                "p10": 3.0,
+                "p90": 20.0,
+                "standard_deviation": 6.199163060457959
+              },
+              "petri_edge_count": {
+                "count": 1024,
+                "maximum": 180.0,
+                "mean": 67.2607421875,
+                "median": 60.0,
+                "p10": 28.0,
+                "p90": 118.0,
+                "standard_deviation": 34.82704731166795
+              },
+              "petri_node_count": {
+                "count": 1024,
+                "maximum": 143.0,
+                "mean": 55.400390625,
+                "median": 49.0,
+                "p10": 25.0,
+                "p90": 94.0,
+                "standard_deviation": 26.794061256133087
+              },
+              "trace_length": {
+                "count": 131072,
+                "maximum": 128.0,
+                "mean": 17.507766723632812,
+                "median": 12.0,
+                "p10": 3.0,
+                "p90": 39.0,
+                "standard_deviation": 19.05276993234832
+              },
+              "tree_depth": {
+                "count": 512,
+                "maximum": 8.0,
+                "mean": 6.4140625,
+                "median": 7.0,
+                "p10": 4.0,
+                "p90": 8.0,
+                "standard_deviation": 1.6106449782909176
+              },
+              "tree_size": {
+                "count": 512,
+                "maximum": 80.0,
+                "mean": 29.99609375,
+                "median": 28.0,
+                "p10": 9.0,
+                "p90": 55.0,
+                "standard_deviation": 17.00964754900027
+              }
+            },
+            "complexity_level_counts": {
+              "complex": 512
+            },
+            "count": 2048,
+            "exact_behavior_count": 120,
+            "family_count": 512,
+            "family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "loop_family_prevalence": 0.728515625,
+            "max_petri_edges": 180,
+            "max_petri_nodes": 143,
+            "max_trace_length": 128,
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 92,
+                "parallel": 92
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 90,
+                "silent_routing": 90
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 90,
+                "m_nonfreechoice": 90
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 752,
+                "isomorphic_renaming": 752
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 92,
+                "1": 92
+              },
+              "duplicate_vs_silent": {
+                "0": 90,
+                "1": 90
+              },
+              "m_nonfreechoice": {
+                "0": 90,
+                "1": 90
+              },
+              "ordinary_tree": {
+                "0": 752,
+                "1": 752
+              }
+            },
+            "nested_loop_prevalence": 0.533203125,
+            "operator_probability_audit": {
+              "expected_non_root_operator_probabilities": {
+                "and": 0.25,
+                "loop": 0.25,
+                "seq": 0.25,
+                "xor": 0.25
+              },
+              "expected_root_operator_probabilities": {
+                "and": 0.1,
+                "loop": 0.1,
+                "seq": 0.7,
+                "xor": 0.1
+              },
+              "folded_non_root_operator_counts": {
+                "and": 1119,
+                "loop": 1468,
+                "seq": 985,
+                "xor": 1125
+              },
+              "folded_root_operator_counts": {
+                "and": 38,
+                "loop": 38,
+                "seq": 263,
+                "xor": 37
+              },
+              "maximum_absolute_probability_deviation": 0.01363323585067952,
+              "observed_non_root_operator_counts": {
+                "and": 1491,
+                "loop": 1468,
+                "seq": 1374,
+                "xor": 1480
+              },
+              "observed_non_root_operator_probabilities": {
+                "and": 0.2564940650266644,
+                "loop": 0.25253741613624636,
+                "seq": 0.23636676414932048,
+                "xor": 0.2546017546877688
+              },
+              "observed_root_operator_counts": {
+                "and": 38,
+                "loop": 38,
+                "seq": 263,
+                "xor": 37
+              },
+              "observed_root_operator_probabilities": {
+                "and": 0.10106382978723404,
+                "loop": 0.10106382978723404,
+                "seq": 0.699468085106383,
+                "xor": 0.09840425531914894
+              },
+              "ordinary_family_count": 376,
+              "scope": "ordinary_tree_families"
+            },
+            "representation_counts": {
+              "canonical_block_pm4py": 842,
+              "duplicate_prefix": 90,
+              "explicit_interleaving": 92,
+              "isomorphic_renaming": 752,
+              "m_nonfreechoice": 90,
+              "parallel": 92,
+              "silent_routing": 90
+            },
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 184,
+              "duplicate_vs_silent": 180,
+              "m_nonfreechoice": 180,
+              "ordinary_tree": 1504
+            },
+            "statistics_units": {
+              "petri_graph": "behavior_family_representation_variant",
+              "trace": "behavior_family_log_view",
+              "tree_activity_operator_and_loop": "behavior_family"
+            },
+            "unexpected_truncation_count": 0
+          }
+        }
+      }
+    },
+    "medium": {
+      "exact_behavior_signature_counts": {
+        "test": 174,
+        "training": 994,
+        "validation": 183
+      },
+      "metadata": "medium/metadata.json",
+      "profile": {
+        "max_depth": 5,
+        "max_generated_activities": 14,
+        "max_tree_size": 19,
+        "min_generated_activities": 5,
+        "min_tree_depth": 3,
+        "min_tree_size": 12,
+        "name": "medium"
+      },
+      "recommended_profile": {
+        "max_depth": 5,
+        "max_generated_activities": 14,
+        "max_tree_size": 19,
+        "min_generated_activities": 5,
+        "min_tree_depth": 3,
+        "min_tree_size": 12,
+        "name": "medium"
+      },
+      "splits": {
+        "test": {
+          "class_coverage": {
+            "active_motifs": [
+              "ordinary_tree",
+              "duplicate_vs_silent",
+              "concurrent_vs_interleaved",
+              "m_nonfreechoice"
+            ],
+            "actual_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "deficits_by_motif": {},
+            "exact_quota_match": true,
+            "meets_minimum": true,
+            "minimum_families_per_motif": 4,
+            "minimum_rows_per_representation_slot": 8,
+            "mode": "strict",
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 92,
+                "parallel": 92
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 90,
+                "silent_routing": 90
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 90,
+                "m_nonfreechoice": 90
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 752,
+                "isomorphic_renaming": 752
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 92,
+                "1": 92
+              },
+              "duplicate_vs_silent": {
+                "0": 90,
+                "1": 90
+              },
+              "m_nonfreechoice": {
+                "0": 90,
+                "1": 90
+              },
+              "ordinary_tree": {
+                "0": 752,
+                "1": 752
+              }
+            },
+            "planned_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "planned_meets_minimum": true,
+            "representation_slot_deficits_by_motif": {},
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 184,
+              "duplicate_vs_silent": 180,
+              "m_nonfreechoice": 180,
+              "ordinary_tree": 1504
+            },
+            "unit": "behavior_family"
+          },
+          "path": "test/samples.jsonl",
+          "statistics": {
+            "avg_trace_count": 128.0,
+            "avg_trace_length": 11.368408203125,
+            "avg_tree_depth": 5.001953125,
+            "avg_tree_size": 14.02734375,
+            "behavior_count": 512,
+            "bounded_behavior_count": 316,
+            "complexity_distributions": {
+              "activity_count": {
+                "count": 512,
+                "maximum": 14.0,
+                "mean": 8.2578125,
+                "median": 8.0,
+                "p10": 5.0,
+                "p90": 11.0,
+                "standard_deviation": 2.0719333277988823
+              },
+              "operator_count": {
+                "count": 512,
+                "maximum": 9.0,
+                "mean": 5.13671875,
+                "median": 5.0,
+                "p10": 3.1000000000000014,
+                "p90": 7.0,
+                "standard_deviation": 1.3261416716921453
+              },
+              "petri_edge_count": {
+                "count": 1024,
+                "maximum": 54.0,
+                "mean": 31.8857421875,
+                "median": 32.0,
+                "p10": 24.0,
+                "p90": 42.0,
+                "standard_deviation": 7.032543758469101
+              },
+              "petri_node_count": {
+                "count": 1024,
+                "maximum": 45.0,
+                "mean": 27.58203125,
+                "median": 27.0,
+                "p10": 20.0,
+                "p90": 35.0,
+                "standard_deviation": 5.765867150656824
+              },
+              "trace_length": {
+                "count": 131072,
+                "maximum": 128.0,
+                "mean": 11.368408203125,
+                "median": 8.0,
+                "p10": 3.0,
+                "p90": 23.0,
+                "standard_deviation": 11.283815654856484
+              },
+              "tree_depth": {
+                "count": 512,
+                "maximum": 6.0,
+                "mean": 5.001953125,
+                "median": 5.0,
+                "p10": 4.0,
+                "p90": 6.0,
+                "standard_deviation": 0.9509432476771337
+              },
+              "tree_size": {
+                "count": 512,
+                "maximum": 19.0,
+                "mean": 14.02734375,
+                "median": 14.0,
+                "p10": 9.0,
+                "p90": 18.0,
+                "standard_deviation": 3.250485897421482
+              }
+            },
+            "complexity_level_counts": {
+              "medium": 512
+            },
+            "count": 2048,
+            "exact_behavior_count": 174,
+            "family_count": 512,
+            "family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "loop_family_prevalence": 0.6171875,
+            "max_petri_edges": 54,
+            "max_petri_nodes": 45,
+            "max_trace_length": 128,
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 92,
+                "parallel": 92
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 90,
+                "silent_routing": 90
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 90,
+                "m_nonfreechoice": 90
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 752,
+                "isomorphic_renaming": 752
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 92,
+                "1": 92
+              },
+              "duplicate_vs_silent": {
+                "0": 90,
+                "1": 90
+              },
+              "m_nonfreechoice": {
+                "0": 90,
+                "1": 90
+              },
+              "ordinary_tree": {
+                "0": 752,
+                "1": 752
+              }
+            },
+            "nested_loop_prevalence": 0.28515625,
+            "operator_probability_audit": {
+              "expected_non_root_operator_probabilities": {
+                "and": 0.25,
+                "loop": 0.25,
+                "seq": 0.25,
+                "xor": 0.25
+              },
+              "expected_root_operator_probabilities": {
+                "and": 0.1,
+                "loop": 0.1,
+                "seq": 0.7,
+                "xor": 0.1
+              },
+              "folded_non_root_operator_counts": {
+                "and": 413,
+                "loop": 555,
+                "seq": 319,
+                "xor": 412
+              },
+              "folded_root_operator_counts": {
+                "and": 38,
+                "loop": 38,
+                "seq": 263,
+                "xor": 37
+              },
+              "maximum_absolute_probability_deviation": 0.01785714285714285,
+              "observed_non_root_operator_counts": {
+                "and": 518,
+                "loop": 555,
+                "seq": 485,
+                "xor": 514
+              },
+              "observed_non_root_operator_probabilities": {
+                "and": 0.25,
+                "loop": 0.26785714285714285,
+                "seq": 0.23407335907335908,
+                "xor": 0.24806949806949807
+              },
+              "observed_root_operator_counts": {
+                "and": 38,
+                "loop": 38,
+                "seq": 263,
+                "xor": 37
+              },
+              "observed_root_operator_probabilities": {
+                "and": 0.10106382978723404,
+                "loop": 0.10106382978723404,
+                "seq": 0.699468085106383,
+                "xor": 0.09840425531914894
+              },
+              "ordinary_family_count": 376,
+              "scope": "ordinary_tree_families"
+            },
+            "representation_counts": {
+              "canonical_block_pm4py": 842,
+              "duplicate_prefix": 90,
+              "explicit_interleaving": 92,
+              "isomorphic_renaming": 752,
+              "m_nonfreechoice": 90,
+              "parallel": 92,
+              "silent_routing": 90
+            },
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 184,
+              "duplicate_vs_silent": 180,
+              "m_nonfreechoice": 180,
+              "ordinary_tree": 1504
+            },
+            "statistics_units": {
+              "petri_graph": "behavior_family_representation_variant",
+              "trace": "behavior_family_log_view",
+              "tree_activity_operator_and_loop": "behavior_family"
+            },
+            "unexpected_truncation_count": 0
+          }
+        },
+        "training": {
+          "class_coverage": {
+            "active_motifs": [
+              "ordinary_tree",
+              "duplicate_vs_silent",
+              "concurrent_vs_interleaved",
+              "m_nonfreechoice"
+            ],
+            "actual_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 347,
+              "duplicate_vs_silent": 347,
+              "m_nonfreechoice": 346,
+              "ordinary_tree": 3056
+            },
+            "deficits_by_motif": {},
+            "exact_quota_match": true,
+            "meets_minimum": true,
+            "minimum_families_per_motif": 8,
+            "minimum_rows_per_representation_slot": 16,
+            "mode": "strict",
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 694,
+                "parallel": 694
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 694,
+                "silent_routing": 694
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 692,
+                "m_nonfreechoice": 692
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 6112,
+                "isomorphic_renaming": 6112
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 694,
+                "1": 694
+              },
+              "duplicate_vs_silent": {
+                "0": 694,
+                "1": 694
+              },
+              "m_nonfreechoice": {
+                "0": 692,
+                "1": 692
+              },
+              "ordinary_tree": {
+                "0": 6112,
+                "1": 6112
+              }
+            },
+            "planned_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 347,
+              "duplicate_vs_silent": 347,
+              "m_nonfreechoice": 346,
+              "ordinary_tree": 3056
+            },
+            "planned_meets_minimum": true,
+            "representation_slot_deficits_by_motif": {},
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 1388,
+              "duplicate_vs_silent": 1388,
+              "m_nonfreechoice": 1384,
+              "ordinary_tree": 12224
+            },
+            "unit": "behavior_family"
+          },
+          "path": "training/samples.jsonl",
+          "statistics": {
+            "avg_trace_count": 128.0,
+            "avg_trace_length": 11.533838272094727,
+            "avg_tree_depth": 4.930419921875,
+            "avg_tree_size": 13.95751953125,
+            "behavior_count": 4096,
+            "bounded_behavior_count": 2584,
+            "complexity_distributions": {
+              "activity_count": {
+                "count": 4096,
+                "maximum": 14.0,
+                "mean": 8.24609375,
+                "median": 8.0,
+                "p10": 5.0,
+                "p90": 11.0,
+                "standard_deviation": 2.1116271252782624
+              },
+              "operator_count": {
+                "count": 4096,
+                "maximum": 9.0,
+                "mean": 5.0654296875,
+                "median": 5.0,
+                "p10": 3.0,
+                "p90": 7.0,
+                "standard_deviation": 1.3346772970436158
+              },
+              "petri_edge_count": {
+                "count": 8192,
+                "maximum": 60.0,
+                "mean": 31.737548828125,
+                "median": 32.0,
+                "p10": 22.0,
+                "p90": 42.0,
+                "standard_deviation": 7.224173844929013
+              },
+              "petri_node_count": {
+                "count": 8192,
+                "maximum": 51.0,
+                "mean": 27.51904296875,
+                "median": 27.0,
+                "p10": 20.0,
+                "p90": 35.0,
+                "standard_deviation": 5.942278394823924
+              },
+              "trace_length": {
+                "count": 1048576,
+                "maximum": 128.0,
+                "mean": 11.533838272094727,
+                "median": 8.0,
+                "p10": 3.0,
+                "p90": 24.0,
+                "standard_deviation": 11.273930057349853
+              },
+              "tree_depth": {
+                "count": 4096,
+                "maximum": 7.0,
+                "mean": 4.930419921875,
+                "median": 5.0,
+                "p10": 4.0,
+                "p90": 6.0,
+                "standard_deviation": 0.933999934878541
+              },
+              "tree_size": {
+                "count": 4096,
+                "maximum": 19.0,
+                "mean": 13.95751953125,
+                "median": 14.0,
+                "p10": 9.0,
+                "p90": 18.0,
+                "standard_deviation": 3.2435561267341715
+              }
+            },
+            "complexity_level_counts": {
+              "medium": 4096
+            },
+            "count": 16384,
+            "exact_behavior_count": 994,
+            "family_count": 4096,
+            "family_counts_by_motif": {
+              "concurrent_vs_interleaved": 347,
+              "duplicate_vs_silent": 347,
+              "m_nonfreechoice": 346,
+              "ordinary_tree": 3056
+            },
+            "loop_family_prevalence": 0.630859375,
+            "max_petri_edges": 60,
+            "max_petri_nodes": 51,
+            "max_trace_length": 128,
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 694,
+                "parallel": 694
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 694,
+                "silent_routing": 694
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 692,
+                "m_nonfreechoice": 692
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 6112,
+                "isomorphic_renaming": 6112
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 694,
+                "1": 694
+              },
+              "duplicate_vs_silent": {
+                "0": 694,
+                "1": 694
+              },
+              "m_nonfreechoice": {
+                "0": 692,
+                "1": 692
+              },
+              "ordinary_tree": {
+                "0": 6112,
+                "1": 6112
+              }
+            },
+            "nested_loop_prevalence": 0.268310546875,
+            "operator_probability_audit": {
+              "expected_non_root_operator_probabilities": {
+                "and": 0.25,
+                "loop": 0.25,
+                "seq": 0.25,
+                "xor": 0.25
+              },
+              "expected_root_operator_probabilities": {
+                "and": 0.1,
+                "loop": 0.1,
+                "seq": 0.7,
+                "xor": 0.1
+              },
+              "folded_non_root_operator_counts": {
+                "and": 3241,
+                "loop": 4446,
+                "seq": 2648,
+                "xor": 3215
+              },
+              "folded_root_operator_counts": {
+                "and": 306,
+                "loop": 306,
+                "seq": 2139,
+                "xor": 305
+              },
+              "maximum_absolute_probability_deviation": 0.012859169918410795,
+              "observed_non_root_operator_counts": {
+                "and": 4087,
+                "loop": 4446,
+                "seq": 4230,
+                "xor": 4151
+              },
+              "observed_non_root_operator_probabilities": {
+                "and": 0.24163414922549367,
+                "loop": 0.2628591699184108,
+                "seq": 0.2500886839304718,
+                "xor": 0.24541799692562374
+              },
+              "observed_root_operator_counts": {
+                "and": 306,
+                "loop": 306,
+                "seq": 2139,
+                "xor": 305
+              },
+              "observed_root_operator_probabilities": {
+                "and": 0.10013089005235602,
+                "loop": 0.10013089005235602,
+                "seq": 0.699934554973822,
+                "xor": 0.09980366492146597
+              },
+              "ordinary_family_count": 3056,
+              "scope": "ordinary_tree_families"
+            },
+            "representation_counts": {
+              "canonical_block_pm4py": 6804,
+              "duplicate_prefix": 694,
+              "explicit_interleaving": 694,
+              "isomorphic_renaming": 6112,
+              "m_nonfreechoice": 692,
+              "parallel": 694,
+              "silent_routing": 694
+            },
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 1388,
+              "duplicate_vs_silent": 1388,
+              "m_nonfreechoice": 1384,
+              "ordinary_tree": 12224
+            },
+            "statistics_units": {
+              "petri_graph": "behavior_family_representation_variant",
+              "trace": "behavior_family_log_view",
+              "tree_activity_operator_and_loop": "behavior_family"
+            },
+            "unexpected_truncation_count": 0
+          }
+        },
+        "validation": {
+          "class_coverage": {
+            "active_motifs": [
+              "ordinary_tree",
+              "duplicate_vs_silent",
+              "concurrent_vs_interleaved",
+              "m_nonfreechoice"
+            ],
+            "actual_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "deficits_by_motif": {},
+            "exact_quota_match": true,
+            "meets_minimum": true,
+            "minimum_families_per_motif": 4,
+            "minimum_rows_per_representation_slot": 8,
+            "mode": "strict",
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 92,
+                "parallel": 92
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 90,
+                "silent_routing": 90
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 90,
+                "m_nonfreechoice": 90
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 752,
+                "isomorphic_renaming": 752
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 92,
+                "1": 92
+              },
+              "duplicate_vs_silent": {
+                "0": 90,
+                "1": 90
+              },
+              "m_nonfreechoice": {
+                "0": 90,
+                "1": 90
+              },
+              "ordinary_tree": {
+                "0": 752,
+                "1": 752
+              }
+            },
+            "planned_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "planned_meets_minimum": true,
+            "representation_slot_deficits_by_motif": {},
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 184,
+              "duplicate_vs_silent": 180,
+              "m_nonfreechoice": 180,
+              "ordinary_tree": 1504
+            },
+            "unit": "behavior_family"
+          },
+          "path": "validation/samples.jsonl",
+          "statistics": {
+            "avg_trace_count": 128.0,
+            "avg_trace_length": 11.180282592773438,
+            "avg_tree_depth": 4.916015625,
+            "avg_tree_size": 13.87109375,
+            "behavior_count": 512,
+            "bounded_behavior_count": 310,
+            "complexity_distributions": {
+              "activity_count": {
+                "count": 512,
+                "maximum": 14.0,
+                "mean": 8.23828125,
+                "median": 8.0,
+                "p10": 5.0,
+                "p90": 11.0,
+                "standard_deviation": 2.126345937494282
+              },
+              "operator_count": {
+                "count": 512,
+                "maximum": 9.0,
+                "mean": 5.009765625,
+                "median": 5.0,
+                "p10": 3.0,
+                "p90": 7.0,
+                "standard_deviation": 1.346980978918544
+              },
+              "petri_edge_count": {
+                "count": 1024,
+                "maximum": 56.0,
+                "mean": 32.0029296875,
+                "median": 32.0,
+                "p10": 22.0,
+                "p90": 42.0,
+                "standard_deviation": 7.254914229639875
+              },
+              "petri_node_count": {
+                "count": 1024,
+                "maximum": 49.0,
+                "mean": 27.73046875,
+                "median": 27.5,
+                "p10": 20.0,
+                "p90": 36.0,
+                "standard_deviation": 5.96634517776783
+              },
+              "trace_length": {
+                "count": 131072,
+                "maximum": 128.0,
+                "mean": 11.180282592773438,
+                "median": 8.0,
+                "p10": 3.0,
+                "p90": 23.0,
+                "standard_deviation": 11.239137253123808
+              },
+              "tree_depth": {
+                "count": 512,
+                "maximum": 7.0,
+                "mean": 4.916015625,
+                "median": 5.0,
+                "p10": 4.0,
+                "p90": 6.0,
+                "standard_deviation": 0.9595212346560442
+              },
+              "tree_size": {
+                "count": 512,
+                "maximum": 19.0,
+                "mean": 13.87109375,
+                "median": 14.0,
+                "p10": 9.0,
+                "p90": 18.0,
+                "standard_deviation": 3.1885697308841996
+              }
+            },
+            "complexity_level_counts": {
+              "medium": 512
+            },
+            "count": 2048,
+            "exact_behavior_count": 183,
+            "family_count": 512,
+            "family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "loop_family_prevalence": 0.60546875,
+            "max_petri_edges": 56,
+            "max_petri_nodes": 49,
+            "max_trace_length": 128,
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 92,
+                "parallel": 92
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 90,
+                "silent_routing": 90
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 90,
+                "m_nonfreechoice": 90
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 752,
+                "isomorphic_renaming": 752
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 92,
+                "1": 92
+              },
+              "duplicate_vs_silent": {
+                "0": 90,
+                "1": 90
+              },
+              "m_nonfreechoice": {
+                "0": 90,
+                "1": 90
+              },
+              "ordinary_tree": {
+                "0": 752,
+                "1": 752
+              }
+            },
+            "nested_loop_prevalence": 0.259765625,
+            "operator_probability_audit": {
+              "expected_non_root_operator_probabilities": {
+                "and": 0.25,
+                "loop": 0.25,
+                "seq": 0.25,
+                "xor": 0.25
+              },
+              "expected_root_operator_probabilities": {
+                "and": 0.1,
+                "loop": 0.1,
+                "seq": 0.7,
+                "xor": 0.1
+              },
+              "folded_non_root_operator_counts": {
+                "and": 415,
+                "loop": 536,
+                "seq": 321,
+                "xor": 381
+              },
+              "folded_root_operator_counts": {
+                "and": 38,
+                "loop": 38,
+                "seq": 263,
+                "xor": 37
+              },
+              "maximum_absolute_probability_deviation": 0.015761396702230868,
+              "observed_non_root_operator_counts": {
+                "and": 548,
+                "loop": 536,
+                "seq": 491,
+                "xor": 487
+              },
+              "observed_non_root_operator_probabilities": {
+                "and": 0.26576139670223087,
+                "loop": 0.25994180407371487,
+                "seq": 0.23811833171677982,
+                "xor": 0.2361784675072745
+              },
+              "observed_root_operator_counts": {
+                "and": 38,
+                "loop": 38,
+                "seq": 263,
+                "xor": 37
+              },
+              "observed_root_operator_probabilities": {
+                "and": 0.10106382978723404,
+                "loop": 0.10106382978723404,
+                "seq": 0.699468085106383,
+                "xor": 0.09840425531914894
+              },
+              "ordinary_family_count": 376,
+              "scope": "ordinary_tree_families"
+            },
+            "representation_counts": {
+              "canonical_block_pm4py": 842,
+              "duplicate_prefix": 90,
+              "explicit_interleaving": 92,
+              "isomorphic_renaming": 752,
+              "m_nonfreechoice": 90,
+              "parallel": 92,
+              "silent_routing": 90
+            },
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 184,
+              "duplicate_vs_silent": 180,
+              "m_nonfreechoice": 180,
+              "ordinary_tree": 1504
+            },
+            "statistics_units": {
+              "petri_graph": "behavior_family_representation_variant",
+              "trace": "behavior_family_log_view",
+              "tree_activity_operator_and_loop": "behavior_family"
+            },
+            "unexpected_truncation_count": 0
+          }
+        }
+      }
+    },
+    "simple": {
+      "exact_behavior_signature_counts": {
+        "test": 247,
+        "training": 1178,
+        "validation": 244
+      },
+      "metadata": "simple/metadata.json",
+      "profile": {
+        "max_depth": 3,
+        "max_generated_activities": 6,
+        "max_tree_size": 11,
+        "min_generated_activities": 3,
+        "min_tree_depth": 2,
+        "min_tree_size": 5,
+        "name": "simple"
+      },
+      "recommended_profile": {
+        "max_depth": 3,
+        "max_generated_activities": 6,
+        "max_tree_size": 11,
+        "min_generated_activities": 3,
+        "min_tree_depth": 2,
+        "min_tree_size": 5,
+        "name": "simple"
+      },
+      "splits": {
+        "test": {
+          "class_coverage": {
+            "active_motifs": [
+              "ordinary_tree",
+              "duplicate_vs_silent",
+              "concurrent_vs_interleaved",
+              "m_nonfreechoice"
+            ],
+            "actual_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "deficits_by_motif": {},
+            "exact_quota_match": true,
+            "meets_minimum": true,
+            "minimum_families_per_motif": 4,
+            "minimum_rows_per_representation_slot": 8,
+            "mode": "strict",
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 92,
+                "parallel": 92
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 90,
+                "silent_routing": 90
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 90,
+                "m_nonfreechoice": 90
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 752,
+                "isomorphic_renaming": 752
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 92,
+                "1": 92
+              },
+              "duplicate_vs_silent": {
+                "0": 90,
+                "1": 90
+              },
+              "m_nonfreechoice": {
+                "0": 90,
+                "1": 90
+              },
+              "ordinary_tree": {
+                "0": 752,
+                "1": 752
+              }
+            },
+            "planned_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "planned_meets_minimum": true,
+            "representation_slot_deficits_by_motif": {},
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 184,
+              "duplicate_vs_silent": 180,
+              "m_nonfreechoice": 180,
+              "ordinary_tree": 1504
+            },
+            "unit": "behavior_family"
+          },
+          "path": "test/samples.jsonl",
+          "statistics": {
+            "avg_trace_count": 128.0,
+            "avg_trace_length": 7.200736999511719,
+            "avg_tree_depth": 3.603515625,
+            "avg_tree_size": 8.56640625,
+            "behavior_count": 512,
+            "bounded_behavior_count": 198,
+            "complexity_distributions": {
+              "activity_count": {
+                "count": 512,
+                "maximum": 7.0,
+                "mean": 5.068359375,
+                "median": 5.0,
+                "p10": 4.0,
+                "p90": 6.0,
+                "standard_deviation": 1.0938459081834193
+              },
+              "operator_count": {
+                "count": 512,
+                "maximum": 7.0,
+                "mean": 3.0625,
+                "median": 3.0,
+                "p10": 2.0,
+                "p90": 5.0,
+                "standard_deviation": 1.150747039970123
+              },
+              "petri_edge_count": {
+                "count": 1024,
+                "maximum": 48.0,
+                "mean": 20.0341796875,
+                "median": 18.0,
+                "p10": 10.0,
+                "p90": 33.0,
+                "standard_deviation": 8.770055348255358
+              },
+              "petri_node_count": {
+                "count": 1024,
+                "maximum": 44.0,
+                "mean": 18.2578125,
+                "median": 17.0,
+                "p10": 9.0,
+                "p90": 30.0,
+                "standard_deviation": 7.722098052980404
+              },
+              "trace_length": {
+                "count": 131072,
+                "maximum": 100.0,
+                "mean": 7.200736999511719,
+                "median": 5.0,
+                "p10": 2.0,
+                "p90": 16.0,
+                "standard_deviation": 6.754050506794839
+              },
+              "tree_depth": {
+                "count": 512,
+                "maximum": 6.0,
+                "mean": 3.603515625,
+                "median": 4.0,
+                "p10": 3.0,
+                "p90": 4.0,
+                "standard_deviation": 0.7812670896568339
+              },
+              "tree_size": {
+                "count": 512,
+                "maximum": 15.0,
+                "mean": 8.56640625,
+                "median": 8.0,
+                "p10": 6.0,
+                "p90": 11.0,
+                "standard_deviation": 2.198962018762702
+              }
+            },
+            "complexity_level_counts": {
+              "simple": 512
+            },
+            "count": 2048,
+            "exact_behavior_count": 247,
+            "family_count": 512,
+            "family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "loop_family_prevalence": 0.38671875,
+            "max_petri_edges": 48,
+            "max_petri_nodes": 44,
+            "max_trace_length": 100,
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 92,
+                "parallel": 92
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 90,
+                "silent_routing": 90
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 90,
+                "m_nonfreechoice": 90
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 752,
+                "isomorphic_renaming": 752
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 92,
+                "1": 92
+              },
+              "duplicate_vs_silent": {
+                "0": 90,
+                "1": 90
+              },
+              "m_nonfreechoice": {
+                "0": 90,
+                "1": 90
+              },
+              "ordinary_tree": {
+                "0": 752,
+                "1": 752
+              }
+            },
+            "nested_loop_prevalence": 0.060546875,
+            "operator_probability_audit": {
+              "expected_non_root_operator_probabilities": {
+                "and": 0.25,
+                "loop": 0.25,
+                "seq": 0.25,
+                "xor": 0.25
+              },
+              "expected_root_operator_probabilities": {
+                "and": 0.1,
+                "loop": 0.1,
+                "seq": 0.7,
+                "xor": 0.1
+              },
+              "folded_non_root_operator_counts": {
+                "and": 159,
+                "loop": 210,
+                "seq": 93,
+                "xor": 175
+              },
+              "folded_root_operator_counts": {
+                "and": 38,
+                "loop": 38,
+                "seq": 263,
+                "xor": 37
+              },
+              "maximum_absolute_probability_deviation": 0.01097560975609757,
+              "observed_non_root_operator_counts": {
+                "and": 196,
+                "loop": 210,
+                "seq": 210,
+                "xor": 204
+              },
+              "observed_non_root_operator_probabilities": {
+                "and": 0.23902439024390243,
+                "loop": 0.25609756097560976,
+                "seq": 0.25609756097560976,
+                "xor": 0.24878048780487805
+              },
+              "observed_root_operator_counts": {
+                "and": 38,
+                "loop": 38,
+                "seq": 263,
+                "xor": 37
+              },
+              "observed_root_operator_probabilities": {
+                "and": 0.10106382978723404,
+                "loop": 0.10106382978723404,
+                "seq": 0.699468085106383,
+                "xor": 0.09840425531914894
+              },
+              "ordinary_family_count": 376,
+              "scope": "ordinary_tree_families"
+            },
+            "representation_counts": {
+              "canonical_block_pm4py": 842,
+              "duplicate_prefix": 90,
+              "explicit_interleaving": 92,
+              "isomorphic_renaming": 752,
+              "m_nonfreechoice": 90,
+              "parallel": 92,
+              "silent_routing": 90
+            },
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 184,
+              "duplicate_vs_silent": 180,
+              "m_nonfreechoice": 180,
+              "ordinary_tree": 1504
+            },
+            "statistics_units": {
+              "petri_graph": "behavior_family_representation_variant",
+              "trace": "behavior_family_log_view",
+              "tree_activity_operator_and_loop": "behavior_family"
+            },
+            "unexpected_truncation_count": 0
+          }
+        },
+        "training": {
+          "class_coverage": {
+            "active_motifs": [
+              "ordinary_tree",
+              "duplicate_vs_silent",
+              "concurrent_vs_interleaved",
+              "m_nonfreechoice"
+            ],
+            "actual_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 347,
+              "duplicate_vs_silent": 347,
+              "m_nonfreechoice": 346,
+              "ordinary_tree": 3056
+            },
+            "deficits_by_motif": {},
+            "exact_quota_match": true,
+            "meets_minimum": true,
+            "minimum_families_per_motif": 8,
+            "minimum_rows_per_representation_slot": 16,
+            "mode": "strict",
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 694,
+                "parallel": 694
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 694,
+                "silent_routing": 694
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 692,
+                "m_nonfreechoice": 692
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 6112,
+                "isomorphic_renaming": 6112
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 694,
+                "1": 694
+              },
+              "duplicate_vs_silent": {
+                "0": 694,
+                "1": 694
+              },
+              "m_nonfreechoice": {
+                "0": 692,
+                "1": 692
+              },
+              "ordinary_tree": {
+                "0": 6112,
+                "1": 6112
+              }
+            },
+            "planned_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 347,
+              "duplicate_vs_silent": 347,
+              "m_nonfreechoice": 346,
+              "ordinary_tree": 3056
+            },
+            "planned_meets_minimum": true,
+            "representation_slot_deficits_by_motif": {},
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 1388,
+              "duplicate_vs_silent": 1388,
+              "m_nonfreechoice": 1384,
+              "ordinary_tree": 12224
+            },
+            "unit": "behavior_family"
+          },
+          "path": "training/samples.jsonl",
+          "statistics": {
+            "avg_trace_count": 128.0,
+            "avg_trace_length": 7.5825700759887695,
+            "avg_tree_depth": 3.632080078125,
+            "avg_tree_size": 8.541259765625,
+            "behavior_count": 4096,
+            "bounded_behavior_count": 1688,
+            "complexity_distributions": {
+              "activity_count": {
+                "count": 4096,
+                "maximum": 7.0,
+                "mean": 5.028076171875,
+                "median": 5.0,
+                "p10": 4.0,
+                "p90": 6.0,
+                "standard_deviation": 1.0638515347302204
+              },
+              "operator_count": {
+                "count": 4096,
+                "maximum": 7.0,
+                "mean": 3.05419921875,
+                "median": 3.0,
+                "p10": 2.0,
+                "p90": 4.0,
+                "standard_deviation": 1.103081595888033
+              },
+              "petri_edge_count": {
+                "count": 8192,
+                "maximum": 54.0,
+                "mean": 20.011962890625,
+                "median": 18.0,
+                "p10": 10.0,
+                "p90": 32.0,
+                "standard_deviation": 8.603778435874723
+              },
+              "petri_node_count": {
+                "count": 8192,
+                "maximum": 49.0,
+                "mean": 18.239013671875,
+                "median": 17.0,
+                "p10": 10.0,
+                "p90": 30.0,
+                "standard_deviation": 7.625304259030051
+              },
+              "trace_length": {
+                "count": 1048576,
+                "maximum": 127.0,
+                "mean": 7.5825700759887695,
+                "median": 5.0,
+                "p10": 2.0,
+                "p90": 17.0,
+                "standard_deviation": 7.086672508215936
+              },
+              "tree_depth": {
+                "count": 4096,
+                "maximum": 7.0,
+                "mean": 3.632080078125,
+                "median": 4.0,
+                "p10": 3.0,
+                "p90": 4.0,
+                "standard_deviation": 0.7504140585120284
+              },
+              "tree_size": {
+                "count": 4096,
+                "maximum": 15.0,
+                "mean": 8.541259765625,
+                "median": 8.0,
+                "p10": 6.0,
+                "p90": 11.0,
+                "standard_deviation": 2.118730820087953
+              }
+            },
+            "complexity_level_counts": {
+              "simple": 4096
+            },
+            "count": 16384,
+            "exact_behavior_count": 1178,
+            "family_count": 4096,
+            "family_counts_by_motif": {
+              "concurrent_vs_interleaved": 347,
+              "duplicate_vs_silent": 347,
+              "m_nonfreechoice": 346,
+              "ordinary_tree": 3056
+            },
+            "loop_family_prevalence": 0.412109375,
+            "max_petri_edges": 54,
+            "max_petri_nodes": 49,
+            "max_trace_length": 127,
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 694,
+                "parallel": 694
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 694,
+                "silent_routing": 694
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 692,
+                "m_nonfreechoice": 692
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 6112,
+                "isomorphic_renaming": 6112
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 694,
+                "1": 694
+              },
+              "duplicate_vs_silent": {
+                "0": 694,
+                "1": 694
+              },
+              "m_nonfreechoice": {
+                "0": 692,
+                "1": 692
+              },
+              "ordinary_tree": {
+                "0": 6112,
+                "1": 6112
+              }
+            },
+            "nested_loop_prevalence": 0.083251953125,
+            "operator_probability_audit": {
+              "expected_non_root_operator_probabilities": {
+                "and": 0.25,
+                "loop": 0.25,
+                "seq": 0.25,
+                "xor": 0.25
+              },
+              "expected_root_operator_probabilities": {
+                "and": 0.1,
+                "loop": 0.1,
+                "seq": 0.7,
+                "xor": 0.1
+              },
+              "folded_non_root_operator_counts": {
+                "and": 1408,
+                "loop": 1862,
+                "seq": 788,
+                "xor": 1251
+              },
+              "folded_root_operator_counts": {
+                "and": 306,
+                "loop": 306,
+                "seq": 2139,
+                "xor": 305
+              },
+              "maximum_absolute_probability_deviation": 0.02479338842975204,
+              "observed_non_root_operator_counts": {
+                "and": 1713,
+                "loop": 1862,
+                "seq": 1649,
+                "xor": 1552
+              },
+              "observed_non_root_operator_probabilities": {
+                "and": 0.2528040141676505,
+                "loop": 0.27479338842975204,
+                "seq": 0.24335891381345925,
+                "xor": 0.22904368358913813
+              },
+              "observed_root_operator_counts": {
+                "and": 306,
+                "loop": 306,
+                "seq": 2139,
+                "xor": 305
+              },
+              "observed_root_operator_probabilities": {
+                "and": 0.10013089005235602,
+                "loop": 0.10013089005235602,
+                "seq": 0.699934554973822,
+                "xor": 0.09980366492146597
+              },
+              "ordinary_family_count": 3056,
+              "scope": "ordinary_tree_families"
+            },
+            "representation_counts": {
+              "canonical_block_pm4py": 6804,
+              "duplicate_prefix": 694,
+              "explicit_interleaving": 694,
+              "isomorphic_renaming": 6112,
+              "m_nonfreechoice": 692,
+              "parallel": 694,
+              "silent_routing": 694
+            },
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 1388,
+              "duplicate_vs_silent": 1388,
+              "m_nonfreechoice": 1384,
+              "ordinary_tree": 12224
+            },
+            "statistics_units": {
+              "petri_graph": "behavior_family_representation_variant",
+              "trace": "behavior_family_log_view",
+              "tree_activity_operator_and_loop": "behavior_family"
+            },
+            "unexpected_truncation_count": 0
+          }
+        },
+        "validation": {
+          "class_coverage": {
+            "active_motifs": [
+              "ordinary_tree",
+              "duplicate_vs_silent",
+              "concurrent_vs_interleaved",
+              "m_nonfreechoice"
+            ],
+            "actual_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "deficits_by_motif": {},
+            "exact_quota_match": true,
+            "meets_minimum": true,
+            "minimum_families_per_motif": 4,
+            "minimum_rows_per_representation_slot": 8,
+            "mode": "strict",
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 92,
+                "parallel": 92
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 90,
+                "silent_routing": 90
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 90,
+                "m_nonfreechoice": 90
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 752,
+                "isomorphic_renaming": 752
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 92,
+                "1": 92
+              },
+              "duplicate_vs_silent": {
+                "0": 90,
+                "1": 90
+              },
+              "m_nonfreechoice": {
+                "0": 90,
+                "1": 90
+              },
+              "ordinary_tree": {
+                "0": 752,
+                "1": 752
+              }
+            },
+            "planned_family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "planned_meets_minimum": true,
+            "representation_slot_deficits_by_motif": {},
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 184,
+              "duplicate_vs_silent": 180,
+              "m_nonfreechoice": 180,
+              "ordinary_tree": 1504
+            },
+            "unit": "behavior_family"
+          },
+          "path": "validation/samples.jsonl",
+          "statistics": {
+            "avg_trace_count": 128.0,
+            "avg_trace_length": 7.214225769042969,
+            "avg_tree_depth": 3.673828125,
+            "avg_tree_size": 8.634765625,
+            "behavior_count": 512,
+            "bounded_behavior_count": 201,
+            "complexity_distributions": {
+              "activity_count": {
+                "count": 512,
+                "maximum": 7.0,
+                "mean": 5.056640625,
+                "median": 5.0,
+                "p10": 3.1000000000000014,
+                "p90": 6.0,
+                "standard_deviation": 1.0927293647557978
+              },
+              "operator_count": {
+                "count": 512,
+                "maximum": 7.0,
+                "mean": 3.103515625,
+                "median": 3.0,
+                "p10": 2.0,
+                "p90": 5.0,
+                "standard_deviation": 1.0982173693676764
+              },
+              "petri_edge_count": {
+                "count": 1024,
+                "maximum": 54.0,
+                "mean": 20.2568359375,
+                "median": 18.0,
+                "p10": 10.0,
+                "p90": 32.0,
+                "standard_deviation": 8.906055488470106
+              },
+              "petri_node_count": {
+                "count": 1024,
+                "maximum": 49.0,
+                "mean": 18.400390625,
+                "median": 17.0,
+                "p10": 10.0,
+                "p90": 30.0,
+                "standard_deviation": 7.879700968146705
+              },
+              "trace_length": {
+                "count": 131072,
+                "maximum": 101.0,
+                "mean": 7.214225769042969,
+                "median": 5.0,
+                "p10": 2.0,
+                "p90": 16.0,
+                "standard_deviation": 6.698429341831909
+              },
+              "tree_depth": {
+                "count": 512,
+                "maximum": 7.0,
+                "mean": 3.673828125,
+                "median": 4.0,
+                "p10": 3.0,
+                "p90": 4.0,
+                "standard_deviation": 0.745467157532097
+              },
+              "tree_size": {
+                "count": 512,
+                "maximum": 15.0,
+                "mean": 8.634765625,
+                "median": 9.0,
+                "p10": 6.0,
+                "p90": 11.0,
+                "standard_deviation": 2.1454444705744216
+              }
+            },
+            "complexity_level_counts": {
+              "simple": 512
+            },
+            "count": 2048,
+            "exact_behavior_count": 244,
+            "family_count": 512,
+            "family_counts_by_motif": {
+              "concurrent_vs_interleaved": 46,
+              "duplicate_vs_silent": 45,
+              "m_nonfreechoice": 45,
+              "ordinary_tree": 376
+            },
+            "loop_family_prevalence": 0.392578125,
+            "max_petri_edges": 54,
+            "max_petri_nodes": 49,
+            "max_trace_length": 101,
+            "motif_representation_counts": {
+              "concurrent_vs_interleaved": {
+                "explicit_interleaving": 92,
+                "parallel": 92
+              },
+              "duplicate_vs_silent": {
+                "duplicate_prefix": 90,
+                "silent_routing": 90
+              },
+              "m_nonfreechoice": {
+                "canonical_block_pm4py": 90,
+                "m_nonfreechoice": 90
+              },
+              "ordinary_tree": {
+                "canonical_block_pm4py": 752,
+                "isomorphic_renaming": 752
+              }
+            },
+            "motif_representation_slot_counts": {
+              "concurrent_vs_interleaved": {
+                "0": 92,
+                "1": 92
+              },
+              "duplicate_vs_silent": {
+                "0": 90,
+                "1": 90
+              },
+              "m_nonfreechoice": {
+                "0": 90,
+                "1": 90
+              },
+              "ordinary_tree": {
+                "0": 752,
+                "1": 752
+              }
+            },
+            "nested_loop_prevalence": 0.08203125,
+            "operator_probability_audit": {
+              "expected_non_root_operator_probabilities": {
+                "and": 0.25,
+                "loop": 0.25,
+                "seq": 0.25,
+                "xor": 0.25
+              },
+              "expected_root_operator_probabilities": {
+                "and": 0.1,
+                "loop": 0.1,
+                "seq": 0.7,
+                "xor": 0.1
+              },
+              "folded_non_root_operator_counts": {
+                "and": 162,
+                "loop": 219,
+                "seq": 100,
+                "xor": 196
+              },
+              "folded_root_operator_counts": {
+                "and": 38,
+                "loop": 38,
+                "seq": 263,
+                "xor": 37
+              },
+              "maximum_absolute_probability_deviation": 0.023584905660377353,
+              "observed_non_root_operator_counts": {
+                "and": 200,
+                "loop": 219,
+                "seq": 197,
+                "xor": 232
+              },
+              "observed_non_root_operator_probabilities": {
+                "and": 0.2358490566037736,
+                "loop": 0.25825471698113206,
+                "seq": 0.23231132075471697,
+                "xor": 0.27358490566037735
+              },
+              "observed_root_operator_counts": {
+                "and": 38,
+                "loop": 38,
+                "seq": 263,
+                "xor": 37
+              },
+              "observed_root_operator_probabilities": {
+                "and": 0.10106382978723404,
+                "loop": 0.10106382978723404,
+                "seq": 0.699468085106383,
+                "xor": 0.09840425531914894
+              },
+              "ordinary_family_count": 376,
+              "scope": "ordinary_tree_families"
+            },
+            "representation_counts": {
+              "canonical_block_pm4py": 842,
+              "duplicate_prefix": 90,
+              "explicit_interleaving": 92,
+              "isomorphic_renaming": 752,
+              "m_nonfreechoice": 90,
+              "parallel": 92,
+              "silent_routing": 90
+            },
+            "sample_counts_by_motif": {
+              "concurrent_vs_interleaved": 184,
+              "duplicate_vs_silent": 180,
+              "m_nonfreechoice": 180,
+              "ordinary_tree": 1504
+            },
+            "statistics_units": {
+              "petri_graph": "behavior_family_representation_variant",
+              "trace": "behavior_family_log_view",
+              "tree_activity_operator_and_loop": "behavior_family"
+            },
+            "unexpected_truncation_count": 0
+          }
+        }
+      }
+    }
+  },
+  "exact_behavior_signatures_disjoint": false,
+  "exact_behaviors_disjoint_across_all_curricula_and_splits": false,
+  "leaf_probability": 0.55,
+  "max_arity": 3,
+  "operator_probabilities": {
+    "and": 0.25,
+    "loop": 0.25,
+    "seq": 0.25,
+    "xor": 0.25
+  },
+  "reuse_activity_probability": 0.15,
+  "root_operator_probabilities": {
+    "and": 0.1,
+    "loop": 0.1,
+    "seq": 0.7,
+    "xor": 0.1
+  },
+  "sample_format": "jsonl/process-sample.v5",
+  "schema": "proc-rosetta.structural-curriculum.v1",
+  "seed": 13,
+  "splits": {
+    "test": {
+      "class_coverage": {
+        "active_motifs": [
+          "ordinary_tree",
+          "duplicate_vs_silent",
+          "concurrent_vs_interleaved",
+          "m_nonfreechoice"
+        ],
+        "actual_family_counts_by_motif": {
+          "concurrent_vs_interleaved": 46,
+          "duplicate_vs_silent": 45,
+          "m_nonfreechoice": 45,
+          "ordinary_tree": 376
+        },
+        "deficits_by_motif": {},
+        "exact_quota_match": true,
+        "meets_minimum": true,
+        "minimum_families_per_motif": 4,
+        "minimum_rows_per_representation_slot": 8,
+        "mode": "strict",
+        "motif_representation_counts": {
+          "concurrent_vs_interleaved": {
+            "explicit_interleaving": 92,
+            "parallel": 92
+          },
+          "duplicate_vs_silent": {
+            "duplicate_prefix": 90,
+            "silent_routing": 90
+          },
+          "m_nonfreechoice": {
+            "canonical_block_pm4py": 90,
+            "m_nonfreechoice": 90
+          },
+          "ordinary_tree": {
+            "canonical_block_pm4py": 752,
+            "isomorphic_renaming": 752
+          }
+        },
+        "motif_representation_slot_counts": {
+          "concurrent_vs_interleaved": {
+            "0": 92,
+            "1": 92
+          },
+          "duplicate_vs_silent": {
+            "0": 90,
+            "1": 90
+          },
+          "m_nonfreechoice": {
+            "0": 90,
+            "1": 90
+          },
+          "ordinary_tree": {
+            "0": 752,
+            "1": 752
+          }
+        },
+        "planned_family_counts_by_motif": {
+          "concurrent_vs_interleaved": 46,
+          "duplicate_vs_silent": 45,
+          "m_nonfreechoice": 45,
+          "ordinary_tree": 376
+        },
+        "planned_meets_minimum": true,
+        "representation_slot_deficits_by_motif": {},
+        "sample_counts_by_motif": {
+          "concurrent_vs_interleaved": 184,
+          "duplicate_vs_silent": 180,
+          "m_nonfreechoice": 180,
+          "ordinary_tree": 1504
+        },
+        "unit": "behavior_family"
+      },
+      "path": "test/samples.jsonl",
+      "statistics": {
+        "avg_trace_count": 128.0,
+        "avg_trace_length": 17.842857360839844,
+        "avg_tree_depth": 6.333984375,
+        "avg_tree_size": 29.9140625,
+        "behavior_count": 512,
+        "bounded_behavior_count": 371,
+        "complexity_distributions": {
+          "activity_count": {
+            "count": 512,
+            "maximum": 28.0,
+            "mean": 16.423828125,
+            "median": 16.0,
+            "p10": 5.0,
+            "p90": 28.0,
+            "standard_deviation": 8.051473721962893
+          },
+          "operator_count": {
+            "count": 512,
+            "maximum": 29.0,
+            "mean": 10.845703125,
+            "median": 10.0,
+            "p10": 4.0,
+            "p90": 19.0,
+            "standard_deviation": 5.992314502708051
+          },
+          "petri_edge_count": {
+            "count": 1024,
+            "maximum": 178.0,
+            "mean": 66.1083984375,
+            "median": 58.0,
+            "p10": 28.0,
+            "p90": 116.0,
+            "standard_deviation": 34.34295335423626
+          },
+          "petri_node_count": {
+            "count": 1024,
+            "maximum": 138.0,
+            "mean": 54.634765625,
+            "median": 48.0,
+            "p10": 26.0,
+            "p90": 94.0,
+            "standard_deviation": 26.75334752608201
+          },
+          "trace_length": {
+            "count": 131072,
+            "maximum": 128.0,
+            "mean": 17.842857360839844,
+            "median": 12.0,
+            "p10": 3.0,
+            "p90": 40.0,
+            "standard_deviation": 19.191565729976503
+          },
+          "tree_depth": {
+            "count": 512,
+            "maximum": 8.0,
+            "mean": 6.333984375,
+            "median": 7.0,
+            "p10": 4.0,
+            "p90": 8.0,
+            "standard_deviation": 1.5982709602116467
+          },
+          "tree_size": {
+            "count": 512,
+            "maximum": 77.0,
+            "mean": 29.9140625,
+            "median": 28.0,
+            "p10": 9.0,
+            "p90": 52.900000000000034,
+            "standard_deviation": 16.64907905849731
+          }
+        },
+        "complexity_level_counts": {
+          "complex": 512
+        },
+        "count": 2048,
+        "exact_behavior_count": 119,
+        "family_count": 512,
+        "family_counts_by_motif": {
+          "concurrent_vs_interleaved": 46,
+          "duplicate_vs_silent": 45,
+          "m_nonfreechoice": 45,
+          "ordinary_tree": 376
+        },
+        "loop_family_prevalence": 0.724609375,
+        "max_petri_edges": 178,
+        "max_petri_nodes": 138,
+        "max_trace_length": 128,
+        "motif_representation_counts": {
+          "concurrent_vs_interleaved": {
+            "explicit_interleaving": 92,
+            "parallel": 92
+          },
+          "duplicate_vs_silent": {
+            "duplicate_prefix": 90,
+            "silent_routing": 90
+          },
+          "m_nonfreechoice": {
+            "canonical_block_pm4py": 90,
+            "m_nonfreechoice": 90
+          },
+          "ordinary_tree": {
+            "canonical_block_pm4py": 752,
+            "isomorphic_renaming": 752
+          }
+        },
+        "motif_representation_slot_counts": {
+          "concurrent_vs_interleaved": {
+            "0": 92,
+            "1": 92
+          },
+          "duplicate_vs_silent": {
+            "0": 90,
+            "1": 90
+          },
+          "m_nonfreechoice": {
+            "0": 90,
+            "1": 90
+          },
+          "ordinary_tree": {
+            "0": 752,
+            "1": 752
+          }
+        },
+        "nested_loop_prevalence": 0.53515625,
+        "operator_probability_audit": {
+          "expected_non_root_operator_probabilities": {
+            "and": 0.25,
+            "loop": 0.25,
+            "seq": 0.25,
+            "xor": 0.25
+          },
+          "expected_root_operator_probabilities": {
+            "and": 0.1,
+            "loop": 0.1,
+            "seq": 0.7,
+            "xor": 0.1
+          },
+          "folded_non_root_operator_counts": {
+            "and": 1044,
+            "loop": 1486,
+            "seq": 994,
+            "xor": 1098
+          },
+          "folded_root_operator_counts": {
+            "and": 38,
+            "loop": 38,
+            "seq": 263,
+            "xor": 37
+          },
+          "maximum_absolute_probability_deviation": 0.01424023403889177,
+          "observed_non_root_operator_counts": {
+            "and": 1370,
+            "loop": 1486,
+            "seq": 1469,
+            "xor": 1486
+          },
+          "observed_non_root_operator_probabilities": {
+            "and": 0.23575976596110823,
+            "loop": 0.25572190672861816,
+            "seq": 0.25279642058165547,
+            "xor": 0.25572190672861816
+          },
+          "observed_root_operator_counts": {
+            "and": 38,
+            "loop": 38,
+            "seq": 263,
+            "xor": 37
+          },
+          "observed_root_operator_probabilities": {
+            "and": 0.10106382978723404,
+            "loop": 0.10106382978723404,
+            "seq": 0.699468085106383,
+            "xor": 0.09840425531914894
+          },
+          "ordinary_family_count": 376,
+          "scope": "ordinary_tree_families"
+        },
+        "representation_counts": {
+          "canonical_block_pm4py": 842,
+          "duplicate_prefix": 90,
+          "explicit_interleaving": 92,
+          "isomorphic_renaming": 752,
+          "m_nonfreechoice": 90,
+          "parallel": 92,
+          "silent_routing": 90
+        },
+        "sample_counts_by_motif": {
+          "concurrent_vs_interleaved": 184,
+          "duplicate_vs_silent": 180,
+          "m_nonfreechoice": 180,
+          "ordinary_tree": 1504
+        },
+        "statistics_units": {
+          "petri_graph": "behavior_family_representation_variant",
+          "trace": "behavior_family_log_view",
+          "tree_activity_operator_and_loop": "behavior_family"
+        },
+        "unexpected_truncation_count": 0
+      }
+    },
+    "training": {
+      "class_coverage": {
+        "active_motifs": [
+          "ordinary_tree",
+          "duplicate_vs_silent",
+          "concurrent_vs_interleaved",
+          "m_nonfreechoice"
+        ],
+        "actual_family_counts_by_motif": {
+          "concurrent_vs_interleaved": 347,
+          "duplicate_vs_silent": 347,
+          "m_nonfreechoice": 346,
+          "ordinary_tree": 3056
+        },
+        "deficits_by_motif": {},
+        "exact_quota_match": true,
+        "meets_minimum": true,
+        "minimum_families_per_motif": 8,
+        "minimum_rows_per_representation_slot": 16,
+        "mode": "strict",
+        "motif_representation_counts": {
+          "concurrent_vs_interleaved": {
+            "explicit_interleaving": 694,
+            "parallel": 694
+          },
+          "duplicate_vs_silent": {
+            "duplicate_prefix": 694,
+            "silent_routing": 694
+          },
+          "m_nonfreechoice": {
+            "canonical_block_pm4py": 692,
+            "m_nonfreechoice": 692
+          },
+          "ordinary_tree": {
+            "canonical_block_pm4py": 6112,
+            "isomorphic_renaming": 6112
+          }
+        },
+        "motif_representation_slot_counts": {
+          "concurrent_vs_interleaved": {
+            "0": 694,
+            "1": 694
+          },
+          "duplicate_vs_silent": {
+            "0": 694,
+            "1": 694
+          },
+          "m_nonfreechoice": {
+            "0": 692,
+            "1": 692
+          },
+          "ordinary_tree": {
+            "0": 6112,
+            "1": 6112
+          }
+        },
+        "planned_family_counts_by_motif": {
+          "concurrent_vs_interleaved": 347,
+          "duplicate_vs_silent": 347,
+          "m_nonfreechoice": 346,
+          "ordinary_tree": 3056
+        },
+        "planned_meets_minimum": true,
+        "representation_slot_deficits_by_motif": {},
+        "sample_counts_by_motif": {
+          "concurrent_vs_interleaved": 1388,
+          "duplicate_vs_silent": 1388,
+          "m_nonfreechoice": 1384,
+          "ordinary_tree": 12224
+        },
+        "unit": "behavior_family"
+      },
+      "path": "training/samples.jsonl",
+      "statistics": {
+        "avg_trace_count": 128.0,
+        "avg_trace_length": 17.982558250427246,
+        "avg_tree_depth": 6.41455078125,
+        "avg_tree_size": 30.514892578125,
+        "behavior_count": 4096,
+        "bounded_behavior_count": 3021,
+        "complexity_distributions": {
+          "activity_count": {
+            "count": 4096,
+            "maximum": 28.0,
+            "mean": 16.628173828125,
+            "median": 17.0,
+            "p10": 5.0,
+            "p90": 28.0,
+            "standard_deviation": 8.032294264858812
+          },
+          "operator_count": {
+            "count": 4096,
+            "maximum": 33.0,
+            "mean": 11.094482421875,
+            "median": 10.0,
+            "p10": 4.0,
+            "p90": 20.0,
+            "standard_deviation": 6.171903388042593
+          },
+          "petri_edge_count": {
+            "count": 8192,
+            "maximum": 192.0,
+            "mean": 67.867431640625,
+            "median": 60.0,
+            "p10": 28.0,
+            "p90": 120.0,
+            "standard_deviation": 35.11593179547522
+          },
+          "petri_node_count": {
+            "count": 8192,
+            "maximum": 155.0,
+            "mean": 56.004638671875,
+            "median": 50.0,
+            "p10": 26.0,
+            "p90": 96.0,
+            "standard_deviation": 27.279285223605992
+          },
+          "trace_length": {
+            "count": 1048576,
+            "maximum": 128.0,
+            "mean": 17.982558250427246,
+            "median": 12.0,
+            "p10": 3.0,
+            "p90": 41.0,
+            "standard_deviation": 19.44463592756998
+          },
+          "tree_depth": {
+            "count": 4096,
+            "maximum": 8.0,
+            "mean": 6.41455078125,
+            "median": 7.0,
+            "p10": 4.0,
+            "p90": 8.0,
+            "standard_deviation": 1.5842311304746586
+          },
+          "tree_size": {
+            "count": 4096,
+            "maximum": 80.0,
+            "mean": 30.514892578125,
+            "median": 29.0,
+            "p10": 9.0,
+            "p90": 55.0,
+            "standard_deviation": 17.070647462050665
+          }
+        },
+        "complexity_level_counts": {
+          "complex": 4096
+        },
+        "count": 16384,
+        "exact_behavior_count": 560,
+        "family_count": 4096,
+        "family_counts_by_motif": {
+          "concurrent_vs_interleaved": 347,
+          "duplicate_vs_silent": 347,
+          "m_nonfreechoice": 346,
+          "ordinary_tree": 3056
+        },
+        "loop_family_prevalence": 0.737548828125,
+        "max_petri_edges": 192,
+        "max_petri_nodes": 155,
+        "max_trace_length": 128,
+        "motif_representation_counts": {
+          "concurrent_vs_interleaved": {
+            "explicit_interleaving": 694,
+            "parallel": 694
+          },
+          "duplicate_vs_silent": {
+            "duplicate_prefix": 694,
+            "silent_routing": 694
+          },
+          "m_nonfreechoice": {
+            "canonical_block_pm4py": 692,
+            "m_nonfreechoice": 692
+          },
+          "ordinary_tree": {
+            "canonical_block_pm4py": 6112,
+            "isomorphic_renaming": 6112
+          }
+        },
+        "motif_representation_slot_counts": {
+          "concurrent_vs_interleaved": {
+            "0": 694,
+            "1": 694
+          },
+          "duplicate_vs_silent": {
+            "0": 694,
+            "1": 694
+          },
+          "m_nonfreechoice": {
+            "0": 692,
+            "1": 692
+          },
+          "ordinary_tree": {
+            "0": 6112,
+            "1": 6112
+          }
+        },
+        "nested_loop_prevalence": 0.556884765625,
+        "operator_probability_audit": {
+          "expected_non_root_operator_probabilities": {
+            "and": 0.25,
+            "loop": 0.25,
+            "seq": 0.25,
+            "xor": 0.25
+          },
+          "expected_root_operator_probabilities": {
+            "and": 0.1,
+            "loop": 0.1,
+            "seq": 0.7,
+            "xor": 0.1
+          },
+          "folded_non_root_operator_counts": {
+            "and": 9176,
+            "loop": 11855,
+            "seq": 8181,
+            "xor": 9033
+          },
+          "folded_root_operator_counts": {
+            "and": 306,
+            "loop": 306,
+            "seq": 2139,
+            "xor": 305
+          },
+          "maximum_absolute_probability_deviation": 0.0009423234854387119,
+          "observed_non_root_operator_counts": {
+            "and": 11876,
+            "loop": 11855,
+            "seq": 11841,
+            "xor": 11917
+          },
+          "observed_non_root_operator_probabilities": {
+            "and": 0.2500789656552044,
+            "loop": 0.24963675798605994,
+            "seq": 0.24934195287329697,
+            "xor": 0.2509423234854387
+          },
+          "observed_root_operator_counts": {
+            "and": 306,
+            "loop": 306,
+            "seq": 2139,
+            "xor": 305
+          },
+          "observed_root_operator_probabilities": {
+            "and": 0.10013089005235602,
+            "loop": 0.10013089005235602,
+            "seq": 0.699934554973822,
+            "xor": 0.09980366492146597
+          },
+          "ordinary_family_count": 3056,
+          "scope": "ordinary_tree_families"
+        },
+        "representation_counts": {
+          "canonical_block_pm4py": 6804,
+          "duplicate_prefix": 694,
+          "explicit_interleaving": 694,
+          "isomorphic_renaming": 6112,
+          "m_nonfreechoice": 692,
+          "parallel": 694,
+          "silent_routing": 694
+        },
+        "sample_counts_by_motif": {
+          "concurrent_vs_interleaved": 1388,
+          "duplicate_vs_silent": 1388,
+          "m_nonfreechoice": 1384,
+          "ordinary_tree": 12224
+        },
+        "statistics_units": {
+          "petri_graph": "behavior_family_representation_variant",
+          "trace": "behavior_family_log_view",
+          "tree_activity_operator_and_loop": "behavior_family"
+        },
+        "unexpected_truncation_count": 0
+      }
+    },
+    "validation": {
+      "class_coverage": {
+        "active_motifs": [
+          "ordinary_tree",
+          "duplicate_vs_silent",
+          "concurrent_vs_interleaved",
+          "m_nonfreechoice"
+        ],
+        "actual_family_counts_by_motif": {
+          "concurrent_vs_interleaved": 46,
+          "duplicate_vs_silent": 45,
+          "m_nonfreechoice": 45,
+          "ordinary_tree": 376
+        },
+        "deficits_by_motif": {},
+        "exact_quota_match": true,
+        "meets_minimum": true,
+        "minimum_families_per_motif": 4,
+        "minimum_rows_per_representation_slot": 8,
+        "mode": "strict",
+        "motif_representation_counts": {
+          "concurrent_vs_interleaved": {
+            "explicit_interleaving": 92,
+            "parallel": 92
+          },
+          "duplicate_vs_silent": {
+            "duplicate_prefix": 90,
+            "silent_routing": 90
+          },
+          "m_nonfreechoice": {
+            "canonical_block_pm4py": 90,
+            "m_nonfreechoice": 90
+          },
+          "ordinary_tree": {
+            "canonical_block_pm4py": 752,
+            "isomorphic_renaming": 752
+          }
+        },
+        "motif_representation_slot_counts": {
+          "concurrent_vs_interleaved": {
+            "0": 92,
+            "1": 92
+          },
+          "duplicate_vs_silent": {
+            "0": 90,
+            "1": 90
+          },
+          "m_nonfreechoice": {
+            "0": 90,
+            "1": 90
+          },
+          "ordinary_tree": {
+            "0": 752,
+            "1": 752
+          }
+        },
+        "planned_family_counts_by_motif": {
+          "concurrent_vs_interleaved": 46,
+          "duplicate_vs_silent": 45,
+          "m_nonfreechoice": 45,
+          "ordinary_tree": 376
+        },
+        "planned_meets_minimum": true,
+        "representation_slot_deficits_by_motif": {},
+        "sample_counts_by_motif": {
+          "concurrent_vs_interleaved": 184,
+          "duplicate_vs_silent": 180,
+          "m_nonfreechoice": 180,
+          "ordinary_tree": 1504
+        },
+        "unit": "behavior_family"
+      },
+      "path": "validation/samples.jsonl",
+      "statistics": {
+        "avg_trace_count": 128.0,
+        "avg_trace_length": 17.507766723632812,
+        "avg_tree_depth": 6.4140625,
+        "avg_tree_size": 29.99609375,
+        "behavior_count": 512,
+        "bounded_behavior_count": 373,
+        "complexity_distributions": {
+          "activity_count": {
+            "count": 512,
+            "maximum": 28.0,
+            "mean": 16.220703125,
+            "median": 16.0,
+            "p10": 5.0,
+            "p90": 28.0,
+            "standard_deviation": 7.968205930798678
+          },
+          "operator_count": {
+            "count": 512,
+            "maximum": 32.0,
+            "mean": 10.955078125,
+            "median": 10.0,
+            "p10": 3.0,
+            "p90": 20.0,
+            "standard_deviation": 6.199163060457959
+          },
+          "petri_edge_count": {
+            "count": 1024,
+            "maximum": 180.0,
+            "mean": 67.2607421875,
+            "median": 60.0,
+            "p10": 28.0,
+            "p90": 118.0,
+            "standard_deviation": 34.82704731166795
+          },
+          "petri_node_count": {
+            "count": 1024,
+            "maximum": 143.0,
+            "mean": 55.400390625,
+            "median": 49.0,
+            "p10": 25.0,
+            "p90": 94.0,
+            "standard_deviation": 26.794061256133087
+          },
+          "trace_length": {
+            "count": 131072,
+            "maximum": 128.0,
+            "mean": 17.507766723632812,
+            "median": 12.0,
+            "p10": 3.0,
+            "p90": 39.0,
+            "standard_deviation": 19.05276993234832
+          },
+          "tree_depth": {
+            "count": 512,
+            "maximum": 8.0,
+            "mean": 6.4140625,
+            "median": 7.0,
+            "p10": 4.0,
+            "p90": 8.0,
+            "standard_deviation": 1.6106449782909176
+          },
+          "tree_size": {
+            "count": 512,
+            "maximum": 80.0,
+            "mean": 29.99609375,
+            "median": 28.0,
+            "p10": 9.0,
+            "p90": 55.0,
+            "standard_deviation": 17.00964754900027
+          }
+        },
+        "complexity_level_counts": {
+          "complex": 512
+        },
+        "count": 2048,
+        "exact_behavior_count": 120,
+        "family_count": 512,
+        "family_counts_by_motif": {
+          "concurrent_vs_interleaved": 46,
+          "duplicate_vs_silent": 45,
+          "m_nonfreechoice": 45,
+          "ordinary_tree": 376
+        },
+        "loop_family_prevalence": 0.728515625,
+        "max_petri_edges": 180,
+        "max_petri_nodes": 143,
+        "max_trace_length": 128,
+        "motif_representation_counts": {
+          "concurrent_vs_interleaved": {
+            "explicit_interleaving": 92,
+            "parallel": 92
+          },
+          "duplicate_vs_silent": {
+            "duplicate_prefix": 90,
+            "silent_routing": 90
+          },
+          "m_nonfreechoice": {
+            "canonical_block_pm4py": 90,
+            "m_nonfreechoice": 90
+          },
+          "ordinary_tree": {
+            "canonical_block_pm4py": 752,
+            "isomorphic_renaming": 752
+          }
+        },
+        "motif_representation_slot_counts": {
+          "concurrent_vs_interleaved": {
+            "0": 92,
+            "1": 92
+          },
+          "duplicate_vs_silent": {
+            "0": 90,
+            "1": 90
+          },
+          "m_nonfreechoice": {
+            "0": 90,
+            "1": 90
+          },
+          "ordinary_tree": {
+            "0": 752,
+            "1": 752
+          }
+        },
+        "nested_loop_prevalence": 0.533203125,
+        "operator_probability_audit": {
+          "expected_non_root_operator_probabilities": {
+            "and": 0.25,
+            "loop": 0.25,
+            "seq": 0.25,
+            "xor": 0.25
+          },
+          "expected_root_operator_probabilities": {
+            "and": 0.1,
+            "loop": 0.1,
+            "seq": 0.7,
+            "xor": 0.1
+          },
+          "folded_non_root_operator_counts": {
+            "and": 1119,
+            "loop": 1468,
+            "seq": 985,
+            "xor": 1125
+          },
+          "folded_root_operator_counts": {
+            "and": 38,
+            "loop": 38,
+            "seq": 263,
+            "xor": 37
+          },
+          "maximum_absolute_probability_deviation": 0.01363323585067952,
+          "observed_non_root_operator_counts": {
+            "and": 1491,
+            "loop": 1468,
+            "seq": 1374,
+            "xor": 1480
+          },
+          "observed_non_root_operator_probabilities": {
+            "and": 0.2564940650266644,
+            "loop": 0.25253741613624636,
+            "seq": 0.23636676414932048,
+            "xor": 0.2546017546877688
+          },
+          "observed_root_operator_counts": {
+            "and": 38,
+            "loop": 38,
+            "seq": 263,
+            "xor": 37
+          },
+          "observed_root_operator_probabilities": {
+            "and": 0.10106382978723404,
+            "loop": 0.10106382978723404,
+            "seq": 0.699468085106383,
+            "xor": 0.09840425531914894
+          },
+          "ordinary_family_count": 376,
+          "scope": "ordinary_tree_families"
+        },
+        "representation_counts": {
+          "canonical_block_pm4py": 842,
+          "duplicate_prefix": 90,
+          "explicit_interleaving": 92,
+          "isomorphic_renaming": 752,
+          "m_nonfreechoice": 90,
+          "parallel": 92,
+          "silent_routing": 90
+        },
+        "sample_counts_by_motif": {
+          "concurrent_vs_interleaved": 184,
+          "duplicate_vs_silent": 180,
+          "m_nonfreechoice": 180,
+          "ordinary_tree": 1504
+        },
+        "statistics_units": {
+          "petri_graph": "behavior_family_representation_variant",
+          "trace": "behavior_family_log_view",
+          "tree_activity_operator_and_loop": "behavior_family"
+        },
+        "unexpected_truncation_count": 0
+      }
+    }
+  },
+  "synthetic_config": {
+    "activity_vocab_size": 30,
+    "class_coverage": {
+      "min_families_per_motif": {
+        "test": 4,
+        "training": 8,
+        "validation": 4
+      },
+      "mode": "strict"
+    },
+    "complexity_level": "complex",
+    "curriculum_phase": 3,
+    "generator": "behavior_families",
+    "leaf_probability": 0.55,
+    "logs": {
+      "log_views_per_behavior": 2,
+      "max_trace_length": 128,
+      "sampling_modes": [
+        "uniform_variants",
+        "resampled"
+      ],
+      "traces_per_log": 128
+    },
+    "max_activities": 30,
+    "max_arity": 3,
+    "max_depth": 7,
+    "max_generated_activities": 28,
+    "max_tree_size": 80,
+    "min_activities": 8,
+    "min_tree_depth": 4,
+    "min_tree_size": 20,
+    "motif_context_max_nodes": 12,
+    "motif_context_min_nodes": 4,
+    "motifs": {
+      "concurrent_vs_interleaved": 0.08333333333333333,
+      "duplicate_vs_silent": 0.08333333333333333,
+      "m_nonfreechoice": 0.08333333333333333,
+      "ordinary_tree": 0.75
+    },
+    "noise": {
+      "clean_fraction": 0.2,
+      "edit_count_weights": {
+        "1": 0.5,
+        "2": 0.3,
+        "3": 0.2
+      },
+      "operation_weights": {
+        "delete": 0.15,
+        "insert": 0.15,
+        "outside_insert": 0.05,
+        "prefix_truncate": 0.1,
+        "repeat": 0.15,
+        "substitute": 0.15,
+        "suffix_truncate": 0.1,
+        "swap": 0.15
+      }
+    },
+    "operator_probabilities": {
+      "and": 0.25,
+      "loop": 0.25,
+      "seq": 0.25,
+      "xor": 0.25
+    },
+    "representations": {
+      "exact_equivalence_only_for_training": true,
+      "variants_per_behavior": 2
+    },
+    "reuse_activity_probability": 0.15,
+    "root_operator_probabilities": {
+      "and": 0.1,
+      "loop": 0.1,
+      "seq": 0.7,
+      "xor": 0.1
+    },
+    "traces_per_sample": 128,
+    "validation": {
+      "bounded_visible_length": 32,
+      "exact_language_max_states": 5000,
+      "exact_language_max_traces": 10000
+    }
+  },
+  "tree_normalization_version": "pm4py-fold-v1",
+  "version": 7
+}

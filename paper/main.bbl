@@ -1,0 +1,136 @@
+\begin{thebibliography}{23}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{{#1}}
+\providecommand{\urlprefix}{URL }
+\providecommand{\doi}[1]{\url{https://doi.org/#1}}
+\providecommand{\eprint}[2][]{\url{#2}}
+ \bibcommenthead
+
+\bibitem[{van~der Aalst(2016)}]{vanDerAalst2016}
+van~der Aalst WMP (2016) Process Mining: Data Science in Action, 2nd edn.
+  Springer, Berlin, Heidelberg, \doi{10.1007/978-3-662-49851-4}
+
+\bibitem[{van~der Aalst(2019)}]{vanDerAalst2019DFG}
+van~der Aalst WMP (2019) A practitioner's guide to process mining: Limitations
+  of the directly-follows graph. In: Proceedings of CENTERIS/ProjMAN/HCist,
+  Procedia Computer Science, vol 164. Elsevier, pp 321--328,
+  \doi{10.1016/j.procs.2019.12.182}
+
+\bibitem[{van~der Aalst et~al.(2004)van~der Aalst, Weijters, and
+  Maruster}]{Aalst2004}
+van~der Aalst WMP, Weijters T, Maruster L (2004) Workflow mining: Discovering
+  process models from event logs. IEEE Transactions on Knowledge and Data
+  Engineering 16(9):1128--1142. \doi{10.1109/TKDE.2004.47}
+
+\bibitem[{Adriansyah et~al.(2013)Adriansyah, Munoz-Gama, Carmona, van Dongen,
+  and van~der Aalst}]{Adriansyah2013}
+Adriansyah A, Munoz-Gama J, Carmona J, et~al (2013) Alignment based precision
+  checking. In: Business Process Management Workshops, Lecture Notes in
+  Business Information Processing, vol 132. Springer, pp 137--149,
+  \doi{10.1007/978-3-642-36285-9_15}
+
+\bibitem[{Bardes et~al.(2022)Bardes, Ponce, and LeCun}]{Bardes2022}
+Bardes A, Ponce J, LeCun Y (2022) {VICReg}: Variance-invariance-covariance
+  regularization for self-supervised learning. In: International Conference on
+  Learning Representations
+
+\bibitem[{Berti and van~der Aalst(2026{\natexlab{a}})}]{Berti2026ICFM}
+Berti A, van~der Aalst WMP (2026{\natexlab{a}}) An in-context foundation model
+  for predictive process monitoring on event logs. IEEE Access
+  \doi{10.1109/ACCESS.2026.3658877}
+
+\bibitem[{Berti and van~der Aalst(2026{\natexlab{b}})}]{Berti2026Preprint}
+Berti A, van~der Aalst WMP (2026{\natexlab{b}}) {ProcRosetta}: A foundation
+  model for multimodal process mining. Preprints.org,
+  \doi{10.20944/preprints202607.0463.v1}, version 1, posted 7 July 2026
+
+\bibitem[{Berti et~al.(2023)Berti, van Zelst, and Schuster}]{Berti2023PM4Py}
+Berti A, van Zelst SJ, Schuster D (2023) {PM4Py}: A process mining library for
+  python. Software Impacts 17:100556. \doi{10.1016/j.simpa.2023.100556}
+
+\bibitem[{Bommasani et~al.(2021)Bommasani, Hudson, Adeli, Altman, Arora, von
+  Arx, Bernstein, Bohg, Bosselut, Brunskill et~al.}]{Bommasani2021}
+Bommasani R, Hudson DA, Adeli E, et~al (2021) On the opportunities and risks of
+  foundation models. arXiv preprint arXiv:210807258
+  \doi{10.48550/arXiv.2108.07258}
+
+\bibitem[{Colonna et~al.(2024)Colonna, Fares, Duarte, and Sousa}]{Colonna2024}
+Colonna JG, Fares AA, Duarte M, et~al (2024) Process mining embeddings:
+  Learning vector representations for petri nets. Intelligent Systems with
+  Applications 23:200423. \doi{10.1016/j.iswa.2024.200423}
+
+\bibitem[{Dijkman et~al.(2011)Dijkman, Dumas, van Dongen, K{\"a}{\"a}rik, and
+  Mendling}]{Dijkman2011}
+Dijkman RM, Dumas M, van Dongen BF, et~al (2011) Similarity of business process
+  models: Metrics and evaluation. Information Systems 36(2):498--516.
+  \doi{10.1016/j.is.2010.09.006}
+
+\bibitem[{Efron and Tibshirani(1994)}]{Efron1994}
+Efron B, Tibshirani RJ (1994) An Introduction to the Bootstrap. Chapman and
+  Hall/CRC, \doi{10.1201/9780429246593}
+
+\bibitem[{Geng et~al.(2023)Geng, Josifoski, Peyrard, and West}]{Geng2023}
+Geng S, Josifoski M, Peyrard M, et~al (2023) Grammar-constrained decoding for
+  structured {NLP} tasks without finetuning. In: Proceedings of the 2023
+  Conference on Empirical Methods in Natural Language Processing. Association
+  for Computational Linguistics, pp 10932--10952,
+  \doi{10.18653/v1/2023.emnlp-main.674}
+
+\bibitem[{Grover and Leskovec(2016)}]{Grover2016}
+Grover A, Leskovec J (2016) node2vec: Scalable feature learning for networks.
+  In: Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge
+  Discovery and Data Mining. ACM, pp 855--864, \doi{10.1145/2939672.2939754}
+
+\bibitem[{Khosla et~al.(2020)Khosla, Teterwak, Wang, Sarna, Tian, Isola,
+  Maschinot, Liu, and Krishnan}]{Khosla2020}
+Khosla P, Teterwak P, Wang C, et~al (2020) Supervised contrastive learning. In:
+  Advances in Neural Information Processing Systems, pp 18661--18673
+
+\bibitem[{Koninck et~al.(2018)Koninck, vanden Broucke, and
+  Weerdt}]{DeKoninck2018}
+Koninck PD, vanden Broucke S, Weerdt JD (2018) act2vec, trace2vec, log2vec, and
+  model2vec: Representation learning for business processes. In: Business
+  Process Management, Lecture Notes in Computer Science, vol 11080. Springer,
+  pp 305--321, \doi{10.1007/978-3-319-98648-7_18}
+
+\bibitem[{Kourani et~al.(2026)Kourani, Park, and van~der Aalst}]{Kourani2026}
+Kourani H, Park G, van~der Aalst WMP (2026) A discovery technique for
+  expressive yet sound process models. Process Science 3(1)
+
+\bibitem[{Lee et~al.(2019)Lee, Lee, Kim, Kosiorek, Choi, and Teh}]{Lee2019}
+Lee J, Lee Y, Kim J, et~al (2019) Set transformer: A framework for
+  attention-based permutation-invariant neural networks. In: Proceedings of the
+  36th International Conference on Machine Learning, Proceedings of Machine
+  Learning Research, vol~97. PMLR, pp 3744--3753
+
+\bibitem[{Leemans et~al.(2013)Leemans, Fahland, and van~der
+  Aalst}]{Leemans2013}
+Leemans SJJ, Fahland D, van~der Aalst WMP (2013) Discovering block-structured
+  process models from event logs: A constructive approach. In: Application and
+  Theory of Petri Nets and Concurrency, Lecture Notes in Computer Science, vol
+  7927. Springer, pp 311--329, \doi{10.1007/978-3-642-38697-8_17}
+
+\bibitem[{Radford et~al.(2021)Radford, Kim, Hallacy, Ramesh, Goh, Agarwal,
+  Sastry, Askell, Mishkin, Clark, Krueger, and Sutskever}]{Radford2021}
+Radford A, Kim JW, Hallacy C, et~al (2021) Learning transferable visual models
+  from natural language supervision. In: Proceedings of the 38th International
+  Conference on Machine Learning, Proceedings of Machine Learning Research, vol
+  139. PMLR, pp 8748--8763
+
+\bibitem[{Sommers et~al.(2023)Sommers, Menkovski, and Fahland}]{Sommers2023}
+Sommers D, Menkovski V, Fahland D (2023) Supervised learning of process
+  discovery techniques using graph neural networks. Information Systems
+  115:102209. \doi{10.1016/j.is.2023.102209}
+
+\bibitem[{Tavares et~al.(2023)Tavares, Oyamada, Barbon, and
+  Ceravolo}]{Barbon2023}
+Tavares GM, Oyamada RS, Barbon S, et~al (2023) Trace encoding in process
+  mining: A survey and benchmarking. Engineering Applications of Artificial
+  Intelligence 126:107028. \doi{10.1016/j.engappai.2023.107028}
+
+\bibitem[{Vaswani et~al.(2017)Vaswani, Shazeer, Parmar, Uszkoreit, Jones,
+  Gomez, Kaiser, and Polosukhin}]{Vaswani2017}
+Vaswani A, Shazeer N, Parmar N, et~al (2017) Attention is all you need. In:
+  Advances in Neural Information Processing Systems
+
+\end{thebibliography}

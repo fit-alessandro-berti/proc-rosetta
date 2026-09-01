@@ -1,0 +1,211 @@
+{
+  "schema": "proc-rosetta.paper-evidence.v1",
+  "generated_for": "Process Science journal submission",
+  "as_of_utc": "2026-09-01",
+  "code_revision": "52a92f09f07ddc6b9b30463c5216973db7c76f83",
+  "checkpoint": {
+    "path": "checkpoints/proc_rosetta.best.pt",
+    "sha256": "5ed9abf8496ee5571a941becf016186d2f44441a1015c288bea07e416495aeaa",
+    "format_version": 7,
+    "architecture": "proc-rosetta-latent-transformer-v6",
+    "data_schema_version": 5,
+    "normalization": "pm4py-fold-v1",
+    "selected_epoch": 11,
+    "selection_objective": "balanced_robust_curriculum",
+    "parameter_count": 6263248
+  },
+  "corpus": {
+    "manifest_sha256": "9a48ee723f8a717c01677d203b2df84841c1a7b0d04b4389ce681aff91cbe1db",
+    "seed": 13,
+    "family_count": 15360,
+    "row_count": 61440,
+    "fitting_family_count": 12288,
+    "fitting_row_count": 49152,
+    "families_per_curriculum": {
+      "training": 4096,
+      "validation": 512,
+      "test": 512
+    },
+    "rows_per_family": 4,
+    "activity_vocabulary_size": 30,
+    "traces_per_stored_log": 128
+  },
+  "evaluation_scope": {
+    "policy": "deterministic stratum-interleaved family-complete subset",
+    "families_per_curriculum": 16,
+    "rows_per_curriculum": 64,
+    "curriculum_count": 3,
+    "source_conditions": ["tree", "log", "petri", "fused"],
+    "deployment_decode_count": 768,
+    "beam_width": 2,
+    "maximum_decode_tokens": 512,
+    "behavior_simulation_traces": 16,
+    "cross_modal_relevance_label": "strong_behavior_id or exact_behavior_id",
+    "cross_modal_relevance_groups_per_curriculum": 16,
+    "cross_modal_rows_per_relevance_group": 4,
+    "duplicate_visible_activities_allowed": false,
+    "source_activity_constraint": true,
+    "full_test_families_per_curriculum": 512,
+    "scope_warning": "Point estimates are fixed-audit results and are not full-test estimates."
+  },
+  "source_report_hashes": {
+    "simple": "dafc89e94ce650a7daa02faf582bacfd6a67ba57a739f1a5c69cbe69d1e813b7",
+    "medium": "f27d9408d5730d34a0301409ee1d93c05b2a0d655391dec6452cd579d36fdce1",
+    "complex": "ebd26f9328b9bc4feebd0cddedc1a0e5b582b10c02617c154c032725000e78ff"
+  },
+  "deployment_decoding": {
+    "common": {
+      "termination_rate": 1.0,
+      "grammar_validity_rate": 1.0,
+      "petri_convertibility_rate": 1.0,
+      "duplicate_free_rate": 1.0
+    },
+    "simple": {
+      "tree": {"exact_rate": 0.344, "behavior_l1": 0.861, "normalized_edit": 0.509},
+      "log": {"exact_rate": 0.0, "behavior_l1": 1.169, "normalized_edit": 0.519},
+      "petri": {"exact_rate": 0.125, "behavior_l1": 1.094, "normalized_edit": 0.661},
+      "fused": {"exact_rate": 0.031, "behavior_l1": 1.148, "normalized_edit": 0.589}
+    },
+    "medium": {
+      "tree": {"exact_rate": 0.281, "behavior_l1": 0.950, "normalized_edit": 0.549},
+      "log": {"exact_rate": 0.0, "behavior_l1": 1.246, "normalized_edit": 0.553},
+      "petri": {"exact_rate": 0.062, "behavior_l1": 1.130, "normalized_edit": 0.645},
+      "fused": {"exact_rate": 0.0, "behavior_l1": 1.222, "normalized_edit": 0.668}
+    },
+    "complex": {
+      "tree": {"exact_rate": 0.156, "behavior_l1": 1.105, "normalized_edit": 0.645},
+      "log": {"exact_rate": 0.0, "behavior_l1": 1.291, "normalized_edit": 0.562},
+      "petri": {"exact_rate": 0.062, "behavior_l1": 1.245, "normalized_edit": 0.673},
+      "fused": {"exact_rate": 0.0, "behavior_l1": 1.273, "normalized_edit": 0.676}
+    }
+  },
+  "fused_behavior_distance_spearman": {
+    "simple": {"estimate": 0.577374, "bootstrap_95": [0.405243, 0.833123], "families": 16},
+    "medium": {"estimate": 0.742598, "bootstrap_95": [0.592838, 0.867754], "families": 16},
+    "complex": {"estimate": 0.790551, "bootstrap_95": [0.675336, 0.890897], "families": 16}
+  },
+  "embedding_behavior_spearman": {
+    "methods": [
+      "proc_rosetta_fused",
+      "proc_rosetta_trace",
+      "proc_rosetta_petri",
+      "proc_rosetta_tree",
+      "trace_variants",
+      "directly_follows",
+      "pm4py_log_features",
+      "eventually_follows",
+      "activity_features",
+      "petri_counts",
+      "pm4py_petri_node2vec"
+    ],
+    "simple": [0.577, 0.576, 0.569, 0.433, 0.713, 0.550, 0.406, 0.289, 0.229, 0.206, 0.189],
+    "medium": [0.743, 0.714, 0.714, 0.576, 0.628, 0.693, 0.633, 0.503, 0.490, 0.562, 0.201],
+    "complex": [0.791, 0.723, 0.755, 0.680, 0.453, 0.750, 0.757, 0.599, 0.624, 0.581, 0.535]
+  },
+  "within_modality_family_invariance": {
+    "simple": {
+      "fused": [0.995, 0.227, 0.223, 1.0],
+      "petri": [0.985, 0.220, 0.230, 1.0],
+      "trace": [0.985, 0.316, 0.137, 1.0],
+      "tree": [0.999, 0.163, 0.323, 1.0]
+    },
+    "medium": {
+      "fused": [0.993, 0.155, 0.287, 1.0],
+      "petri": [0.985, 0.151, 0.298, 1.0],
+      "trace": [0.976, 0.260, 0.156, 1.0],
+      "tree": [0.999, 0.118, 0.370, 1.0]
+    },
+    "complex": {
+      "fused": [0.995, 0.101, 0.291, 1.0],
+      "petri": [0.985, 0.103, 0.326, 1.0],
+      "trace": [0.982, 0.221, 0.182, 1.0],
+      "tree": [0.999, 0.065, 0.372, 1.0]
+    },
+    "array_fields": ["within_family_cosine", "mean_cross_family_cosine", "nearest_positive_minus_nearest_negative_margin", "family_recall_at_1"]
+  },
+  "cross_modal_retrieval": {
+    "array_fields": ["recall_at_1", "mrr"],
+    "simple": {
+      "petri_to_log": [0.703, 0.755],
+      "petri_to_tree": [0.828, 0.862],
+      "log_to_petri": [0.750, 0.805],
+      "log_to_tree": [0.656, 0.705],
+      "tree_to_petri": [0.812, 0.867],
+      "tree_to_log": [0.875, 0.905]
+    },
+    "medium": {
+      "petri_to_log": [0.766, 0.799],
+      "petri_to_tree": [0.828, 0.862],
+      "log_to_petri": [0.719, 0.785],
+      "log_to_tree": [0.656, 0.705],
+      "tree_to_petri": [0.875, 0.908],
+      "tree_to_log": [0.875, 0.905]
+    },
+    "complex": {
+      "petri_to_log": [0.828, 0.855],
+      "petri_to_tree": [0.828, 0.862],
+      "log_to_petri": [0.750, 0.801],
+      "log_to_tree": [0.688, 0.730],
+      "tree_to_petri": [0.875, 0.908],
+      "tree_to_log": [0.875, 0.905]
+    },
+    "log_to_tree_recall_at_1_bootstrap_95": {
+      "simple": [0.4375, 0.84375],
+      "medium": [0.421094, 0.84375],
+      "complex": [0.46875, 0.84375]
+    }
+  },
+  "footprint_discovery": {
+    "simple": {
+      "proc_rosetta": {"evaluable_rate": 0.781, "fitness": 0.702, "precision": 0.654, "mean_f1": 0.666055, "family_bootstrap_estimate": 0.667804, "bootstrap_95": [0.597704, 0.745983]},
+      "inductive_miner": {"evaluable_rate": 1.0, "fitness": 1.0, "precision": 0.992, "mean_f1": 0.996, "bootstrap_95": [0.986607, 1.0]}
+    },
+    "medium": {
+      "proc_rosetta": {"evaluable_rate": 0.750, "fitness": 0.709, "precision": 0.663, "mean_f1": 0.668808, "family_bootstrap_estimate": 0.670420, "bootstrap_95": [0.611012, 0.733193]},
+      "inductive_miner": {"evaluable_rate": 1.0, "fitness": 1.0, "precision": 0.986, "mean_f1": 0.992, "bootstrap_95": [0.975081, 1.0]}
+    },
+    "complex": {
+      "proc_rosetta": {"evaluable_rate": 0.719, "fitness": 0.691, "precision": 0.639, "mean_f1": 0.648918, "family_bootstrap_estimate": 0.652779, "bootstrap_95": [0.569768, 0.728920]},
+      "inductive_miner": {"evaluable_rate": 1.0, "fitness": 1.0, "precision": 0.907, "mean_f1": 0.938, "bootstrap_95": [0.867867, 0.991390]}
+    }
+  },
+  "log_decode_motif_strata": {
+    "array_fields": ["behavior_l1", "normalized_edit"],
+    "simple": {
+      "duplicate_prefix": [1.136, 0.546],
+      "concurrency_interleaving": [1.087, 0.491],
+      "m_pattern": [1.175, 0.378],
+      "ordinary": [1.224, 0.662]
+    },
+    "medium": {
+      "duplicate_prefix": [1.187, 0.546],
+      "concurrency_interleaving": [1.081, 0.491],
+      "m_pattern": [1.170, 0.378],
+      "ordinary": [1.580, 0.798]
+    },
+    "complex": {
+      "duplicate_prefix": [1.165, 0.546],
+      "concurrency_interleaving": [1.063, 0.491],
+      "m_pattern": [1.130, 0.378],
+      "ordinary": [1.715, 0.832]
+    }
+  },
+  "external_running_example": {
+    "source_trace_count": 6,
+    "source_visible_activity_count": 8,
+    "all_outputs_valid_and_petri_convertible": true,
+    "all_outputs_use_complete_source_alphabet_without_extras_or_duplicates": true,
+    "source_reference": {"tree_size": 14, "depth": 6, "normalized_edit": 0.0, "fitness": 1.0, "precision": 1.0, "f1": 1.0},
+    "tree_input": {"tree_size": 16, "depth": 6, "normalized_edit": 0.360, "fitness": 0.474, "precision": 0.360, "f1": 0.409091},
+    "log_input": {"tree_size": 14, "depth": 5, "normalized_edit": 0.545, "fitness": 0.737, "precision": 0.400, "f1": 0.518519},
+    "petri_input": {"tree_size": 14, "depth": 5, "normalized_edit": 0.182, "fitness": 0.860, "precision": 0.700, "f1": 0.771654}
+  },
+  "limitations": [
+    "Synthetic quantitative evaluation under the same generator family as training.",
+    "Family identifiers are split-disjoint, but exact behaviors and normalized trees are not guaranteed globally disjoint.",
+    "Routine audit contains 16 families per curriculum and one training seed.",
+    "Behavior distance overlaps features represented in training signatures and deterministic baselines.",
+    "No retrained architecture or objective ablation is reported.",
+    "Grammar validity does not imply semantic fidelity or downstream footprint evaluability."
+  ]
+}

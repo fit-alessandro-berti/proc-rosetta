@@ -226,10 +226,15 @@ nohup.out
 *.aux
 *.blg
 *.out
+*.fdb_latexmk
+*.fls
 *.pdf
 *.vrb
 
 !presentation/*.pdf
+!paper/main.pdf
+!paper/main.bbl
+!paper/cover_letter.pdf
 !paper/figures/training_curves.pdf
 !paper/figures/reconstruction_*.pdf
 !paper/figures/discovery_*.pdf
@@ -246,4 +251,3 @@ nohup.out
 !dist_data/*.tar.gz
 
 !data_generation.pdf
-
