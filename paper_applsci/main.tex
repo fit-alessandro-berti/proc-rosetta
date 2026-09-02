@@ -608,6 +608,8 @@ The need for this constraint is easiest to see in prefix notation. After the dec
 
 To enforce them, the shared decoder works together with a small grammar controller. The neural decoder proposes the process tree structure, operator arities, and visible activities; its copy component can reuse activities stored in the source memory. At every step, the controller records whether an arity is expected and how many child positions remain open. It then masks every token that is illegal in the current state. End-of-sequence becomes available only when no child position remains open. If ordinary search reaches its budget first, a deterministic completion rule fills the outstanding positions and closes the expression, provided that the completion budget is sufficient.
 
+\input{figures/decoder}
+
 Two additional masks control visible activities. The \emph{source-alphabet mask} prevents the decoder from introducing an activity that is absent from the permitted source alphabet. In the synthetic evaluation, a separate policy also suppresses repeated visible labels. Repeated labels can be legitimate in real processes, so the external event log cases are evaluated both with and without that repeated-label restriction.
 
 These constraints have a deliberately limited purpose. They ensure that a completed output is well formed, uses only permitted activities when the corresponding mask is enabled, and can be converted from a process tree to a Petri net. They do not tell the decoder which valid tree best represents the source. The decoder must still learn the appropriate operators, activity positions, tree size, and control-flow behavior. A grammar-valid candidate can therefore be behaviorally wrong. The following propositions state precisely what is and is not guaranteed.
@@ -663,9 +665,11 @@ The selected checkpoint contains 6,263,248 trainable parameters. This number des
 
 \subsection{Training objectives}\label{sec:training}
 
-The losses address three different failure modes. Reconstruction losses teach the decoder to produce the designated process tree from each individual artifact type and from fused inputs. Alignment losses teach the semantic vectors which differences to ignore and which distinctions to retain. Regularization losses prevent the shared space from collapsing and stabilize structured generation. The fields produced by the generator determine which loss can be applied; Table~\ref{tab:data-to-loss} makes that connection explicit.
+Training must make both parts of the architecture useful at the same time. The decoder must generate the designated process tree from any supported input, while the encoders must place behaviorally related artifacts near one another in the shared semantic space. Training only for reconstruction would not ensure useful cross-artifact comparisons. Training only for alignment would not teach the decoder to produce a process model.
 
-\input{figures/decoder}
+The objective therefore combines three kinds of learning signal. \emph{Reconstruction signals} teach candidate generation from individual artifacts and from fused inputs. \emph{Relation signals} organize the shared space by distinguishing exact behavioral agreement, weaker forms of similarity, and unrelated behavior. \emph{Regularization signals} prevent the semantic vectors from collapsing to nearly the same point.
+
+Not every artifact pair supports the same conclusion. For example, two artifacts with the same strong-behavior and partial-order identifiers can be treated as a strong positive pair. Two artifacts that agree only on visible traces should be kept closer than unrelated artifacts, but they should not be forced to have identical vectors. Likewise, two finite event log observations drawn from the same source should remain close even when their sampled traces and frequencies differ. The relation records produced by the generator specify which learning signals are justified for each example. Table~\ref{tab:data-to-loss} summarizes this connection.
 
 \begin{table}[H]
 \centering
@@ -676,17 +680,21 @@ The losses address three different failure modes. Reconstruction losses teach th
 \toprule
 Generated relationship & Learning signal & Intended effect \\
 \midrule
-A row and its designated process tree & Reconstruction & Decode the designated exchange representation from any source artifact or fusion. \\
-Same family, different event log observations & Observation consistency & Ignore finite-sample frequencies and trace presentation order. \\
-Same strong behavior and partial-order identifiers & Strong contrastive positive & Align artifact pairs known to share both recorded semantics. \\
-Same exact trace-language ID, different partial-order IDs & Hierarchical relation & Keep trace-equivalent artifacts closer than unrelated ones without erasing their causal distinction. \\
-Different families and experiment-specific behavior descriptors & Geometry and ranking & Preserve the ordering induced by the experiment-specific distance. \\
-All semantic vectors & Variance and covariance regularization & Prevent unrelated artifacts from receiving nearly identical vectors. \\
+One artifact row and its designated process tree & Reconstruction & Decode the designated exchange representation from any source artifact or fusion. \\
+Two event log observations from the same family & Observation consistency & Ignore finite-sample frequencies and trace presentation order. \\
+Two artifacts with matching strong-behavior and partial-order IDs & Strong contrastive positive & Align artifact pairs known to share both recorded semantics. \\
+Two artifacts with the same exact trace-language ID but different partial-order IDs & Hierarchical relation & Keep trace-equivalent artifacts closer than unrelated ones without erasing their causal distinction. \\
+Artifacts from different families, with experiment-specific behavior descriptors & Geometry and ranking & Preserve the ordering induced by the experiment-specific distance. \\
+Every batch of semantic vectors & Variance and covariance regularization & Prevent unrelated artifacts from receiving nearly identical vectors. \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-Strong positives align pairs that agree under both recorded semantics. Hierarchical terms keep trace-equivalent but partial-order-distinct pairs closer than unrelated pairs without making them identical. Observation consistency aligns alternative finite event logs from the same source pool. Geometry terms encourage vector distances to follow the experiment-specific behavioral descriptors. The complete objective is
+The reconstruction part has two roles. $\mathcal{L}_{\mathrm{recon}}$ combines the direct reconstruction losses that decode the designated process tree from each individual artifact type. $\mathcal{L}_{\mathrm{fuse}}$ applies the same target to generation conditioned on several fused artifacts.
+
+Four terms organize the semantic space. $\mathcal{L}_{\mathrm{exact}}$ pulls together pairs that agree under both recorded semantics. $\mathcal{L}_{\mathrm{hier}}$ handles visible-language agreement without partial-order agreement: it places such pairs closer than unrelated artifacts without forcing them to the same point. $\mathcal{L}_{\mathrm{obs}}$ aligns alternative finite event log observations from the same source pool. Finally, $\mathcal{L}_{\mathrm{geom}}$ encourages distances between semantic vectors to follow the experiment-specific behavioral distance.
+
+The remaining term, $\mathcal{L}_{\mathrm{reg}}$, maintains variation across representation dimensions and discourages redundant dimensions. Its purpose is to keep the shared space informative rather than allowing many artifacts to receive almost identical vectors. The complete objective is
 \begin{align}
 \mathcal{L}={}&
  \mathcal{L}_{\mathrm{recon}}
@@ -698,7 +706,9 @@ Strong positives align pairs that agree under both recorded semantics. Hierarchi
  +\mathcal{L}_{\mathrm{reg}}.
 \label{eq:objective}
 \end{align}
-In Eq.~\eqref{eq:objective}, $\mathcal{L}_{\mathrm{recon}}$ contains the artifact-specific reconstruction terms and $\mathcal{L}_{\mathrm{fuse}}$ contains fused-input reconstruction. The remaining terms correspond to exact-pair alignment, hierarchical relation ordering, observation consistency, behavioral geometry, and latent regularization. The four principal reconstruction weights are 1.00; exact cross-artifact contrast is weighted 0.30, hierarchical ordering and observation consistency 0.15 each, and soft behavioral geometry 0.25. The semantic representation is deterministic rather than sampled from a learned probability distribution. Consequently, no Kullback-Leibler regularizer is applicable and its configured coefficient is zero.
+Equation~\eqref{eq:objective} uses compact notation in which each component includes its configured coefficient. The three direct reconstruction losses and the fused-input reconstruction loss each have weight 1.00. Exact cross-artifact alignment has weight 0.30. Hierarchical ordering and observation consistency each have weight 0.15, and soft behavioral geometry has weight 0.25. These values keep reconstruction as the principal signal while still shaping the shared representation.
+
+The semantic vectors are deterministic outputs of the encoders; they are not samples from a learned probability distribution. A Kullback--Leibler regularizer is therefore not applicable, and its configured coefficient is zero.
 
 \subsection{Curriculum learning and checkpoint selection}\label{sec:curriculum}
 
