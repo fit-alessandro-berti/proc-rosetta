@@ -1,8 +1,8 @@
-\begin{figure}[H]
+\begin{figure*}[!b]
 \centering
 \begin{tikzpicture}
 \begin{axis}[
- width=0.94\textwidth,height=5.5cm,
+ width=0.90\textwidth,height=5.0cm,
  xlabel={epoch},ylabel={loss},
  xmin=1,xmax=17,xtick={1,3,5,7,9,11,13,15,17},
  ymin=3,ymax=11,
@@ -33,4 +33,4 @@
 \end{tikzpicture}
 \caption{Training and macro validation objectives. Stage transitions change task difficulty. Epoch 10 is not eligible for final selection; epoch 11 is the first eligible \texttt{complex}-stage evaluation and is selected.}
 \label{fig:training}
-\end{figure}
+\end{figure*}

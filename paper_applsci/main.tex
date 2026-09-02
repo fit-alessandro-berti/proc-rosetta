@@ -1,6 +1,6 @@
 % ProcRosetta manuscript adapted for Applied Sciences.
 % Official MDPI ACS-style LaTeX template package dated 1 September 2026.
-\documentclass[applsci,article,submit,pdftex,moreauthors]{Definitions/mdpi}
+\documentclass[applsci,article,submit,moreauthors]{Definitions/mdpi}
 
 \usepackage{graphicx}
 \usepackage{etoolbox}
@@ -46,8 +46,11 @@
 \newcommand{\higherbetter}{\ensuremath{\uparrow}}
 \newcommand{\bibpagerange}[2]{#1\mbox{-}#2}
 \renewcommand{\arraystretch}{1.05}
-\AtBeginEnvironment{table}{\small\setlength{\tabcolsep}{4.5pt}}
+\AtBeginEnvironment{table*}{\footnotesize\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.0}}
 \apptocmd{\thebibliography}{\raggedright}{}{}
+\DeclareFontFamily{U}{wasy}{}
+\DeclareFontShape{U}{wasy}{m}{n}{<->wasy10}{}
+\DeclareFontShape{U}{wasy}{b}{n}{<->wasy10}{}
 \vbadness=10000
 \raggedbottom
 \setlength{\headheight}{20pt}
@@ -139,7 +142,7 @@ Synthetic families provide exact control over structural contrasts, repeated obs
 
 Table~\ref{tab:related-positioning} uses only capabilities explicitly established in the cited publications reviewed for this manuscript. ``Not reported'' means that the capability was not established for the comparison made here; it does not assert absence.
 
-\begin{table}[H]
+\begin{table*}[!t]
 \caption{Comparison with the closest verified publications. EL: event log; PT: process tree; PN: Petri net.\label{tab:related-positioning}}
 \begin{adjustwidth}{-\extralength}{0cm}
 \scriptsize
@@ -157,7 +160,7 @@ This work & EL, PT, PN & Yes & Visible-language and partial-order relations & Ye
 \bottomrule
 \end{tabularx}
 \end{adjustwidth}
-\end{table}
+\end{table*}
 
 Formal similarity, exact transformation, learned retrieval, and process discovery each address part of the broader problem. \model contributes their cross-artifact combination: native encoding of event logs, process trees, and Petri nets; relation-aware supervision of a common retrieval space; and an auxiliary constrained process tree proposer. It neither defines a new universal equivalence relation nor guarantees behavioral preservation.
 
@@ -205,7 +208,7 @@ The dataset uses two complementary observations to make the distinction between 
 
 We can now explain why the training data are organized into \emph{behavior families}. For the worked example, the family contains one process tree target $T$, two structurally different Petri net realizations $N^{(1)}$ and $N^{(2)}$, and two finite event log observations $L^{(u)}$ and $L^{(r)}$. Pairing each Petri net with each event log produces the four aligned rows in Table~\ref{tab:worked-family}. The process tree appears in every row because it is the common decoding target, not because four different process trees were created.
 
-\begin{table}[H]
+\begin{table*}[!b]
 \centering
 \caption{Four aligned rows in the worked duplicate-prefix behavior family.}
 \label{tab:worked-family}
@@ -219,7 +222,7 @@ Row & Process tree target & Petri net realization & Event log observation \\
 4 & $T$ & shared prefix with silent routing $N^{(2)}$ & independently sampled $L^{(r)}$ \\
 \bottomrule
 \end{tabularx}
-\end{table}
+\end{table*}
 
 The four rows represent one related group, not four independent processes. Within the group, changing $N^{(1)}$ to $N^{(2)}$ isolates \emph{structural variation}: the routing graph changes while the visible trace set remains the same. Changing $L^{(u)}$ to $L^{(r)}$ isolates \emph{observational variation}: the sampled cases and their frequencies change while their source behavior remains the same. Presenting both forms of variation helps the representation learn that node identities, routing layout, case order, and empirical trace frequency are not by themselves reliable indicators of behavioral difference.
 
@@ -282,7 +285,7 @@ The task produces a process tree in the grammar of Eq.~\eqref{eq:grammar}. Using
 
 For example, consider the event log in the earlier request example. Each case first records \textsf{register} and then records either \textsf{accept} or \textsf{reject}. From this log, the decoder may propose a tree that performs \textsf{register} before choosing between the two outcomes. Given either Petri net from the same example, it should aim for a process tree that captures the same visible behavior. The output does not need to reproduce the source's internal graph because a process tree and a Petri net organize behavior differently.
 
-When generation uses one source artifact, the decoder reads its \emph{contextual memory} $H_m$. This memory retains local information that the single retrieval vector cannot preserve, such as activity order in a trace, parent--child relations in a process tree, or neighboring nodes in a Petri net. The decoder attends to these details while choosing the operators, activities, and structure of the output tree. We call this the \emph{direct-generation} setting.
+When generation uses one source artifact, the decoder reads its \emph{contextual memory} $H_m$. This memory retains local information that the single retrieval vector cannot preserve, such as activity order in a trace, relations between parents and children in a process tree, or neighboring nodes in a Petri net. The decoder attends to these details while choosing the operators, activities, and structure of the output tree. We call this the \emph{direct-generation} setting.
 
 Generation can also use more than one artifact. For example, an event log may provide evidence about executions while a related Petri net provides explicit routing information. To offer a simple common interface for such inputs, \model averages their normalized retrieval vectors. For a set $S$ of available artifact types, the fused representation is
 \begin{equation}
@@ -378,7 +381,7 @@ For this reason, the pair of Petri net realizations receives a \emph{relation re
 \end{itemize}
 This separation prevents the method used to examine a pair from being confused with the behavioral claim supported by that examination. Table~\ref{tab:relation-evidence} summarizes the available evidence types.
 
-\begin{table}[H]
+\begin{table*}[!b]
 \centering
 \caption{Visible-language evidence stored for a pair of model realizations.}
 \label{tab:relation-evidence}
@@ -391,17 +394,16 @@ Bounded search & The traces found so far agree, but at least one search stops at
 Isomorphic construction & One Petri net is obtained from the other by consistently renaming its structure, including arcs, labels, and markings. & Certifies equality for ordinary looping pairs without enumerating an infinite language. \\
 \bottomrule
 \end{tabularx}
-\end{table}
+\end{table*}
 
 The important distinction is between \emph{complete evidence} and \emph{bounded evidence}. Exact enumeration is complete only when both searches finish. Isomorphic construction is also complete evidence because consistent structural renaming preserves the net, even when its language is infinite. A bounded search reports only the traces reached before a safeguard stopped the exploration. Agreement among those traces is useful diagnostic information, but it is not a certificate of complete-language equality.
 
 The relation record stores \emph{visible-language identity} and \emph{partial-order identity} independently. This produces three main training cases. If both identifiers agree, the pair is a strong positive and its representations may be aligned closely. If the visible-language identifier agrees but the partial-order identifier differs, the pair receives the hierarchical distance treatment described in Section~\ref{sec:training}. If only bounded evidence is available, the pair is never used as an exact positive. Table~\ref{tab:motif-cert} shows how these rules apply to the family types in the corpus.
 
-\begin{table}[H]
+\begin{table*}[!t]
 \centering
 \caption{Representation contrasts, recorded semantics, and supervision roles.}
 \label{tab:motif-cert}
-\small
 \begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.18\textwidth}>{\raggedright\arraybackslash}p{0.28\textwidth}>{\raggedright\arraybackslash}p{0.23\textwidth}Y@{}}
 \toprule
 Family & Structural contrast & Recorded relation & Training role \\
@@ -414,13 +416,13 @@ M-pattern & Block-structured versus non-free-choice routing & Exact visible lang
 Bounded comparison & Any search stopped by a safeguard & Collected traces only; no exact identifier & Not an exact positive and not retained for training \\
 \bottomrule
 \end{tabularx}
-\end{table}
+\end{table*}
 
 The \emph{concurrency/interleaving pair} makes this separation concrete. Both realizations generate $\langle A_0,A_1\rangle$ and $\langle A_1,A_0\rangle$. In the first net, however, $A_0$ and $A_1$ can be enabled at the same time; in the second, the net chooses one of two fixed sequential orders. The pair therefore has visible-language agreement but not partial-order agreement. Figure~\ref{fig:concurrency-nets} shows the two realizations.
 
-\begin{figure}[H]
+\begin{figure*}[!b]
 \centering
-\resizebox{0.94\textwidth}{!}{%
+\resizebox{0.90\textwidth}{!}{%
 \begin{tikzpicture}[
  pnplace/.style={circle,draw=prgray,minimum size=5.5mm,inner sep=0pt,fill=white},
  pnfinal/.style={pnplace,double,double distance=0.7pt},
@@ -489,7 +491,7 @@ The \emph{concurrency/interleaving pair} makes this separation concrete. Both re
 }
 \caption{Full concurrency/interleaving contrast. Both Petri nets generate $\langle A_0,A_1\rangle$ and $\langle A_1,A_0\rangle$, but only $N^{(1)}$ enables the activities concurrently. The pair shares an exact visible-language identifier, has different partial-order identifiers, and is not a strong positive. Black rectangles denote silent transitions.}
 \label{fig:concurrency-nets}
-\end{figure}
+\end{figure*}
 
 Only after the model relationship has been recorded does the generator construct event log observations. It first creates a finite \emph{trace pool} from which logs can be sampled. For a non-looping family, complete state-space exploration provides this pool when both Petri net searches terminate. If a search reaches a safeguard, its collected traces remain bounded evidence and are not treated as the complete language.
 
@@ -553,7 +555,7 @@ Finally, the generator checks \emph{corpus coverage}. It verifies the required m
 
 \subsection{Cross-artifact architecture}\label{sec:architecture}
 
-The main architectural challenge is that the same artifacts must support two tasks with different information needs. For \emph{retrieval}, the system must compare complete artifacts quickly, even when one is an event log and another is a process tree or Petri net. A single compact vector is suitable for this comparison. For \emph{candidate generation}, however, the decoder must recover local details such as activities, ordering information, parent--child relations, and graph neighborhoods. Compressing everything into one vector would make these details difficult to access.
+The main architectural challenge is that the same artifacts must support two tasks with different information needs. For \emph{retrieval}, the system must compare complete artifacts quickly, even when one is an event log and another is a process tree or Petri net. A single compact vector is suitable for this comparison. For \emph{candidate generation}, however, the decoder must recover local details such as activities, ordering information, relations between parents and children, and graph neighborhoods. Compressing everything into one vector would make these details difficult to access.
 
 \model therefore gives every artifact encoder the same two-part output. The first part is a \emph{semantic vector} $\vect z_m$: a normalized, fixed-size summary used to compare artifacts in the shared space. The second part is a \emph{contextual memory} $H_m$: a collection of source states that preserves the finer information needed by the process tree decoder. The encoders produce these outputs in a common form, although they read different input structures.
 
@@ -563,7 +565,7 @@ Figure~\ref{fig:architecture} shows how the two outputs are used. The \emph{sema
 
 The three encoders cannot process their inputs in exactly the same way because the artifacts organize information differently. A process tree is an ordered hierarchy, an event log contains ordered events inside an unordered collection of traces, and a Petri net is a typed directed graph. Each encoder therefore follows the structure of its own artifact while still producing the common outputs described above. The process tree encoder and decoder use Transformer attention \cite{Vaswani2017}; the event log encoder uses recurrent states within traces and set attention across traces \cite{Lee2019}; and the Petri net encoder exchanges messages along typed arcs. Table~\ref{tab:encoders} summarizes the reason for each choice.
 
-\begin{table}[H]
+\begin{table*}[!b]
 \centering
 \caption{Encoder rationale by artifact type.}
 \label{tab:encoders}
@@ -576,13 +578,13 @@ Event log & Event order within traces and invariance to trace presentation order
 Petri net & Typed directed graph structure, labels, and markings & Edge-aware message-passing network \\
 \bottomrule
 \end{tabularx}
-\end{table}
+\end{table*}
 
 Concretely, the process tree encoder reads the prefix representation together with each token's depth and parent information. The event log encoder reads events in their trace order, then combines the traces without depending on the order in which those traces are presented. The Petri net encoder uses places, transitions, labels, markings, and typed directed arcs. In every case, the detailed encoder states form $H_m$, while a pooled and projected summary forms $\vect z_m$. This common interface is what allows different artifact types to be compared by the same retrieval rule and processed by the same decoder.
 
 For reproducibility, Table~\ref{tab:parameters} reports the concrete layer counts, dimensions, and parameter counts of the selected checkpoint. These values describe the evaluated implementation; the essential design is the separation between a shared semantic vector and a detail-preserving contextual memory.
 
-\begin{table}[H]
+\begin{table*}[!t]
 \centering
 \caption{Architecture of the selected checkpoint.}
 \label{tab:parameters}
@@ -599,7 +601,7 @@ Contrastive head & 2-layer MLP & 18,624 & training-only projection \\
 Total & & 6,263,248 & six 192-dimensional memory tokens; 96-dimensional semantic vector \\
 \bottomrule
 \end{tabularx}
-\end{table}
+\end{table*}
 
 \subsection{Grammar-Constrained Candidate Decoder and Structural Guarantees}\label{sec:decoder-guarantees}
 
@@ -672,11 +674,10 @@ The objective therefore combines three kinds of learning signal. \emph{Reconstru
 
 Not every artifact pair supports the same conclusion. For example, two artifacts with the same strong-behavior and partial-order identifiers can be treated as a strong positive pair. Two artifacts that agree only on visible traces should be kept closer than unrelated artifacts, but they should not be forced to have identical vectors. Likewise, two finite event log observations drawn from the same source should remain close even when their sampled traces and frequencies differ. The relation records produced by the generator specify which learning signals are justified for each example. Table~\ref{tab:data-to-loss} summarizes this connection.
 
-\begin{table}[H]
+\begin{table*}[!b]
 \centering
 \caption{From generated relationships to learning signals.}
 \label{tab:data-to-loss}
-\small
 \begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.31\textwidth}>{\raggedright\arraybackslash}p{0.22\textwidth}Y@{}}
 \toprule
 Generated relationship & Learning signal & Intended effect \\
@@ -689,7 +690,7 @@ Artifacts from different families, with experiment-specific behavior descriptors
 Every batch of semantic vectors & Variance and covariance regularization & Prevent unrelated artifacts from receiving nearly identical vectors. \\
 \bottomrule
 \end{tabularx}
-\end{table}
+\end{table*}
 
 The reconstruction part has two roles. $\mathcal{L}_{\mathrm{recon}}$ combines the direct reconstruction losses that decode the designated process tree from each individual artifact type. $\mathcal{L}_{\mathrm{fuse}}$ applies the same target to generation conditioned on several fused artifacts.
 
@@ -709,7 +710,7 @@ The remaining term, $\mathcal{L}_{\mathrm{reg}}$, maintains variation across rep
 \end{align}
 Equation~\eqref{eq:objective} uses compact notation in which each component includes its configured coefficient. The three direct reconstruction losses and the fused-input reconstruction loss each have weight 1.00. Exact cross-artifact alignment has weight 0.30. Hierarchical ordering and observation consistency each have weight 0.15, and soft behavioral geometry has weight 0.25. These values keep reconstruction as the principal signal while still shaping the shared representation.
 
-The semantic vectors are deterministic outputs of the encoders; they are not samples from a learned probability distribution. A Kullback--Leibler regularizer is therefore not applicable, and its configured coefficient is zero.
+The semantic vectors are deterministic outputs of the encoders; they are not samples from a learned probability distribution. A Kullback-Leibler regularizer is therefore not applicable, and its configured coefficient is zero.
 
 \subsection{Curriculum learning and checkpoint selection}\label{sec:curriculum}
 
@@ -717,7 +718,7 @@ Training begins with a bootstrapping problem. The neural system must learn cross
 
 The implementation distinguishes three terms. A \emph{complexity profile} specifies the ordinary process tree generator bounds. A \emph{complexity corpus}, or level, is an independently generated \texttt{simple}, \texttt{medium}, or \texttt{complex} dataset. A \emph{curriculum stage} specifies the mixture of those corpora currently used for training. Curriculum learning is the competence-gated transition between these stage mixtures.
 
-\begin{table}[H]
+\begin{table*}[!t]
 \centering
 \caption{Implemented curriculum schedule. Mixtures are base batch-selection weights before validation-deficit adjustment, not percentages of individual rows.}
 \label{tab:curriculum-schedule}
@@ -730,7 +731,7 @@ Stage & Base batch mixture & Epochs in this run & Main purpose \\
 \texttt{complex} & 10\% \texttt{simple}; 20\% \texttt{medium}; 70\% \texttt{complex} & 11 to 17 & Target structural range while retaining earlier competencies \\
 \bottomrule
 \end{tabularx}
-\end{table}
+\end{table*}
 
 The epoch ranges in Table~\ref{tab:curriculum-schedule} are the realized transitions in the reported run, not fixed transition epochs specified in advance. Each batch is homogeneous in complexity level. Effective batch sizes are 128, 96, and 64 for \texttt{simple}, \texttt{medium}, and \texttt{complex} batches, so the table's weights do not imply the same proportions of individual rows.
 
@@ -738,11 +739,10 @@ Before each epoch, active levels with larger validation deficits receive more ba
 
 Advancement is considered only after at least five epochs in the current stage. At that point, termination, grammar validity, Petri net conversion, and behavioral-evaluation coverage must each reach 0.95. The decoding and retrieval scores must also improve by at least 0.005 relative to the stage baseline, which is the first completed validation for that stage. Advancement from the \texttt{medium} stage has one additional retention condition: the \texttt{simple}-level validation score may not fall more than 0.02 below its previous best. At a transition, the active mixture changes and the learning-rate scheduler and early-stopping patience are reset. The loss jumps at epochs 6 and 11 coincide with these mixture changes; losses across stages describe different data mixtures and are not directly comparable.
 
-\begin{table}[H]
+\begin{table*}[!b]
 \centering
 \caption{Training and decoding hyperparameters. A slash separates paired labels or values in the same left-to-right order; it does not denote division. For example, hidden / semantic dimension 192 / 96 means a hidden dimension of 192 and a semantic dimension of 96.}
 \label{tab:hyperparameters}
-\small
 \setlength{\tabcolsep}{3pt}
 \begin{tabular}{@{}Q{0.29\textwidth}Q{0.19\textwidth}Q{0.28\textwidth}Q{0.18\textwidth}@{}}
 \toprule
@@ -760,7 +760,7 @@ Scheduled sampling & maximum 0.20 & Start / ramp & epoch 15 / 20 epochs \\
 Test beam / budget & 2 / 512 & Behavioral simulations & 16 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 A checkpoint trained only on \texttt{simple} or \texttt{medium} data cannot be selected as the final learned model because it has not seen the full target mixture. Eligibility therefore begins in the \texttt{complex} stage. The balanced validation score combines 40\% decoding, 20\% retrieval, 15\% equivalence, 15\% geometry, and 10\% process discovery. Eligible checkpoints are then compared lexicographically: first by whether the hard gates pass for \texttt{complex}, macro, and worst-level validation without excessive earlier-level regression; second by a robust score containing 70\% macro and 30\% worst-level balanced performance; then by \texttt{complex}-level balanced performance, fused-geometry advantage, and lower \texttt{complex} validation loss.
 
@@ -770,7 +770,6 @@ Adaptive validation balancing also changes source reconstruction multipliers sli
 
 \input{figures/training}
 
-\FloatBarrier
 \section{Data and experimental design}\label{sec:experiment}
 
 Section~\ref{sec:corpus} explained the logic of behavior-family generation. This section fixes the numerical configuration, corpus sizes, evaluation subset, and metrics used in the reported experiment.
@@ -779,7 +778,7 @@ Section~\ref{sec:corpus} explained the logic of behavior-family generation. This
 
 Table~\ref{tab:generator-config} gives the fixed settings used to generate each complexity-specific corpus. Labels are assigned only after topology sampling so that the activity floor can be satisfied without changing the requested root operator. Each accepted family contains two Petri net realizations and two clean event log observations. The two-by-two expansion creates training rows but does not create four independent families.
 
-\begin{table}[H]
+\begin{table*}[!t]
 \centering
 \caption{Generator configuration used in the reported experiment. The \texttt{simple}, \texttt{medium}, and \texttt{complex} profile bounds apply only to ordinary random process tree families; controlled anchors are generated separately in randomized contexts containing 4 to 12 nodes.}
 \label{tab:generator-config}
@@ -806,7 +805,7 @@ Ordinary profile & Recursion cap & Min. folded depth & Folded nodes & Visible la
 \texttt{complex} & 7 & 4 & 20 to 80 & 8 to 28 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 The displayed size, depth, and activity intervals are acceptance criteria for ordinary folded decoder targets, not global ranges for every family. Controlled anchors bypass these profile filters and remain present at all three levels, so aggregate statistics may legitimately fall outside an ordinary-profile interval. Within each level, the training quotas are 3,056 ordinary, 347 duplicate-prefix, 347 concurrency, and 346 M-pattern families. Validation and test use 376, 45, 46, and 45 families, respectively.
 
@@ -814,7 +813,7 @@ The displayed size, depth, and activity intervals are acceptance criteria for or
 
 The synthetic corpus contains three independently generated complexity-specific corpora: \texttt{simple}, \texttt{medium}, and \texttt{complex}. Table~\ref{tab:corpus} reports family counts and held-out structural statistics; the Train, Validation, and Test columns count families rather than flattened rows. Each family contributes the four rows defined in Section~\ref{sec:setting}. All representations of a family remain in one split.
 
-\begin{table}[H]
+\begin{table*}[!b]
 \centering
 \caption{Synthetic corpus by complexity level. Train, Validation, and Test are family counts. The aggregate process tree statistics combine ordinary families and controlled anchors; size and depth describe folded designated process trees, and trace length describes stored event log observations.}
 \label{tab:corpus}
@@ -830,7 +829,7 @@ Level & Train & Validation & Test & Mean size & Mean depth & Mean trace length \
 Total & 12,288 & 1,536 & 1,536 & & & \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 Across the three levels, the training split contains 12,288 families and 49,152 rows. Validation and test each contain 1,536 families and 6,144 rows. The complete corpus therefore contains 15,360 families and 61,440 aligned rows.
 
@@ -869,7 +868,7 @@ Finally, the reported intervals describe uncertainty among the selected families
 
 Each research question evaluates a different capability, so no single score is sufficient. Representation metrics ask whether related artifacts occupy useful neighborhoods, retrieval metrics ask whether relevant artifacts appear early in a ranked list, and generation metrics ask whether a decoded process tree is structurally and behaviorally close to its reference. Table~\ref{tab:rq-metrics} summarizes these evaluation units, metrics, and baselines.
 
-\begin{table}[H]
+\begin{table*}[!t]
 \centering
 \caption{Evaluation design aligned with the research questions.}
 \label{tab:rq-metrics}
@@ -882,7 +881,7 @@ Question & Evaluation unit & Main metrics & Baselines \\
 \RQthree: candidate generation & Decoded artifact or event log & Exact match, normalized process tree edit, $d_B$, evaluator coverage, footprint fitness, precision, and F1 & Inductive Miner for event log input \\
 \bottomrule
 \end{tabularx}
-\end{table}
+\end{table*}
 
 \emph{Shared similarity and relevance definitions.} Because every semantic vector is normalized, the cosine similarity of two artifacts is $\vect z_i^{\mathsf T}\vect z_j$. It ranges from $-1$ to $1$, and larger values mean that the vectors point in more similar directions. Cosine distance is $1-\vect z_i^{\mathsf T}\vect z_j$, so smaller values mean greater similarity. For retrieval, a candidate is relevant when it shares the strongest certified behavior identifier available for the query, implemented as \texttt{strong\_behavior\_id} or, when that field is absent, \texttt{exact\_behavior\_id}. In the fixed subset, each relevance group is exactly one selected family and contains its four stored rows.
 
@@ -898,7 +897,7 @@ For event-log input, \emph{footprint fitness} measures how much of the log's obs
 
 The synthetic evaluation tests unseen families under the training generator. Two real event logs provide a limited input-shift check: they test whether the same encoder and decoder can process activity sets, trace distributions, and process structures not produced by that generator. The supplied XES files contain the receipt phase of a Dutch municipal permit process from the CoSeLoG project \cite{Buijs2014Receipt} and a 100-case extract from the road-traffic fine management event log \cite{DeLeoni2015RoadTraffic}. Table~\ref{tab:real-log-data} describes the files as parsed by the same artifact interface used for inference. Receipt is reduced to 128 cases by deterministic frequency-preserving variant allocation with seed 13; the road-traffic extract already contains fewer than the encoder limit, so all cases are used. No trace is clipped.
 
-\begin{table}[H]
+\begin{table*}[!b]
 \centering
 \caption{Real event logs used for the illustrative external comparison. ``Selected'' is the exact sample used both by the encoder and by conformance checking evaluation.}
 \label{tab:real-log-data}
@@ -910,13 +909,11 @@ Receipt & 1,434 & 8,577 & 27 & 116 & 128 & 22 \\
 Road traffic & 100 & 390 & 10 & 10 & 100 & 10 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 Each selected sample is canonicalized and encoded once. The resulting event log memory and semantic vector, as well as the beam width of two and token budget of 512, are held fixed across two policies: repeated visible labels allowed, or repeated visible labels masked after their first occurrence. Both policies retain the source-alphabet constraint. Inductive Miner is fitted to the same selected cases. PM4Py extensive event log footprint fitness and precision are computed on those cases, so the only change between the two neural rows is the duplicate-label mask.
 
 These cases reveal failure patterns but do not estimate average real-world performance. They contain only two processes, were not selected as a representative benchmark, and do not provide aligned reference process trees and Petri nets. No real event log hyperparameter tuning was performed.
-
-\FloatBarrier
 
 \section{Application Scenario and Reference Implementation}\label{sec:reproduction}
 
@@ -926,7 +923,7 @@ The model is useful in practice only if its output can be \emph{inspected, repro
 
 Figure~\ref{fig:application-workflow} summarizes the intended workflow. The starting point may be an XES event log, a PTML process tree, or a marked PNML Petri net. The system validates and canonicalizes the input, applies the corresponding encoder, and places the resulting vector in the shared representation space. The analyst can then use that vector in two complementary ways.
 
-The first and safest use is \emph{cross-artifact retrieval}. The system compares the query vector with stored vectors and ranks repository items by cosine similarity. A high cosine value means that two artifacts are close according to the learned representation; it does \emph{not} prove that they are behaviorally equivalent. The ranked items should therefore be read as useful precedents to inspect---for example, an existing Petri net that may explain an incoming event log---rather than as automatically accepted answers. Recall@1 and MRR evaluate this ranking offline when the relevant repository items are known: Recall@1 asks whether the first item is relevant, while MRR also gives credit when the first relevant item appears slightly lower in the list. Neither number is a confidence score for one new, unlabeled query.
+The first and safest use is \emph{cross-artifact retrieval}. The system compares the query vector with stored vectors and ranks repository items by cosine similarity. A high cosine value means that two artifacts are close according to the learned representation; it does \emph{not} prove that they are behaviorally equivalent. The ranked items should therefore be read as useful precedents to inspect, such as an existing Petri net that may explain an incoming event log, rather than as automatically accepted answers. Recall@1 and MRR evaluate this ranking offline when the relevant repository items are known: Recall@1 asks whether the first item is relevant, while MRR also gives credit when the first relevant item appears slightly lower in the list. Neither number is a confidence score for one new, unlabeled query.
 
 The second use is \emph{candidate generation}. If no retrieved model is suitable, the analyst may ask the constrained decoder to propose a process tree from the query representation. The grammar guarantees that the token sequence forms a well-structured tree, but syntactic validity is only the first gate. The candidate must still be converted, simulated, and compared with the available evidence. With a reference tree, exact match and normalized tree-edit distance measure structural agreement. With reference traces, the behavior distance $d_B$ measures sampled behavioral disagreement. With an event log, fitness measures how much observed behavior the candidate admits, precision measures how much candidate behavior is supported by the log, and F1 balances the two. Evaluator coverage states how often those checks could actually be completed. The formal definitions and aggregation units are given in Sections~\ref{sec:fixed-evaluation} and~\ref{sec:rq-metrics}.
 
@@ -949,29 +946,29 @@ The interface organizes the implementation into three work areas that follow the
 \paragraph{Artifact workspace.}
 The first question is, ``What evidence has been loaded?'' The workspace imports XES, PTML, and PNML files or bundled examples, groups related artifacts into named process groups, and shows modality-specific previews. It also exposes the canonical activity map and preprocessing messages. Registering an artifact computes its checkpoint-specific representation and records the provenance needed for later comparison. The whole workspace can be exported so that an analysis session is not reduced to an isolated score. Figure~\ref{fig:tool-workspace} shows this view.
 
-\begin{figure}[htbp]
+\begin{figure*}[!b]
 \centering
-\includegraphics[width=0.96\textwidth]{screenshots/rosetta-pm-artifact-workspace.png}
+\includegraphics[width=0.90\textwidth]{screenshots/rosetta-pm-artifact-workspace.png}
 \caption{Artifact workspace. The interface groups heterogeneous inputs, previews their contents, and records canonicalization and checkpoint information before encoding.\label{fig:tool-workspace}}
-\end{figure}
+\end{figure*}
 
 \paragraph{Translation studio.}
-The second question is, ``What process tree does this evidence support?'' The analyst can decode one registered embedding or the equal-weight mean of the available modalities in a process group. Before decoding, the interface makes the operational constraints visible, including the token budget, restriction to the source activity alphabet, and optional masking of repeated visible labels. After decoding, it reports grammar and conversion checks and provides process-tree, Petri-net, and textual views. The candidate and its validation information can be exported in standard formats. Figure~\ref{fig:tool-translation} illustrates these controls. They make a proposed model easier to inspect, but they do not replace the semantic checks in Figure~\ref{fig:application-workflow}.
+The second question is, ``What process tree does this evidence support?'' The analyst can decode one registered embedding or the equal-weight mean of the available modalities in a process group. Before decoding, the interface makes the operational constraints visible, including the token budget, restriction to the source activity alphabet, and optional masking of repeated visible labels. After decoding, it reports grammar and conversion checks and provides process tree, Petri net, and textual views. The candidate and its validation information can be exported in standard formats. Figure~\ref{fig:tool-translation} illustrates these controls. They make a proposed model easier to inspect, but they do not replace the semantic checks in Figure~\ref{fig:application-workflow}.
 
-\begin{figure}[htbp]
+\begin{figure*}[!t]
 \centering
-\includegraphics[width=0.96\textwidth]{screenshots/rosetta-pm-translation-studio.png}
+\includegraphics[width=0.88\textwidth]{screenshots/rosetta-pm-translation-studio.png}
 \caption{Translation studio. An analyst selects the evidence to decode, sees the active structural constraints, and inspects and exports the resulting process model.\label{fig:tool-translation}}
-\end{figure}
+\end{figure*}
 
 \paragraph{Latent explorer.}
 The third question is, ``How is this artifact related to the rest of the workspace?'' The explorer computes pairwise cosine similarities, nearest neighbors, and group-level agreement for registered artifacts. It also offers a two-dimensional PCA projection and coordinate inspection. PCA is useful for navigation, but it is only a projection of the learned space; retrieval and the reported quantitative metrics use the full representation rather than the displayed two-dimensional coordinates. Equal-weight group means make it possible to inspect the fused representations used in the experiments. Figure~\ref{fig:tool-latent} shows the explorer.
 
-\begin{figure}[htbp]
+\begin{figure*}[!t]
 \centering
-\includegraphics[width=0.96\textwidth]{screenshots/rosetta-pm-latent-explorer.png}
+\includegraphics[width=0.88\textwidth]{screenshots/rosetta-pm-latent-explorer.png}
 \caption{Latent explorer. Cosine similarities and nearest neighbors support cross-artifact inspection, while the PCA view provides an explicitly exploratory two-dimensional overview.\label{fig:tool-latent}}
-\end{figure}
+\end{figure*}
 
 The screenshots document the interaction offered by the reference implementation; they are not additional quantitative evidence. In particular, visually close points in the PCA panel and high similarity values in an individual session do not establish behavioral equivalence.
 
@@ -990,8 +987,6 @@ scripts/xes_to_ptml.py input.xes decoded.ptml \
 \end{lstlisting}
 
 The test command evaluates exactly one of the \texttt{simple}, \texttt{medium}, or \texttt{complex} curricula, so it must be repeated when results for all three are required. The complete paper configuration is recorded in the curriculum manifest, the checkpoint-provenance record, and the machine-readable evaluation evidence distributed with the manuscript. These records fix the data construction, checkpoint selection, and evaluation subset instead of relying on undocumented interface state.
-
-\FloatBarrier
 
 \section{Results}\label{sec:results}
 
@@ -1013,7 +1008,7 @@ The direction of this metric is important: \emph{a higher positive Spearman $\rh
 
 Table~\ref{tab:geometry} reports this comparison. For the fused representation, Spearman $\rho$ increases from 0.577 on \texttt{simple} families to 0.743 on \texttt{medium} families and 0.791 on \texttt{complex} families. Because higher positive values are better, this increase means that agreement with $d_B$ becomes stronger across the three evaluated levels. All three correlations are positive, so larger behavioral differences generally correspond to larger distances in the learned space.
 
-\begin{table}[H]
+\begin{table*}[!t]
 \centering
 \caption{Behavioral ordering on the fixed 48-family subset. Each value is the Spearman correlation between representation distance and the experiment-specific behavior distance $d_B$. Spearman $\rho$ ranges from $-1$ to $1$; values closer to $1$ are better here because they indicate more similar rankings, values near zero indicate little consistent ordering, and negative values indicate opposing orderings. Each level contains 16 families and 64 stored rows, and the evaluation unit is a family pair. The intervals are family-bootstrap intervals for the fused representation.}
 \label{tab:geometry}
@@ -1042,7 +1037,7 @@ Petri net count features & 0.206 & 0.562 & 0.581 \\
 PM4Py Petri net Node2Vec & 0.189 & 0.201 & 0.535 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 The table also compares the learned representations with deterministic alternatives. The event log baselines summarize trace variants, directly-follows relations, eventually-follows relations, activity frequencies, or aggregate log properties. The Petri net baselines use structural counts or graph neighborhoods. These baselines help determine whether the learned cross-artifact representation captures useful ordering beyond information available from a single artifact-specific summary.
 
@@ -1057,7 +1052,7 @@ The second part of RQ1 asks whether the representation remains stable when the s
 
 Table~\ref{tab:invariance} uses four complementary quantities. \emph{Within} is the average cosine similarity between rows from the same family, whereas \emph{Between} is the average similarity between rows from different families. A useful representation should therefore have high Within values and lower Between values. The \emph{margin} compares the similarity of the nearest same-family neighbor with that of the nearest different-family neighbor. A positive margin means that the closest related row is more similar than the closest unrelated row. Finally, \emph{Recall@1} reports how often the single nearest neighbor belongs to the correct family.
 
-\begin{table}[H]
+\begin{table*}[!t]
 \centering
 \caption{Stability within each artifact type on the fixed 48-family subset. Each level contains 16 families and 64 stored rows. Within and Between are the mean cosine similarities to rows from the same and different families, respectively. Margin is the nearest same-family similarity minus the nearest different-family similarity. Recall@1 is the fraction of rows whose nearest neighbor belongs to the same family. Higher Within, Margin, and Recall@1 values and lower Between values are better.}
 \label{tab:invariance}
@@ -1081,7 +1076,7 @@ Level & Encoder & Within & Between & Margin & Recall@1 \\
  & Process tree & 0.999 & 0.065 & 0.372 & 1.000 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 The pattern is consistent across all three complexity levels. Within-family similarities are high, between-family similarities are substantially lower, and every reported margin is positive. Recall@1 is 1.000 in every row, meaning that the nearest neighbor always belongs to the same family under this within-type test. Process tree embeddings are the most stable, with Within values of 0.999. Event log embeddings have the smallest margins because two finite samples of the same process can contain different trace frequencies. Even so, their margins remain positive and their Recall@1 remains perfect on this subset.
 
@@ -1107,7 +1102,7 @@ Two metrics describe the ranking. \emph{Recall@1} asks a strict question: does t
 
 The 16 families are equally represented. A random ranking places one of the four relevant rows first with probability $4/64=1/16=0.0625$. This value is the random Recall@1 baseline. It provides a simple reference point: results substantially above 0.0625 show that the ranking uses information beyond random group selection.
 
-\begin{table}[H]
+\begin{table*}[!t]
 \caption{Cross-artifact retrieval on the fixed 48-family subset, reported as Recall@1 / MRR. The slash is a separator, not division: the value on its left is Recall@1 and the value on its right is MRR. Higher values are better for both metrics. Each level contains 16 families and a 64-row candidate set. For every query row, all four rows from its behavior family are relevant.\label{tab:retrieval}}
 \centering
 \begin{tabular}{@{}lccc@{}}
@@ -1122,7 +1117,7 @@ Process tree $\rightarrow$ Petri net & 0.812 / 0.867 & 0.875 / 0.908 & 0.875 / 0
 Process tree $\rightarrow$ event log & 0.875 / 0.905 & 0.875 / 0.905 & 0.875 / 0.905 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 \paragraph{Retrieval results.}
 Every tested direction is well above the random Recall@1 baseline. Recall@1 ranges from 0.656 to 0.875, compared with 0.0625 for random group selection. Thus, the shared representation contains substantial information about behavior-family membership even when the query and candidate use different artifact types. The values are not perfect, however. A Recall@1 of 0.656 means that the first result is relevant for 65.6\% of queries and incorrect for the remaining 34.4\%.
@@ -1131,7 +1126,7 @@ The strongest direction is process tree $\rightarrow$ event log, with Recall@1 o
 
 The most difficult direction is event log $\rightarrow$ process tree. Its Recall@1 is 0.656 on the \texttt{simple} and \texttt{medium} families and 0.688 on the \texttt{complex} families. This difficulty is consistent with the information available in the artifacts: an event log contains only finite observed executions, whereas a process tree explicitly describes control-flow structure and may permit behavior absent from the log. The experiment does not isolate this as the only cause, but it explains why this direction is intrinsically less direct.
 
-The direction of retrieval matters. For Petri net $\rightarrow$ event log, Recall@1 increases from 0.703 to 0.828 and MRR increases from 0.755 to 0.855 across the three levels. Event log $\rightarrow$ Petri net, in contrast, remains around 0.72--0.75 Recall@1. This asymmetry does not contradict the use of cosine similarity: the similarity of one specific pair is symmetric, but reversing a retrieval task changes which artifacts act as queries and which collection is ranked. The two directions can therefore produce different aggregate results.
+The direction of retrieval matters. For Petri net $\rightarrow$ event log, Recall@1 increases from 0.703 to 0.828 and MRR increases from 0.755 to 0.855 across the three levels. Event log $\rightarrow$ Petri net, in contrast, remains between 0.72 and 0.75 Recall@1. This asymmetry does not contradict the use of cosine similarity: the similarity of one specific pair is symmetric, but reversing a retrieval task changes which artifacts act as queries and which collection is ranked. The two directions can therefore produce different aggregate results.
 
 \paragraph{Two-dimensional illustration.}
 Figure~\ref{fig:pca} gives an intuitive view of the cross-artifact neighborhoods behind the numerical results. Each connected set contains the event log, Petri net, and process tree representations of one behavior family. When the three markers are close, the visualization suggests that the encoders place the different artifact types in a similar region of the shared space. This is the relationship needed to retrieve one artifact type by using another as the query.
@@ -1147,7 +1142,6 @@ The scope of this conclusion is limited by the candidate set. Each relevance gro
 
 The evaluation also uses a fixed subset generated by the same corpus design as the training data. It does not measure retrieval from a large external repository, and it does not show that the top-ranked artifact is behaviorally equivalent to a new production query. In the intended application, retrieved artifacts remain candidates that require behavioral checking and analyst review.
 
-\FloatBarrier
 \subsection{\RQthree: Structural Guarantees and Behavioral Limits of Candidate Generation}\label{sec:decode-results}
 
 \RQthree{} examines candidate generation. The central issue is that two different questions must not be confused. The first is, ``Did the decoder produce a valid process tree?'' The second is, ``Does that tree preserve the behavior of the source artifact?'' The grammar-constrained decoder guarantees the first property, but it must learn the second property from data.
@@ -1163,7 +1157,7 @@ Table~\ref{tab:decode} reports four quantities. \emph{Evaluable} is the percenta
 
 The remaining columns are distances, so their direction is reversed: \emph{lower is better}. The behavior distance $d_B$ compares the distributions of trace variants, directly-follows relations, and trace lengths. A value of zero means that these measured behavioral summaries agree exactly; larger values mean greater disagreement. The normalized process tree edit distance measures the structural changes needed to transform the candidate into the folded reference tree. It is also zero for an exact structural match and increases as more nodes must be inserted, deleted, or relabeled. Both distances are needed because two trees can differ structurally while exhibiting similar behavior, or look structurally similar while making an important behavioral error.
 
-\begin{table}[H]
+\begin{table*}[!t]
 \centering
 \caption{Candidate-generation results on the fixed 48-family subset. Each level contains 16 families and 64 row-level source instances per source condition. Evaluable is the percentage of candidates for which behavioral simulation completed, and Exact is the percentage that equals the folded reference tree; higher values are better for both. The behavior distance $d_B$ and normalized process tree edit distance measure behavioral and structural disagreement, respectively; lower values are better. Mean $d_B$ includes only candidates for which behavioral simulation completed.}
 \label{tab:decode}
@@ -1190,7 +1184,7 @@ Level & Source & Evaluable (\%) & Exact (\%) & $d_B$ $\downarrow$ & Process tree
  & Fusion       & 93.8  & 0.0  & 1.273 & 0.676 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 \paragraph{Results by source artifact.}
 Process tree input gives the best overall reconstruction results. This is expected because the source already has the same hierarchical structure as the output. Even in this favorable condition, however, exact match falls from 34.4\% for \texttt{simple} families to 28.1\% for \texttt{medium} families and 15.6\% for \texttt{complex} families. At the same time, $d_B$ increases from 0.861 to 1.105 and tree-edit distance increases from 0.509 to 0.645. Because lower distances are better, both trends show that reconstruction becomes less faithful as process complexity increases.
@@ -1208,7 +1202,7 @@ Table~\ref{tab:motif-decode} separates event-log decoding by generator family ty
 
 The three controlled motifs remain small and have the same designed structure at every curriculum level. Their nearly unchanged values should therefore not be interpreted as evidence that decoding is unaffected by complexity. They are fixed diagnostic cases. The ordinary families, in contrast, become larger and deeper across the curricula and may contain more demanding nested or looping behavior. Their $d_B$ rises from 1.224 to 1.715, while their edit distance rises from 0.662 to 0.832. These increases localize the strongest degradation in the families whose structural complexity actually grows.
 
-\begin{table}[H]
+\begin{table*}[!b]
 \centering
 \caption{Event log to process tree decoding by family type on the fixed 48-family subset. Each cell reports $d_B$ / normalized process tree edit distance. The slash is a separator, not division: $d_B$ is on the left and tree-edit distance is on the right. Lower values are better for both quantities. Each level contains 16 families and 64 event log source rows, including repeated observations.}
 \label{tab:motif-decode}
@@ -1222,7 +1216,7 @@ M-pattern & 1.175 / 0.378 & 1.170 / 0.378 & 1.130 / 0.378 \\
 Ordinary & 1.224 / 0.662 & 1.580 / 0.798 & 1.715 / 0.832 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 \paragraph{Interpretation and scope.}
 The answer to RQ3 is therefore mixed but clear. The grammar constraints provide the promised \emph{structural guarantee}: every decoded output is a closed process tree over the permitted vocabulary and is convertible to a Petri net. They do not provide a \emph{behavior-preservation guarantee}. Exact reconstruction is limited, behavioral disagreement grows with ordinary-family complexity, and equal-weight fusion does not repair the problem.
@@ -1233,7 +1227,7 @@ The decoder should consequently be used as a candidate generator rather than as 
 
 Table~\ref{tab:discovery} compares event log decoding with Inductive Miner. \model remains substantially below the specialized method on footprint F1 and has lower footprint-evaluator coverage. The strong Inductive Miner results are consistent with the favorable experimental setting: the event logs are clean and much of the synthetic corpus originates from block-structured process trees. The comparison nevertheless answers the practical question posed by \RQthree: whether \model currently improves process discovery from event logs into process trees under the conditions in which it was trained. It does not.
 
-\begin{table}[H]
+\begin{table*}[!t]
 \centering
 \caption{Process discovery from event logs on the fixed 48-family detailed subset using 64 event log source rows per level (16 families; repeated observations retained; no retrieval candidate set). The evaluation unit is a discovered model. Higher fitness, precision, and F1 values are better; evaluable is the percentage for which the footprint routine completed. Intervals are family-bootstrap intervals for F1.}
 \label{tab:discovery}
@@ -1255,17 +1249,16 @@ Level & Method & Evaluable (\%) & Fitness & Precision & F1 & 95\% interval \\
  & Inductive Miner & 100.0 & 1.000 & 0.907 & 0.938 & [0.868, 0.991] \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 \subsection{External Event Log Generation Stress Test}
 
 For the real event logs, the dominant failure is underfitting rather than repeated labels. The decoded receipt process tree retains only six of 27 observed activities, and the road-traffic process tree retains eight of ten. Allowing repeated labels changes neither top-ranked process tree because neither unconstrained result repeats an activity. This null result only rules out forced uniqueness as the cause of these two failures; it does not show that the policies are generally equivalent. Inductive Miner attains higher footprint F1 on both samples, although its receipt process model trades perfect fitness for relatively low precision.
 
-\begin{table}[H]
+\begin{table*}[!b]
 \centering
 \caption{External event log generation stress test for two event logs (Receipt: 128 selected cases; Road Traffic: 100 cases; no retrieval candidate set). The evaluation unit is one generated or mined model per method and event log. Higher fitness, precision, and F1 values are better. ``Repeat'' counts visible leaves beyond the first occurrence of each label.}
 \label{tab:real-log-results}
-\small
 \setlength{\tabcolsep}{3pt}
 \begin{tabularx}{\textwidth}{@{}p{0.14\textwidth}Yrrrrr@{}}
 \toprule
@@ -1282,7 +1275,7 @@ Event log & Method & Size & Repeat & Fitness & Precision & F1 \\
  & Inductive Miner & 29 & 0 & 1.000 & 0.621 & \best{0.766} \\
 \bottomrule
 \end{tabularx}
-\end{table}
+\end{table*}
 
 Figure~\ref{fig:real-log-tree} shows the road-traffic output using the process tree representation and layout supplied by PM4Py. Its compact structure makes the underfitting visible: several activities are grouped under one parallel branch, while two appeal activities are placed directly in the top-level sequence.
 
@@ -1300,7 +1293,7 @@ This shared representation is most useful as a common search interface. For exam
 
 Process tree generation is less reliable. The grammar guarantees a well-formed tree, and the copy mechanism limits activity labels to the source vocabulary, but neither guarantee says that the generated tree preserves the source behavior. An incorrect operator or number of children near the start of the prefix can change the whole remaining structure. This often leads to omitted activities or overly compressed control flow. A finite event log can admit several correct models, so a generated tree need not match the chosen reference exactly; however, the lower behavioral and conformance scores show that ambiguity alone does not explain the errors. Allowing duplicate labels did not change the outputs for the two external event logs, so forced label uniqueness was not the cause of their poor results.
 
-These findings suggest a \emph{retrieve--propose--validate} workflow. The model first retrieves related artifacts, then proposes one or more process trees, and finally uses conformance checking and human review to decide whether a proposal is acceptable. Generation could be improved by producing several candidates and reranking them with behavioral evidence, training with objectives defined on complete decoded behavior, and allowing the model to report low confidence or abstain. The lack of improvement from simple mean fusion also suggests learning how much to trust each artifact type or combining their detailed source representations directly. The external event logs reveal sensitivity to inputs outside the synthetic training distribution; because they have no aligned reference artifacts in all three forms, they illustrate generation under distribution shift rather than deployment performance. The model should therefore be viewed as a retrieval and proposal tool, not as an unattended replacement for process discovery or conformance checking.
+These findings suggest a workflow that \emph{retrieves, proposes, and validates}. The model first retrieves related artifacts, then proposes one or more process trees, and finally uses conformance checking and human review to decide whether a proposal is acceptable. Generation could be improved by producing several candidates and reranking them with behavioral evidence, training with objectives defined on complete decoded behavior, and allowing the model to report low confidence or abstain. The lack of improvement from simple mean fusion also suggests learning how much to trust each artifact type or combining their detailed source representations directly. The external event logs reveal sensitivity to inputs outside the synthetic training distribution; because they have no aligned reference artifacts in all three forms, they illustrate generation under distribution shift rather than deployment performance. The model should therefore be viewed as a retrieval and proposal tool, not as an unattended replacement for process discovery or conformance checking.
 
 \FloatBarrier
 \section{Limitations}\label{sec:threats}
