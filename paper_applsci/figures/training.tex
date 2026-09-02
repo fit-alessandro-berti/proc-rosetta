@@ -26,11 +26,11 @@
 \addlegendentry{macro validation loss}
 \draw[dashed,thick,prred] (axis cs:11,3)--(axis cs:11,11)
  node[pos=0.83,right,font=\scriptsize,text=prred]{selected};
-\node[font=\scriptsize,text=prgray] at (axis cs:3.2,10.55) {simple};
-\node[font=\scriptsize,text=prgray] at (axis cs:8.0,10.55) {medium mix};
-\node[font=\scriptsize,text=prgray] at (axis cs:13.8,10.55) {complex mix};
+\node[font=\scriptsize,text=prgray] at (axis cs:3.2,10.55) {\texttt{simple}};
+\node[font=\scriptsize,text=prgray] at (axis cs:8.0,10.55) {\texttt{medium} mix};
+\node[font=\scriptsize,text=prgray] at (axis cs:13.8,10.55) {\texttt{complex} mix};
 \end{axis}
 \end{tikzpicture}
-\caption{Training and macro validation objectives. Stage transitions change task difficulty. Epoch 10 is not eligible for final selection; epoch 11 is the first eligible complex-stage evaluation and is selected.}
+\caption{Training and macro validation objectives. Stage transitions change task difficulty. Epoch 10 is not eligible for final selection; epoch 11 is the first eligible \texttt{complex}-stage evaluation and is selected.}
 \label{fig:training}
 \end{figure}

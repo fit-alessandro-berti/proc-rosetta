@@ -347,9 +347,11 @@ Random generation can produce several syntactic forms for essentially the same p
 
 Each ordinary family belongs to a profile that specifies allowed ranges for folded size, depth, and number of visible activities. A sampled tree is retained only if it satisfies the complete profile. If it does not, the generator starts again instead of adding artificial sequential branches to make the tree large enough. If repeated attempts remain unsuccessful, construction fails explicitly rather than silently weakening the profile. This policy keeps the meaning of each complexity profile fixed.
 
+The complexity profiles also support \emph{curriculum learning}. Training the encoders and process tree decoder immediately on the largest structures would require them to learn activity correspondence, cross-artifact alignment, and long structured outputs at the same time. The curriculum begins with shorter and shallower families, then introduces larger and deeper families as training progresses. This lets the model establish basic alignment and grammar handling before facing the full structural range. The three complexity corpora are named \texttt{simple}, \texttt{medium}, and \texttt{complex}; the corresponding curriculum stages use the same names and retain examples from earlier corpora for rehearsal. Section~\ref{sec:curriculum} specifies the transition criteria and mixtures.
+
 \emph{Controlled anchor families} serve a different purpose. Each anchor places one small, known representation contrast inside a randomized surrounding context. The same context is used for both realizations, so the intended contrast is not mixed with unrelated structural changes. This makes the pair useful for checking whether the learned representation preserves or ignores one specific difference.
 
-The randomized context of an anchor is kept deliberately small at every corpus level. Anchor families are not required to satisfy the size, depth, and activity thresholds used for ordinary families. Consequently, the labels \emph{simple}, \emph{medium}, and \emph{complex} identify the corpus in which an anchor occurs; they do not necessarily describe the size of the anchor itself. Keeping the anchors small and stable allows the same diagnostic contrast to be repeated while the ordinary families become larger and deeper.
+The randomized context of an anchor is kept deliberately small at every corpus level. Anchor families are not required to satisfy the size, depth, and activity thresholds used for ordinary families. Consequently, \texttt{simple}, \texttt{medium}, and \texttt{complex} identify the corpus in which an anchor occurs; they do not necessarily describe the size of the anchor itself. Keeping the anchors small and stable allows the same diagnostic contrast to be repeated while the ordinary families become larger and deeper.
 
 The corpus uses three controlled motifs:
 \begin{itemize}
@@ -544,7 +546,7 @@ The next checks concern \emph{behavioral evidence}. For a non-looping family, th
 
 The result of exploration determines the relation certificate. If both searches finish and return the same complete visible language, the evidence is \emph{exact}. If a safeguard stops either search, any agreement applies only to the traces collected so far and the evidence is \emph{bounded}. For ordinary looping families, where exhaustive enumeration may be impossible, a structure-preserving construction provides an \emph{isomorphic} certificate instead.
 
-The training split retains only families with exact or isomorphic certificates. A candidate with bounded evidence is rejected and replaced because it cannot support an exact positive relation. Validation and test splits may retain bounded-evidence families, but such families are never interpreted as exact visible-language positives. The fixed evaluation subset happens to contain no bounded cases: the simple subset contains 14 exact and two isomorphic families, while the medium and complex subsets each contain 12 exact and four isomorphic families.
+The training split retains only families with exact or isomorphic certificates. A candidate with bounded evidence is rejected and replaced because it cannot support an exact positive relation. Validation and test splits may retain bounded-evidence families, but such families are never interpreted as exact visible-language positives. The fixed evaluation subset happens to contain no bounded cases: the \texttt{simple} subset contains 14 exact and two isomorphic families, while the \texttt{medium} and \texttt{complex} subsets each contain 12 exact and four isomorphic families.
 
 Finally, the generator checks \emph{corpus coverage}. It verifies the required motif quotas and confirms that each controlled motif occurs in both Petri net realization positions. Once a family passes all checks, its relation certificate is copied into every stored row. Training can then use the recorded certificate directly instead of trying to reconstruct behavioral relationships from activity labels or surface structure.
 
@@ -686,7 +688,7 @@ In Eq.~\eqref{eq:objective}, $\mathcal{L}_{\mathrm{recon}}$ contains the artifac
 
 Training begins with a bootstrapping problem. The neural system must learn cross-artifact alignment, activity correspondence, and autoregressive process tree grammar at the same time. Starting immediately with the largest process trees couples these tasks strongly: an incorrect operator or arity changes the number of open child slots and can invalidate the interpretation of every subsequent token. The curriculum is therefore intended to establish closure, copying, and basic alignment on short process trees before introducing deeper structures. Easier rehearsal batches remain active to limit forgetting, while controlled motifs provide stable representation anchors at every level. The study does not include a retrained no-curriculum ablation, so these are design motivations rather than causal findings.
 
-Three terms describe the implementation. A \emph{complexity profile} specifies the ordinary process tree generator bounds. A \emph{complexity corpus}, or level, is one independently generated simple, medium, or complex dataset. A \emph{curriculum stage} specifies the mixture of those corpora currently used for training. Curriculum learning is the competence-gated transition between these stage mixtures.
+The implementation distinguishes three terms. A \emph{complexity profile} specifies the ordinary process tree generator bounds. A \emph{complexity corpus}, or level, is an independently generated \texttt{simple}, \texttt{medium}, or \texttt{complex} dataset. A \emph{curriculum stage} specifies the mixture of those corpora currently used for training. Curriculum learning is the competence-gated transition between these stage mixtures.
 
 \begin{table}[H]
 \centering
@@ -696,18 +698,18 @@ Three terms describe the implementation. A \emph{complexity profile} specifies t
 \toprule
 Stage & Base batch mixture & Epochs in this run & Main purpose \\
 \midrule
-Simple & 100\% simple & 1 to 5 & Basic grammar, activity handling, and initial cross-artifact alignment \\
-Medium & 25\% simple; 75\% medium & 6 to 10 & Deeper and longer structures with rehearsal of simple examples \\
-Complex & 10\% simple; 20\% medium; 70\% complex & 11 to 17 & Target structural range while retaining earlier competencies \\
+\texttt{simple} & 100\% \texttt{simple} & 1 to 5 & Basic grammar, activity handling, and initial cross-artifact alignment \\
+\texttt{medium} & 25\% \texttt{simple}; 75\% \texttt{medium} & 6 to 10 & Deeper and longer structures with rehearsal of \texttt{simple} examples \\
+\texttt{complex} & 10\% \texttt{simple}; 20\% \texttt{medium}; 70\% \texttt{complex} & 11 to 17 & Target structural range while retaining earlier competencies \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-The epoch ranges in Table~\ref{tab:curriculum-schedule} are the realized transitions in the reported run, not fixed transition epochs specified in advance. Each batch is homogeneous in complexity level. Effective batch sizes are 128, 96, and 64 for simple, medium, and complex batches, so the table's weights do not imply the same proportions of individual rows.
+The epoch ranges in Table~\ref{tab:curriculum-schedule} are the realized transitions in the reported run, not fixed transition epochs specified in advance. Each batch is homogeneous in complexity level. Effective batch sizes are 128, 96, and 64 for \texttt{simple}, \texttt{medium}, and \texttt{complex} batches, so the table's weights do not imply the same proportions of individual rows.
 
 Before each epoch, active levels with larger validation deficits receive more batch-selection weight. If $s_c$ is the balanced validation score for active level $c$ and $s_{\max}$ is the best active-level score, the implemented unnormalized weight is $w'_c=w_c[1+(s_{\max}-s_c)]$; the $w'_c$ values are then normalized. Thus the adjustment is proportional to the gap from the best currently active level, not an unspecified manual tilt.
 
-Advancement is considered only after at least five epochs in the current stage. At that point, termination, grammar validity, Petri net conversion, and behavioral-evaluation coverage must each reach 0.95. The decoding and retrieval scores must also improve by at least 0.005 relative to the stage baseline, which is the first completed validation for that stage. Advancement from the medium stage has one additional retention condition: the simple-level validation score may not fall more than 0.02 below its previous best. At a transition, the active mixture changes and the learning-rate scheduler and early-stopping patience are reset. The loss jumps at epochs 6 and 11 coincide with these mixture changes; losses across stages describe different data mixtures and are not directly comparable.
+Advancement is considered only after at least five epochs in the current stage. At that point, termination, grammar validity, Petri net conversion, and behavioral-evaluation coverage must each reach 0.95. The decoding and retrieval scores must also improve by at least 0.005 relative to the stage baseline, which is the first completed validation for that stage. Advancement from the \texttt{medium} stage has one additional retention condition: the \texttt{simple}-level validation score may not fall more than 0.02 below its previous best. At a transition, the active mixture changes and the learning-rate scheduler and early-stopping patience are reset. The loss jumps at epochs 6 and 11 coincide with these mixture changes; losses across stages describe different data mixtures and are not directly comparable.
 
 \begin{table}[H]
 \centering
@@ -733,9 +735,9 @@ Test beam / budget & 2 / 512 & Behavioral simulations & 16 \\
 \end{tabular}
 \end{table}
 
-A checkpoint trained only on simple or medium data cannot be selected as the final learned model because it has not seen the full target mixture. Eligibility therefore begins in the complex stage. The balanced validation score combines 40\% decoding, 20\% retrieval, 15\% equivalence, 15\% geometry, and 10\% process discovery. Eligible checkpoints are then compared lexicographically: first by whether the hard gates pass for complex, macro, and worst-level validation without excessive earlier-level regression; second by a robust score containing 70\% macro and 30\% worst-level balanced performance; then by complex-level balanced performance, fused-geometry advantage, and lower complex validation loss.
+A checkpoint trained only on \texttt{simple} or \texttt{medium} data cannot be selected as the final learned model because it has not seen the full target mixture. Eligibility therefore begins in the \texttt{complex} stage. The balanced validation score combines 40\% decoding, 20\% retrieval, 15\% equivalence, 15\% geometry, and 10\% process discovery. Eligible checkpoints are then compared lexicographically: first by whether the hard gates pass for \texttt{complex}, macro, and worst-level validation without excessive earlier-level regression; second by a robust score containing 70\% macro and 30\% worst-level balanced performance; then by \texttt{complex}-level balanced performance, fused-geometry advantage, and lower \texttt{complex} validation loss.
 
-Epoch~10 has the higher displayed balanced score (0.796 versus 0.787), but belongs to the medium stage and is ineligible. Epoch~11 is the first complex-stage checkpoint. It remains selected because no later eligible checkpoint improves the ordered criterion above. Test results are not used for selection.
+Epoch~10 has the higher displayed balanced score (0.796 versus 0.787), but belongs to the \texttt{medium} stage and is ineligible. Epoch~11 is the first \texttt{complex}-stage checkpoint. It remains selected because no later eligible checkpoint improves the ordered criterion above. Test results are not used for selection.
 
 Adaptive validation balancing also changes source reconstruction multipliers slightly. At the selected epoch they are 1.000 for process tree input, 1.099 for event log input, 1.064 for Petri net input, and 1.122 for fusion. Figure~\ref{fig:training} shows the optimization history and stage changes.
 
@@ -752,7 +754,7 @@ Table~\ref{tab:generator-config} gives the fixed settings used to generate each 
 
 \begin{table}[H]
 \centering
-\caption{Generator configuration used in the reported experiment. The simple, medium, and complex profile bounds apply only to ordinary random process tree families; controlled anchors are generated separately in randomized contexts containing 4 to 12 nodes.}
+\caption{Generator configuration used in the reported experiment. The \texttt{simple}, \texttt{medium}, and \texttt{complex} profile bounds apply only to ordinary random process tree families; controlled anchors are generated separately in randomized contexts containing 4 to 12 nodes.}
 \label{tab:generator-config}
 \begin{tabularx}{\textwidth}{@{}Q{0.22\textwidth}Q{0.31\textwidth}Y@{}}
 \toprule
@@ -772,9 +774,9 @@ Format & schema 5; normalization \texttt{pm4py-fold-v1} & Generator/manifest ver
 \toprule
 Ordinary profile & Recursion cap & Min. folded depth & Folded nodes & Visible labels \\
 \midrule
-Simple & 3 & 2 & 5 to 11 & 3 to 6 \\
-Medium & 5 & 3 & 12 to 19 & 5 to 14 \\
-Complex & 7 & 4 & 20 to 80 & 8 to 28 \\
+\texttt{simple} & 3 & 2 & 5 to 11 & 3 to 6 \\
+\texttt{medium} & 5 & 3 & 12 to 19 & 5 to 14 \\
+\texttt{complex} & 7 & 4 & 20 to 80 & 8 to 28 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -783,7 +785,7 @@ The displayed size, depth, and activity intervals are acceptance criteria for or
 
 \subsection{Dataset at a glance}
 
-The synthetic corpus contains three independently generated complexity-specific corpora: simple, medium, and complex. Table~\ref{tab:corpus} reports family counts and held-out structural statistics; the Train, Validation, and Test columns count families rather than flattened rows. Each family contributes the four rows defined in Section~\ref{sec:setting}. All representations of a family remain in one split.
+The synthetic corpus contains three independently generated complexity-specific corpora: \texttt{simple}, \texttt{medium}, and \texttt{complex}. Table~\ref{tab:corpus} reports family counts and held-out structural statistics; the Train, Validation, and Test columns count families rather than flattened rows. Each family contributes the four rows defined in Section~\ref{sec:setting}. All representations of a family remain in one split.
 
 \begin{table}[H]
 \centering
@@ -794,9 +796,9 @@ The synthetic corpus contains three independently generated complexity-specific 
 \toprule
 Level & Train & Validation & Test & Mean size & Mean depth & Mean trace length \\
 \midrule
-Simple  & 4,096 & 512 & 512 & 8.57 & 3.60 & 7.20 \\
-Medium  & 4,096 & 512 & 512 & 14.03 & 5.00 & 11.37 \\
-Complex & 4,096 & 512 & 512 & 29.91 & 6.33 & 17.84 \\
+\texttt{simple}  & 4,096 & 512 & 512 & 8.57 & 3.60 & 7.20 \\
+\texttt{medium}  & 4,096 & 512 & 512 & 14.03 & 5.00 & 11.37 \\
+\texttt{complex} & 4,096 & 512 & 512 & 29.91 & 6.33 & 17.84 \\
 \midrule
 Total & 12,288 & 1,536 & 1,536 & & & \\
 \bottomrule
@@ -895,7 +897,7 @@ The evaluation retains repeated observations and realizations within each family
 \subsection{\RQone: Representation alignment and behavioral ordering}
 
 \paragraph{\RQone answer.}
-The shared representation successfully groups related artifacts on the fixed evaluation subset. Alternative observations and realizations achieve within-type family Recall@1 of 1.000 at every complexity level. Agreement between fused-vector distance and the experiment-specific behavior distance also increases from 0.577 on simple families to 0.743 on medium families and 0.791 on complex families. These results support the use of the representation for cross-artifact neighborhoods and retrieval. They do not establish a universal process-semantic metric: $d_B$ overlaps the supervision used during training, and the deterministic trace-variant baseline remains stronger on the simple families. Table~\ref{tab:geometry} gives the complete comparison.
+The shared representation successfully groups related artifacts on the fixed evaluation subset. Alternative observations and realizations achieve within-type family Recall@1 of 1.000 at every complexity level. Agreement between fused-vector distance and the experiment-specific behavior distance also increases from 0.577 on \texttt{simple} families to 0.743 on \texttt{medium} families and 0.791 on \texttt{complex} families. These results support the use of the representation for cross-artifact neighborhoods and retrieval. They do not establish a universal process-semantic metric: $d_B$ overlaps the supervision used during training, and the deterministic trace-variant baseline remains stronger on the \texttt{simple} families. Table~\ref{tab:geometry} gives the complete comparison.
 
 \begin{table}[H]
 \centering
@@ -903,7 +905,7 @@ The shared representation successfully groups related artifacts on the fixed eva
 \label{tab:geometry}
 \begin{tabular}{@{}lccc@{}}
 \toprule
-Representation & Simple & Medium & Complex \\
+Representation & \texttt{simple} & \texttt{medium} & \texttt{complex} \\
 \midrule
 \multicolumn{4}{@{}l}{\emph{Multimodal learned representation}}\\
 \model fused embedding & 0.577 & \best{0.743} & \best{0.791} \\
@@ -932,7 +934,7 @@ Figure~\ref{fig:geometry-bars} emphasizes the changing balance between the learn
 
 \input{figures/geometry-bars}
 
-Figure~\ref{fig:geometry-bars} also shows that the deterministic trace-variant distribution is strongest on the simple families. One possible explanation is that short synthetic processes are often well characterized by a small set of variants, whereas larger processes benefit more from combining structural and observational information. The present experiment does not isolate that explanation.
+Figure~\ref{fig:geometry-bars} also shows that the deterministic trace-variant distribution is strongest on the \texttt{simple} families. One possible explanation is that short synthetic processes are often well characterized by a small set of variants, whereas larger processes benefit more from combining structural and observational information. The present experiment does not isolate that explanation.
 
 Alternative observations and realizations are also stable within each artifact type. A positive margin means that even the least similar matching observation or realization remains more similar than the most similar non-matching one. Event log embeddings have the smallest nearest-positive margin because finite trace frequencies vary between observations. Table~\ref{tab:invariance} reports the complete within-type diagnostic.
 
@@ -944,17 +946,17 @@ Alternative observations and realizations are also stable within each artifact t
 \toprule
 Level & Encoder & Within & Between & Margin & Recall@1 \\
 \midrule
-\multirow{4}{*}{Simple} & Fusion & 0.995 & 0.227 & 0.223 & 1.000 \\
+\multirow{4}{*}{\texttt{simple}} & Fusion & 0.995 & 0.227 & 0.223 & 1.000 \\
  & Petri net & 0.985 & 0.220 & 0.230 & 1.000 \\
  & Event log & 0.985 & 0.316 & 0.137 & 1.000 \\
  & Process tree & 0.999 & 0.163 & 0.323 & 1.000 \\
 \midrule
-\multirow{4}{*}{Medium} & Fusion & 0.993 & 0.155 & 0.287 & 1.000 \\
+\multirow{4}{*}{\texttt{medium}} & Fusion & 0.993 & 0.155 & 0.287 & 1.000 \\
  & Petri net & 0.985 & 0.151 & 0.298 & 1.000 \\
  & Event log & 0.976 & 0.260 & 0.156 & 1.000 \\
  & Process tree & 0.999 & 0.118 & 0.370 & 1.000 \\
 \midrule
-\multirow{4}{*}{Complex} & Fusion & 0.995 & 0.101 & 0.291 & 1.000 \\
+\multirow{4}{*}{\texttt{complex}} & Fusion & 0.995 & 0.101 & 0.291 & 1.000 \\
  & Petri net & 0.985 & 0.103 & 0.326 & 1.000 \\
  & Event log & 0.982 & 0.221 & 0.182 & 1.000 \\
  & Process tree & 0.999 & 0.065 & 0.372 & 1.000 \\
@@ -979,7 +981,7 @@ Under the fixed multi-observation protocol, the shared space supports cross-arti
 \centering
 \begin{tabular}{@{}lccc@{}}
 \toprule
-Direction & Simple & Medium & Complex \\
+Direction & \texttt{simple} & \texttt{medium} & \texttt{complex} \\
 \midrule
 Petri net $\rightarrow$ event log  & 0.703 / 0.755 & 0.766 / 0.799 & 0.828 / 0.855 \\
 Petri net $\rightarrow$ process tree & 0.828 / 0.862 & 0.828 / 0.862 & 0.828 / 0.862 \\
@@ -997,7 +999,7 @@ Each relevance group has four candidate rows, so multiple positive observations 
 \subsection{\RQthree: Structural Guarantees and Behavioral Limits of Candidate Generation}\label{sec:decode-results}
 
 \paragraph{\RQthree answer.}
-Grammar constraints solve syntactic closure, but not behavioral reconstruction. Every decoding run produces a closed process tree over the permitted activity inventory and converts to a Petri net. Exact reconstruction, however, is limited even when the source is the reference process tree: it decreases from 34.4\% for simple families to 15.6\% for complex families. No event log input exactly reconstructs its designated target at any level. Exact match alone is a strict measure because a finite event log may admit several valid process trees, but the large behavioral distances show that the failures are not merely alternative syntactic descriptions of equivalent behavior. Decoded process trees should therefore be treated as candidates that require conformance checking and inspection. Table~\ref{tab:decode} reports the learned properties together with evaluator coverage.
+Grammar constraints solve syntactic closure, but not behavioral reconstruction. Every decoding run produces a closed process tree over the permitted activity inventory and converts to a Petri net. Exact reconstruction, however, is limited even when the source is the reference process tree: it decreases from 34.4\% for \texttt{simple} families to 15.6\% for \texttt{complex} families. No event log input exactly reconstructs its designated target at any level. Exact match alone is a strict measure because a finite event log may admit several valid process trees, but the large behavioral distances show that the failures are not merely alternative syntactic descriptions of equivalent behavior. Decoded process trees should therefore be treated as candidates that require conformance checking and inspection. Table~\ref{tab:decode} reports the learned properties together with evaluator coverage.
 
 \begin{table}[H]
 \centering
@@ -1007,19 +1009,19 @@ Grammar constraints solve syntactic closure, but not behavioral reconstruction. 
 \toprule
 Level & Source & Evaluable (\%) & Exact (\%) & $d_B$ $\downarrow$ & Process tree edit $\downarrow$ \\
 \midrule
-\multirow{4}{*}{Simple}
+\multirow{4}{*}{\texttt{simple}}
  & Process tree & 100.0 & 34.4 & 0.861 & 0.509 \\
  & Event log    & 100.0 & 0.0  & 1.169 & 0.519 \\
  & Petri net    & 100.0 & 12.5 & 1.094 & 0.661 \\
  & Fusion       & 100.0 & 3.1  & 1.148 & 0.589 \\
 \midrule
-\multirow{4}{*}{Medium}
+\multirow{4}{*}{\texttt{medium}}
  & Process tree & 100.0 & 28.1 & 0.950 & 0.549 \\
  & Event log    & 96.9  & 0.0  & 1.246 & 0.553 \\
  & Petri net    & 100.0 & 6.2  & 1.130 & 0.645 \\
  & Fusion       & 100.0 & 0.0  & 1.222 & 0.668 \\
 \midrule
-\multirow{4}{*}{Complex}
+\multirow{4}{*}{\texttt{complex}}
  & Process tree & 100.0 & 15.6 & 1.105 & 0.645 \\
  & Event log    & 100.0 & 0.0  & 1.291 & 0.562 \\
  & Petri net    & 100.0 & 6.2  & 1.245 & 0.673 \\
@@ -1038,7 +1040,7 @@ Table~\ref{tab:motif-decode} shows that degradation is concentrated in larger or
 \label{tab:motif-decode}
 \begin{tabular}{@{}lccc@{}}
 \toprule
-Family type & Simple & Medium & Complex \\
+Family type & \texttt{simple} & \texttt{medium} & \texttt{complex} \\
 \midrule
 Duplicate prefix & 1.136 / 0.546 & 1.187 / 0.546 & 1.165 / 0.546 \\
 Concurrency/interleaving & 1.087 / 0.491 & 1.081 / 0.491 & 1.063 / 0.491 \\
@@ -1061,15 +1063,15 @@ Table~\ref{tab:discovery} compares event log decoding with Inductive Miner. \mod
 \toprule
 Level & Method & Evaluable (\%) & Fitness & Precision & F1 & 95\% interval \\
 \midrule
-\multirow{2}{*}{Simple}
+\multirow{2}{*}{\texttt{simple}}
  & \model{} & 78.1 & 0.702 & 0.654 & 0.666 & [0.598, 0.746] \\
  & Inductive Miner & 100.0 & 1.000 & 0.992 & 0.996 & [0.987, 1.000] \\
 \midrule
-\multirow{2}{*}{Medium}
+\multirow{2}{*}{\texttt{medium}}
  & \model{} & 75.0 & 0.709 & 0.663 & 0.669 & [0.611, 0.733] \\
  & Inductive Miner & 100.0 & 1.000 & 0.986 & 0.992 & [0.975, 1.000] \\
 \midrule
-\multirow{2}{*}{Complex}
+\multirow{2}{*}{\texttt{complex}}
  & \model{} & 71.9 & 0.691 & 0.639 & 0.649 & [0.570, 0.729] \\
  & Inductive Miner & 100.0 & 1.000 & 0.907 & 0.938 & [0.868, 0.991] \\
 \bottomrule
@@ -1125,7 +1127,7 @@ The directional retrieval results support a common interface for querying a cont
 
 \subsection{Why Deterministic Baselines Remain Strong}
 
-The behavioral-ordering result is narrower. Its target is an experiment-specific descriptor related to training supervision, and deterministic features remain competitive. Trace-variant distributions are especially effective for the simple synthetic processes, where a small observed language may already characterize much of the relevant behavior. The learned fused representation becomes more competitive as structures grow, but the experiment does not isolate whether this follows from structural complexity, broader behavior, or the supervision design. The contribution is therefore the availability of one learned interface from every artifact type, not the replacement of all type-specific similarity measures.
+The behavioral-ordering result is narrower. Its target is an experiment-specific descriptor related to training supervision, and deterministic features remain competitive. Trace-variant distributions are especially effective for the \texttt{simple} synthetic processes, where a small observed language may already characterize much of the relevant behavior. The learned fused representation becomes more competitive as structures grow, but the experiment does not isolate whether this follows from structural complexity, broader behavior, or the supervision design. The contribution is therefore the availability of one learned interface from every artifact type, not the replacement of all type-specific similarity measures.
 
 \subsection{Structural Validity versus Behavioral Correctness}
 
