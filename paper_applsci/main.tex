@@ -1002,7 +1002,6 @@ The evaluation retains repeated observations and realizations within each family
 
 \subsection{\RQone: Representation alignment and behavioral ordering}
 
-\paragraph{\RQone answer.}
 The shared representation successfully groups related artifacts on the fixed evaluation subset. Alternative observations and realizations achieve within-type family Recall@1 of 1.000 at every complexity level. Agreement between fused-vector distance and the experiment-specific behavior distance also increases from 0.577 on \texttt{simple} families to 0.743 on \texttt{medium} families and 0.791 on \texttt{complex} families. These results support the use of the representation for cross-artifact neighborhoods and retrieval. They do not establish a universal process-semantic metric: $d_B$ overlaps the supervision used during training, and the deterministic trace-variant baseline remains stronger on the \texttt{simple} families. Table~\ref{tab:geometry} gives the complete comparison.
 
 \begin{table}[H]
@@ -1079,7 +1078,6 @@ The geometry result must be interpreted in light of its supervision. Components 
 \FloatBarrier
 \subsection{\RQtwo: Cross-Artifact Retrieval}\label{sec:retrieval-results}
 
-\paragraph{\RQtwo answer.}
 Under the fixed multi-observation protocol, the shared space supports cross-artifact search: directional Recall@1 ranges from 0.656 to 0.875, versus a random relevance-group baseline of 0.0625. Event log queries retrieving process trees are the hardest direction, while process tree queries retrieving event logs are strongest. The result supports retrieval within this controlled row-level candidate set; it is not evidence for full-test or deduplicated process-level retrieval.
 
 \begin{table}[H]
@@ -1104,7 +1102,6 @@ Each relevance group has four candidate rows, so multiple positive observations 
 \FloatBarrier
 \subsection{\RQthree: Structural Guarantees and Behavioral Limits of Candidate Generation}\label{sec:decode-results}
 
-\paragraph{\RQthree answer.}
 Grammar constraints solve syntactic closure, but not behavioral reconstruction. Every decoding run produces a closed process tree over the permitted activity inventory and converts to a Petri net. Exact reconstruction, however, is limited even when the source is the reference process tree: it decreases from 34.4\% for \texttt{simple} families to 15.6\% for \texttt{complex} families. No event log input exactly reconstructs its designated target at any level. Exact match alone is a strict measure because a finite event log may admit several valid process trees, but the large behavioral distances show that the failures are not merely alternative syntactic descriptions of equivalent behavior. Decoded process trees should therefore be treated as candidates that require conformance checking and inspection. Table~\ref{tab:decode} reports the learned properties together with evaluator coverage.
 
 \begin{table}[H]
