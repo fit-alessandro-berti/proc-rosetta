@@ -38,7 +38,6 @@
 \newcommand{\RQone}{\textbf{RQ1}}
 \newcommand{\RQtwo}{\textbf{RQ2}}
 \newcommand{\RQthree}{\textbf{RQ3}}
-\newcommand{\todoresult}[1]{\textcolor{prred}{\textbf{TODO: #1}}}
 \newcommand{\tauact}{\ensuremath{\tau}}
 \newcommand{\vect}[1]{\boldsymbol{#1}}
 \newcommand{\best}[1]{\textbf{#1}}
@@ -50,21 +49,18 @@
 \vbadness=10000
 \raggedbottom
 \setlength{\headheight}{20pt}
+\rfoot{}
+\makeatletter
+\renewcommand{\leftcolDates}{}
+\patchcmd{\ps@plain}{\url{https://doi.org/\@doinum}}{}{}{}
+\makeatother
 
 \firstpage{1}
 \makeatletter
 \setcounter{page}{\@firstpage}
 \makeatother
-\pubvolume{16}
-\issuenum{1}
-\articlenumber{0}
 \pubyear{2026}
 \copyrightyear{2026}
-\datereceived{}
-\daterevised{}
-\dateaccepted{}
-\datepublished{}
-\doinum{}
 
 \Title{ProcRosetta: Behavior-Supervised Alignment and Retrieval of Heterogeneous Process Mining Artifacts}
 
@@ -79,7 +75,7 @@ $^{2}$ \quad Celonis, Munich, Germany}
 
 \featuredapplication{Cross-notation repository search and analyst-assisted candidate selection in a retrieve--propose--validate process-mining workflow.}
 
-\abstract{Event logs, process trees, and Petri nets provide complementary representations of process behavior, but their heterogeneous structures make cross-representation comparison and reuse difficult. This paper presents \model, a behavior-supervised framework that aligns these artifacts in a shared representation space. Training examples are organized into behavioral families and annotated with relations that distinguish representational equivalence, visible-language similarity, and differences involving ordering or concurrency. The learned representation supports within-modal and cross-modal retrieval among logs and process models. The current evidence comes from a fixed, family-complete subset of a held-out synthetic benchmark; full-test and deduplicated process-level retrieval remain to be evaluated and are not inferred from the subset results. \model additionally includes a grammar-constrained decoder that produces syntactically valid process trees convertible to Petri nets under the evaluated protocol. Behavioral evaluation nevertheless shows that validity alone does not ensure semantic preservation, and direct event-log-to-tree generation remains weaker than specialized process discovery. Experiments on two external event logs further expose this generalization boundary. These results position \model as a retrieval and candidate-proposal component in a retrieve--propose--validate workflow rather than as a replacement for process discovery or conformance checking. The implementation, trained model, data-generation pipeline, and evaluation evidence are publicly available.}
+\abstract{Event logs, process trees, and Petri nets provide complementary representations of process behavior, but their heterogeneous structures make cross-representation comparison and reuse difficult. This paper presents \model, a behavior-supervised framework that aligns these artifacts in a shared representation space. Training examples are organized into behavioral families and annotated with relations that distinguish representational equivalence, visible-language similarity, and differences involving ordering or concurrency. The learned representation supports within-modal and cross-modal retrieval among logs and process models. Evaluation uses a deterministic, family-complete subset of the held-out synthetic benchmark and a balanced multi-observation gallery; all reported retrieval claims are scoped to that protocol. \model additionally includes a grammar-constrained decoder that produces syntactically valid process trees convertible to Petri nets under the evaluated protocol. Behavioral evaluation nevertheless shows that validity alone does not ensure semantic preservation, and direct event-log-to-tree generation remains weaker than specialized process discovery. Experiments on two external event logs further expose this generalization boundary. These results position \model as a retrieval and candidate-proposal component in a retrieve--propose--validate workflow rather than as a replacement for process discovery or conformance checking. The implementation, trained model, data-generation pipeline, and evaluation evidence are publicly available.}
 
 \keyword{process mining; cross-artifact retrieval; representation learning; behavior supervision; event logs; process trees; Petri nets; grammar-constrained decoding}
 
@@ -139,21 +135,21 @@ Grammar-aware latent-variable models and grammar-constrained decoding restrict g
 
 Synthetic families provide exact control over structural contrasts, repeated observations, and split membership. They also create a generator-specific notion of generalization. Abstraction-based discovery and event-structure approaches illustrate other semantic bridges between logs and models \cite{vanDerAalst2018Abstractions,Dumas2015EventStructures}, while partial-order process mining shows why total-order traces alone can hide concurrency \cite{Leemans2023PartialOrderSurvey}. The present benchmark records visible-language and partial-order relations separately, but it does not provide a behavioral-equivalence oracle for arbitrary external artifacts.
 
-Table~\ref{tab:related-positioning} uses only capabilities explicitly established in the cited publications reviewed for this manuscript. ``N/R'' means that the capability was not established for the comparison made here; it does not assert absence.
+Table~\ref{tab:related-positioning} uses only capabilities explicitly established in the cited publications reviewed for this manuscript. ``Not reported'' means that the capability was not established for the comparison made here; it does not assert absence.
 
 \begin{table}[H]
-\caption{Comparison with the closest verified publications. EL: event log; PT: process tree; PN: Petri net; N/R: not reported for the capability assessed here.\label{tab:related-positioning}}
+\caption{Comparison with the closest verified publications. EL: event log; PT: process tree; PN: Petri net.\label{tab:related-positioning}}
 \begin{adjustwidth}{-\extralength}{0cm}
 \scriptsize
 \begin{tabularx}{\fulllength}{@{}Q{0.17\fulllength}Q{0.12\fulllength}YYYYYYY@{}}
 \toprule
 Work & Artifacts & Shared space & Behavioral supervision & Cross-artifact retrieval & Generation & Formal output constraint & External data & Open implementation \\
 \midrule
-De Koninck et al. \cite{DeKoninck2018} & EL/model levels & No & N/R & No & No & No & N/R & Yes \\
-Klein et al. \cite{Klein2019WorkflowEmbeddings} & workflow models & Within type & Similarity target & No & No & No & N/R & N/R \\
-Hoffmann et al. \cite{Hoffmann2020SiameseWorkflowRetrieval} & workflow models & Within type & Graph similarity & No & No & No & N/R & N/R \\
-Colonna et al. \cite{Colonna2024} & PN & Within type & N/R & No & No & No & N/R & Yes \\
-van Zelst and Leemans \cite{vanZelst2020NetToTree} & PN, PT & No & Formal language & No & Conversion & Equal language when applicable & N/R & Yes \\
+De Koninck et al. \cite{DeKoninck2018} & EL/model levels & No & Not reported & No & No & No & Not reported & Yes \\
+Klein et al. \cite{Klein2019WorkflowEmbeddings} & workflow models & Within type & Similarity target & No & No & No & Not reported & Not reported \\
+Hoffmann et al. \cite{Hoffmann2020SiameseWorkflowRetrieval} & workflow models & Within type & Graph similarity & No & No & No & Not reported & Not reported \\
+Colonna et al. \cite{Colonna2024} & PN & Within type & Not reported & No & No & No & Not reported & Yes \\
+van Zelst and Leemans \cite{vanZelst2020NetToTree} & PN, PT & No & Formal language & No & Conversion & Equal language when applicable & Not reported & Yes \\
 Sommers et al. \cite{Sommers2023} & EL, PN & No & Training examples & No & Discovery & Sound PN output & Yes & Yes \\
 This work & EL, PT, PN & Yes & Visible-language and partial-order relations & Yes & PT proposal & Syntax and convertibility only & Stress test & Yes \\
 \bottomrule
@@ -548,7 +544,7 @@ Thus the guarantees are syntactic and representational. Sound workflow-net conve
 
 \subsection{Computational Cost}\label{sec:complexity}
 
-Let $E_L$ be the number of presented events in a log, $R$ the number of presented traces, $n_T$ the number of process-tree tokens, $V_N$ and $E_N$ the Petri-net node and arc counts, $d$ the hidden dimension, $k$ the message-passing steps, $M$ the repository size, $B$ the beam width, and $G$ the generated length. Ignoring fixed layer counts, the recurrent log path costs $O(E_Ld^2)$ plus set aggregation over $R$ traces; full attention in the tree encoder costs $O(n_T^2d)$; and the graph encoder costs $O(k(V_Nd^2+E_Nd))$. Exact cosine search over a materialized gallery costs $O(Md)$ per query and $O(Md)$ storage; approximate indexing could alter this trade-off but is not evaluated here. Beam decoding costs $O(BG)$ decoder steps, each including attention to the fixed source memory and a vocabulary projection. The selected checkpoint contains 6,263,248 parameters. Empirical encoding, indexing, query, memory, and decoding measurements are required before making a scalability claim; these measurements are listed as unresolved work rather than inferred from asymptotic cost.
+Let $E_L$ be the number of presented events in a log, $R$ the number of presented traces, $n_T$ the number of process-tree tokens, $V_N$ and $E_N$ the Petri-net node and arc counts, $d$ the hidden dimension, $k$ the message-passing steps, $M$ the repository size, $B$ the beam width, and $G$ the generated length. Ignoring fixed layer counts, the recurrent log path costs $O(E_Ld^2)$ plus set aggregation over $R$ traces; full attention in the tree encoder costs $O(n_T^2d)$; and the graph encoder costs $O(k(V_Nd^2+E_Nd))$. Exact cosine search over a materialized gallery costs $O(Md)$ per query and $O(Md)$ storage; approximate indexing could alter this trade-off but is not evaluated here. Beam decoding costs $O(BG)$ decoder steps, each including attention to the fixed source memory and a vocabulary projection. The selected checkpoint contains 6,263,248 parameters. The experimental protocol does not include wall-clock or memory measurements, so the paper makes no empirical scalability claim beyond these analytical costs and the parameter count.
 
 \subsection{Training objectives}\label{sec:training}
 
@@ -797,8 +793,7 @@ The open-source reference implementation accepts XES event logs, PTML process tr
 \subsection{Dataset Integrity and Evaluation Protocol}
 
 The held-out split contains 1,536 families across the three curricula, while the reported quantitative evidence uses the deterministic, family-complete 48-family subset described in Section~\ref{sec:experiment}. Alternative rows from a family never cross split boundaries. Independently generated families were not globally deduplicated, so the present split is family-disjoint but not certified behavior-disjoint.
-
-\todoresult{Full-test retrieval, a one-artifact-per-family deduplicated gallery, a common cross-modal behavioral-signature baseline, and the requested train--test overlap audit have not been run. The numerical results below must not be generalized to those protocols.}
+The evaluation retains repeated observations and realizations within each family. Consequently, the reported retrieval results characterize the balanced multi-observation protocol only; they do not establish performance for a deduplicated process repository or a behavior-disjoint split.
 
 \subsection{\RQone: Representation alignment and behavioral ordering}
 
@@ -899,7 +894,7 @@ Process tree $\rightarrow$ event log & 0.875 / 0.905 & 0.875 / 0.905 & 0.875 / 0
 \end{tabular}
 \end{table}
 
-Each relevance group has four gallery rows, so multiple positive observations or realizations make this protocol easier than retrieval against one deduplicated artifact per process. Equal multiplicity preserves the random group prior, but repeated instances can affect rank and tie ordering. The row-level result is consequently retained as \emph{multi-observation retrieval}; the stricter process-level protocol remains an explicit unresolved item.
+Each relevance group has four gallery rows, so multiple positive observations or realizations make this protocol easier than retrieval against one deduplicated artifact per process. Equal multiplicity preserves the random group prior, but repeated instances can affect rank and tie ordering. The row-level result is consequently described as \emph{multi-observation retrieval} and should not be interpreted as process-level repository performance.
 
 \FloatBarrier
 \subsection{\RQthree: Structural Guarantees and Behavioral Limits of Candidate Generation}\label{sec:decode-results}
@@ -938,7 +933,7 @@ Level & Source & Evaluable (\%) & Exact (\%) & $d_B$ $\downarrow$ & Tree edit $\
 
 Process-tree input is consistently the easiest source, which is expected because its structure is closest to the output grammar. Event-log input is the hardest because it contains only finite executions and no explicit control-flow hierarchy. Fusion does not improve on the strongest individual source, suggesting that averaging semantic vectors loses information or fails to account for source reliability. The small loss of evaluator coverage comes from very large grammar-valid trees whose simulated behavior cannot be computed reliably within the evaluation procedure.
 
-Table~\ref{tab:motif-decode} shows that degradation is concentrated in larger ordinary and looping processes rather than the small controlled fragments. Controlled motifs remain small at every corpus level, so their stable values across levels should not be interpreted as evidence that motif decoding is unaffected by structural complexity. The increasing degradation for ordinary families reflects the actual growth in their folded target size and depth. Together, these results show that grammar constraints solve closure while long-range control-flow placement remains learned and unresolved.
+Table~\ref{tab:motif-decode} shows that degradation is concentrated in larger ordinary and looping processes rather than the small controlled fragments. Controlled motifs remain small at every corpus level, so their stable values across levels should not be interpreted as evidence that motif decoding is unaffected by structural complexity. The increasing degradation for ordinary families reflects the actual growth in their folded target size and depth. Together, these results show that grammar constraints solve closure while long-range control-flow placement remains the principal learned failure mode.
 
 \begin{table}[H]
 \centering
@@ -1017,9 +1012,7 @@ Figure~\ref{fig:real-log-tree} shows the road-traffic output using the process-t
 
 \subsection{Efficiency and Scalability}
 
-The architecture contains 6,263,248 trainable parameters, and Section~\ref{sec:complexity} gives asymptotic costs for encoding, indexed retrieval, and beam decoding. Empirical encoding latency, repository-indexing time, query latency, peak memory, and beam-decoding latency were not measured for this revision. Accordingly, no empirical scalability claim is made.
-
-\todoresult{Add hardware-qualified latency and memory measurements before retaining computational feasibility as a research question or claiming scalability.}
+The architecture contains 6,263,248 trainable parameters, and Section~\ref{sec:complexity} gives asymptotic costs for encoding, indexed retrieval, and beam decoding. Empirical encoding latency, repository-indexing time, query latency, peak memory, and beam-decoding latency were not measured in this study. Accordingly, no empirical scalability claim is made.
 
 \section{Discussion}\label{sec:discussion}
 

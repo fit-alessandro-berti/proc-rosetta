@@ -34,13 +34,13 @@
 \renewcommand{\thefigure}{S\arabic{figure}}
 \renewcommand{\thetable}{S\arabic{table}}
 \setlength{\headheight}{20pt}
+\rfoot{}
+\makeatletter
+\patchcmd{\ps@plain}{\url{https://doi.org/\@doinum}}{}{}{}
+\makeatother
 
 \firstpage{1}
-\pubvolume{16}
-\issuenum{1}
-\articlenumber{0}
 \pubyear{2026}
-\doinum{}
 \Title{ProcRosetta: Behavior-Supervised Alignment and Retrieval of Heterogeneous Process Mining Artifacts}
 \Author{Alessandro Berti $^{1,*}$ and Wil M. P. van der Aalst $^{1,2}$}
 \AuthorNames{Alessandro Berti and Wil M. P. van der Aalst}
