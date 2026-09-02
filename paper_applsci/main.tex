@@ -365,7 +365,15 @@ Figure~\ref{fig:motifs} shows the three contrasts side by side.
 
 \subsection{Relation records and event log observations}\label{sec:relations}
 
-For every pair of process model realizations, the generator records three pieces of information separately. \emph{Evidence} states how the relationship was established, for example by exhaustive state-space exploration or construction isomorphism. \emph{Semantics} states whether the pair shares its complete visible trace language and whether it shares the recorded partial-order class. \emph{Training role} states whether the pair can be a strong positive, a weaker ordering example, or neither. Keeping these fields separate prevents a limited proof procedure from being mistaken for a behavioral semantics. Table~\ref{tab:relation-evidence} describes the evidence mechanisms.
+Each behavior family contains two Petri net realizations of the designated process tree. For example, the duplicate-prefix family contains one Petri net with repeated visible transitions and another with a shared transition followed by silent routing. Merely placing these two Petri nets in the same family is not enough to determine how they should supervise the neural system. The dataset must first answer two questions: \emph{what behavioral relationship do the Petri nets have}, and \emph{how confidently was that relationship established}? These questions are different. Two Petri nets may produce the same visible traces but represent different concurrency, and a search that finds matching traces up to a resource limit does not prove that their complete languages are equal.
+
+For this reason, the pair of Petri net realizations receives a \emph{relation record} before event logs are sampled. The record keeps three fields separate:
+\begin{itemize}
+\item \emph{Evidence} describes how the relationship was established, such as complete state-space exploration or a structure-preserving construction.
+\item \emph{Semantics} describes what is known to agree: the complete visible trace language, the recorded partial-order class, both, or neither.
+\item \emph{Training role} states how the pair may be used, for example as a strong positive, as a weaker ordering example, or not as an exact positive.
+\end{itemize}
+This separation prevents the method used to examine a pair from being confused with the behavioral claim supported by that examination. Table~\ref{tab:relation-evidence} summarizes the available evidence types.
 
 \begin{table}[H]
 \centering
@@ -375,16 +383,16 @@ For every pair of process model realizations, the generator records three pieces
 \toprule
 Evidence status & Meaning & Consequence for training \\
 \midrule
-Exact enumeration & Both marking searches terminate and return the same complete visible language. & Supplies an exact trace-language identifier. \\
-Bounded search & Collected trace sets agree, but at least one search reaches a resource bound. Complete-language equality is not claimed. & Supplies no exact positive; the implemented training policy rejects such families. \\
-Isomorphic construction & The second Petri net is obtained by structure-preserving renaming, including arcs, labels, and markings. & Certifies ordinary looping pairs without enumerating an infinite language. \\
+Exact enumeration & Complete searches of both Petri nets finish and return the same visible language. & Certifies visible-language equality and supplies an exact identifier. \\
+Bounded search & The traces found so far agree, but at least one search stops at a resource limit. & Does not prove complete-language equality and supplies no exact positive. \\
+Isomorphic construction & One Petri net is obtained from the other by consistently renaming its structure, including arcs, labels, and markings. & Certifies equality for ordinary looping pairs without enumerating an infinite language. \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-When one Petri net is created by a structure-preserving renaming of another, isomorphism certifies their equivalence without requiring trace enumeration. It is therefore an evidence mechanism for equality, not a separate or weaker behavioral relation.
+The important distinction is between \emph{complete evidence} and \emph{bounded evidence}. Exact enumeration is complete only when both searches finish. Isomorphic construction is also complete evidence because consistent structural renaming preserves the net, even when its language is infinite. A bounded search reports only the traces reached before a safeguard stopped the exploration. Agreement among those traces is useful diagnostic information, but it is not a certificate of complete-language equality.
 
-Partial-order identity is stored independently from visible-language identity. A record may denote the same shared class, a concurrent realization, an explicitly interleaved realization, or unavailable information. A strong positive requires both the strong behavior identifier and the partial-order identifier to agree. A pair with the same exact visible-language identifier but different partial-order identifiers provides a weaker ranking constraint: it should be more similar than an unrelated pair, but not as similar as a pair that agrees under both recorded semantics. Bounded agreement never creates an exact positive. Table~\ref{tab:motif-cert} applies these rules to each family type.
+The relation record stores \emph{visible-language identity} and \emph{partial-order identity} independently. This produces three main training cases. If both identifiers agree, the pair is a strong positive and its representations may be aligned closely. If the visible-language identifier agrees but the partial-order identifier differs, the pair receives the hierarchical distance treatment described in Section~\ref{sec:training}. If only bounded evidence is available, the pair is never used as an exact positive. Table~\ref{tab:motif-cert} shows how these rules apply to the family types in the corpus.
 
 \begin{table}[H]
 \centering
@@ -405,7 +413,7 @@ Bounded comparison & Any search stopped by a safeguard & Collected traces only; 
 \end{tabularx}
 \end{table}
 
-The concurrency pair makes the separation concrete. Both realizations generate $\langle A_0,A_1\rangle$ and $\langle A_1,A_0\rangle$, but only the parallel Petri net can enable $A_0$ and $A_1$ simultaneously. The pair is therefore equal under complete visible-trace language, but not under the recorded partial-order semantics. Figure~\ref{fig:concurrency-nets} shows the two full Petri net fragments.
+The \emph{concurrency/interleaving pair} makes this separation concrete. Both realizations generate $\langle A_0,A_1\rangle$ and $\langle A_1,A_0\rangle$. In the first net, however, $A_0$ and $A_1$ can be enabled at the same time; in the second, the net chooses one of two fixed sequential orders. The pair therefore has visible-language agreement but not partial-order agreement. Figure~\ref{fig:concurrency-nets} shows the two realizations.
 
 \begin{figure}[H]
 \centering
@@ -480,15 +488,19 @@ The concurrency pair makes the separation concrete. Both realizations generate $
 \label{fig:concurrency-nets}
 \end{figure}
 
-After the two Petri net realizations have been constructed, the generator first builds a pool of visible traces. For a finite non-looping family, it explores both Petri nets under the configured safeguards. If both explorations terminate and return the same complete trace set, the pair receives exact visible-language evidence. If either exploration reaches a safeguard, the collected traces may still agree, but complete-language equality is not claimed.
+Only after the model relationship has been recorded does the generator construct event log observations. It first creates a finite \emph{trace pool} from which logs can be sampled. For a non-looping family, complete state-space exploration provides this pool when both Petri net searches terminate. If a search reaches a safeguard, its collected traces remain bounded evidence and are not treated as the complete language.
 
-Ordinary looping process trees may have an infinite visible language. For these families, equality between the two ordinary Petri net realizations is certified by construction isomorphism rather than exhaustive enumeration. The generator then performs 512 seeded playouts, removes duplicate traces, and sorts the result to obtain a finite pool for event log sampling. This pool is an observation source; it is not claimed to enumerate the infinite language.
+Looping models need a different procedure because their visible language may be infinite. For ordinary looping families, isomorphic construction certifies the relationship between the Petri nets. The generator then performs seeded playout, removes duplicate traces, and sorts the result to create a finite sampling pool. This pool is used only to create observations; it is not claimed to enumerate the infinite language. Keeping \emph{relation evidence} separate from the \emph{observation source} prevents a finite sample from being mistaken for a proof of model equivalence.
 
-The generator draws two 128-trace observations from the resulting pool. The \emph{cycled-coverage observation}, implemented as \texttt{uniform\_variants}, visits retained variants in round-robin order and then shuffles the selected traces. Its purpose is to reduce accidental frequency imbalance, not to estimate a real operational frequency distribution. When the pool contains more than 128 variants, this observation uses only the first 128 variants in deterministic sorted order; ``coverage'' therefore refers to the retained subset, not necessarily to the process model's full visible language.
+Two event logs are drawn from the resulting trace pool, with the same configured number of traces. The \emph{cycled-coverage observation}, implemented as \texttt{uniform\_variants}, visits the retained variants in a fixed cycle before shuffling them. Its purpose is to give broad and relatively balanced coverage of the available pool. If the pool is larger than the event log capacity, only a deterministic subset can be included; coverage therefore refers to the retained subset, not necessarily to the model's complete language.
 
-The \emph{independently resampled observation} draws 128 traces with replacement. For example, from $\{ab,ac,ad\}$ a six-trace coverage observation contains two copies of each variant before shuffling, whereas a resample might be $ab,ab,ac,ab,ad,ac$. Its empirical frequencies may therefore differ substantially from those of the cycled-coverage observation even though both originate from the same trace pool. Presenting both observations teaches the neural system that finite-sample frequencies are properties of an observation, not necessarily properties of the underlying process. Persisted event logs remain clean. Incompleteness and noise are introduced only as training-time augmentation so that quantitative evaluation is not confounded by unknown stored corruption.
+The \emph{independently resampled observation} draws traces with replacement. It may repeat some variants many times and omit others, even though it uses the same source pool as the coverage-oriented observation. The two logs can therefore have different empirical frequencies without representing different underlying behavior. Presenting both views teaches the model to separate sampling variation from behavioral variation.
 
-Finally, each event log observation independently induces a first-seen activity mapping. If one worked-example observation begins with \textsf{register}, \textsf{accept}, then \textsf{register} becomes $A_0$, \textsf{accept} becomes $A_1$, and \textsf{reject} becomes $A_2$. If the other begins with \textsf{register}, \textsf{reject}, the last two canonical names are reversed. Family labels absent from the finite observation are appended in stable process tree/trace-pool order. The mapping is applied consistently to that observation, its target process tree, and both corresponding Petri net realizations. Because the observations may encounter activities in different orders, the same underlying activity can receive different canonical labels in the two stored observations. Positive relationships must therefore be determined from stored relation identifiers rather than surface labels.
+The stored event logs themselves remain clean. Noise and incompleteness are introduced only as training-time augmentation, rather than being written into the evaluation data. This keeps the quantitative evaluation tied to known, reproducible observations.
+
+Finally, each observation creates a \emph{first-seen activity mapping}. Activities receive neutral names in the order in which they first appear. In the request example, an observation that encounters \textsf{accept} before \textsf{reject} may map them to $A_1$ and $A_2$; an observation encountering them in the opposite order may reverse those names. Activities absent from the finite log are appended in a stable order obtained from the process tree and trace pool.
+
+For each observation, the same activity mapping is applied to the event log, the process tree, and both Petri nets. Their activity names therefore agree within each stored row. A different observation may assign different neutral names to the same underlying activities. Activity names alone consequently cannot determine whether two artifacts are related; training uses the stored relation record instead.
 
 \subsection{Generator implementation and relation checks}\label{sec:generation}
 
