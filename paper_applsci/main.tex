@@ -552,15 +552,15 @@ Finally, the generator checks \emph{corpus coverage}. It verifies the required m
 
 \subsection{Cross-artifact architecture}\label{sec:architecture}
 
-The architecture serves two different purposes. Retrieval requires one compact vector per artifact. Translation requires a richer memory that preserves local activity and structural information. Each encoder therefore produces both representations instead of forcing retrieval and generation through the same bottleneck.
+The main architectural challenge is that the same artifacts must support two tasks with different information needs. For \emph{retrieval}, the system must compare complete artifacts quickly, even when one is an event log and another is a process tree or Petri net. A single compact vector is suitable for this comparison. For \emph{candidate generation}, however, the decoder must recover local details such as activities, ordering information, parent--child relations, and graph neighborhoods. Compressing everything into one vector would make these details difficult to access.
 
-Figure~\ref{fig:architecture} separates three paths. In the upper path, normalized vectors are compared directly for retrieval and behavioral ordering. In the direct-generation path, the decoder attends to source-specific memory. In the fusion path, semantic vectors are averaged and projected into a synthetic decoder memory.
+\model therefore gives every artifact encoder the same two-part output. The first part is a \emph{semantic vector} $\vect z_m$: a normalized, fixed-size summary used to compare artifacts in the shared space. The second part is a \emph{contextual memory} $H_m$: a collection of source states that preserves the finer information needed by the process tree decoder. The encoders produce these outputs in a common form, although they read different input structures.
+
+Figure~\ref{fig:architecture} shows how the two outputs are used. The \emph{semantic path} compares the vectors $\vect z_m$ for retrieval and behavioral ordering. The \emph{direct-generation path} lets the decoder attend to the contextual memory $H_m$ of one source artifact. The \emph{fusion path} supports several source artifacts: their semantic vectors are averaged, and the result is projected back into a decoder memory. All generation paths lead to the same process tree decoder and therefore to the same output format.
 
 \input{figures/architecture}
 
-The process tree encoder and decoder build on Transformer attention \cite{Vaswani2017}, while the event log path uses set attention to aggregate traces without imposing a presentation order \cite{Lee2019}. These architectural choices implement different inductive biases behind a shared output interface.
-
-The encoders differ because each artifact requires a different inductive bias:
+The three encoders cannot process their inputs in exactly the same way because the artifacts organize information differently. A process tree is an ordered hierarchy, an event log contains ordered events inside an unordered collection of traces, and a Petri net is a typed directed graph. Each encoder therefore follows the structure of its own artifact while still producing the common outputs described above. The process tree encoder and decoder use Transformer attention \cite{Vaswani2017}; the event log encoder uses recurrent states within traces and set attention across traces \cite{Lee2019}; and the Petri net encoder exchanges messages along typed arcs. Table~\ref{tab:encoders} summarizes the reason for each choice.
 
 \begin{table}[H]
 \centering
@@ -577,7 +577,9 @@ Petri net & Typed directed graph structure, labels, and markings & Edge-aware me
 \end{tabularx}
 \end{table}
 
-Each encoder retains contextual source states for candidate generation and projects a pooled summary into the shared semantic space. The process tree encoder reads the process tree's prefix form together with depth and parent information. The event log encoder preserves event order inside each trace but treats the collection of traces as an unordered set. The Petri net encoder propagates information over typed directed arcs and includes transition labels and markings. Table~\ref{tab:parameters} reports the selected architecture.
+Concretely, the process tree encoder reads the prefix representation together with each token's depth and parent information. The event log encoder reads events in their trace order, then combines the traces without depending on the order in which those traces are presented. The Petri net encoder uses places, transitions, labels, markings, and typed directed arcs. In every case, the detailed encoder states form $H_m$, while a pooled and projected summary forms $\vect z_m$. This common interface is what allows different artifact types to be compared by the same retrieval rule and processed by the same decoder.
+
+For reproducibility, Table~\ref{tab:parameters} reports the concrete layer counts, dimensions, and parameter counts of the selected checkpoint. These values describe the evaluated implementation; the essential design is the separation between a shared semantic vector and a detail-preserving contextual memory.
 
 \begin{table}[H]
 \centering
