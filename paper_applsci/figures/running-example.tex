@@ -27,7 +27,7 @@
 \node[panel,fit=(source)] {};
 
 \begin{scope}[xshift=8.6cm,local bounding box=decoded]
-\node[font=\small\bfseries] at (0,3.25) {Petri-net-derived loop fragment};
+\node[font=\small\bfseries] at (0,3.25) {Petri net-derived loop fragment};
 \node[op] (dl) at (0,2.55) {LOOP};
 \node[op,fill=prlightteal] (da) at (-1.7,1.55) {AND};
 \node[op,fill=prlightred] (ds) at (1.7,1.55) {SEQ};
@@ -48,6 +48,6 @@
   {highlighted nodes cross the loop body/redo boundary};
 \end{tikzpicture}%
 }
-\caption{Source and best decoded loop fragments for the running example; the common registration prefix and final choice are omitted. The decoded tree moves \emph{decide} and \emph{reinitiate} into the loop's redo sequence.}
+\caption{Source and best decoded loop fragments for the running example; the common registration prefix and final choice are omitted. The decoded process tree moves \emph{decide} and \emph{reinitiate} into the loop's redo sequence.}
 \label{fig:running-example}
 \end{figure}

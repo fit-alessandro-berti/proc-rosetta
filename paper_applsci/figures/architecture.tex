@@ -15,9 +15,9 @@
 \node[input] (l) at (0,0) {event log};
 \node[input] (n) at (0,-2.3) {Petri net};
 
-\node[enc] (te) at (3.1,2.3) {process-tree encoder};
-\node[enc] (le) at (3.1,0) {event-log encoder};
-\node[enc] (ne) at (3.1,-2.3) {Petri-net encoder};
+\node[enc] (te) at (3.1,2.3) {process tree encoder};
+\node[enc] (le) at (3.1,0) {event log encoder};
+\node[enc] (ne) at (3.1,-2.3) {Petri net encoder};
 
 \node[mem] (tm) at (6.1,2.3) {$H_T$};
 \node[mem] (lm) at (6.1,0) {$H_L$};
@@ -29,7 +29,7 @@
 
 \node[task,fill=prlightteal] (retrieve) at (12.3,3.8) {retrieval and\\behavioral comparison};
 \node[task,fill=prlightgold] (fuse) at (11.0,-3.8) {mean semantic vectors\\and project to memory};
-\node[task,fill=prlightred] (decode) at (14.5,0) {shared process-tree\\decoder};
+\node[task,fill=prlightred] (decode) at (14.5,0) {shared process tree\\decoder};
 \node[task,fill=prlightblue] (out) at (18.0,0) {executable\\process tree};
 
 \foreach \a/\b in {t/te,l/le,n/ne,te/tm,le/lm,ne/nm}{\draw[direct] (\a)--(\b);}

@@ -9,12 +9,12 @@
     text width=34mm,align=center,inner sep=3pt,fill=prlightred},
   flow/.style={-{Stealth[length=1.8mm]},semithick,draw=prblue}
 ]
-\node[stage,fill=prlightgold] (query) {query artifact\\log, tree, or net};
+\node[stage,fill=prlightgold] (query) {query artifact\\event log, process tree, or Petri net};
 \node[stage,fill=prlightblue,right=of query] (encode) {modality-specific\\encoder};
 \node[stage,fill=prlightteal,right=of encode] (space) {shared behavior-aware\\representation};
 \node[stage,fill=prlightblue,right=of space] (search) {repository search\\and ranked artifacts};
-\node[stage,fill=prlightgold,below=10mm of search] (propose) {optional constrained\\tree proposal};
-\node[gate,left=of propose] (validate) {conformance, soundness,\\and semantic validation};
+\node[stage,fill=prlightgold,below=10mm of search] (propose) {optional constrained\\process tree proposal};
+\node[gate,left=of propose] (validate) {conformance checking, soundness,\\and semantic validation};
 \node[stage,fill=prlightteal,left=of validate] (analyst) {analyst accepts, rejects,\\or refines};
 \draw[flow] (query)--(encode);
 \draw[flow] (encode)--(space);
@@ -25,5 +25,5 @@
 \draw[flow] (validate)--(analyst);
 \end{tikzpicture}%
 }
-\caption{Intended retrieve--propose--validate workflow. Retrieval precedes optional candidate generation; neither a high rank nor syntactic validity bypasses established validation or analyst judgment.\label{fig:application-workflow}}
+\caption{Intended retrieval, proposal, and validation workflow. Retrieval precedes optional candidate generation; neither a high rank nor syntactic validity bypasses established validation or analyst judgment.\label{fig:application-workflow}}
 \end{figure}

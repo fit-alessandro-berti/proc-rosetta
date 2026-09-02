@@ -31,6 +31,7 @@
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \newcommand{\model}{\textsc{ProcRosetta}\xspace}
 \newcommand{\best}[1]{\textbf{#1}}
+\lstset{literate={--}{{-}{-}}2}
 \renewcommand{\thefigure}{S\arabic{figure}}
 \renewcommand{\thetable}{S\arabic{table}}
 \setlength{\headheight}{20pt}
@@ -101,8 +102,8 @@ Figure~\ref{fig:tree-sampler} separates recursive topology construction from acc
   {one family\\$T,\ N^{(1)},\ N^{(2)}$\\shared trace pool};
 \node[viewbox] (coverage) at (4.0,1.0) {cycled-coverage\\$L^{(u)}$};
 \node[viewbox] (resample) at (4.0,-1.0) {independent resample\\$L^{(r)}$};
-\node[mapbox] (mapu) at (8.1,1.0) {apply first-seen map $M_u$\\to tree, log, and both nets};
-\node[mapbox] (mapr) at (8.1,-1.0) {apply first-seen map $M_r$\\to tree, log, and both nets};
+\node[mapbox] (mapu) at (8.1,1.0) {apply first-seen map $M_u$\\to process tree, event log, and both Petri nets};
+\node[mapbox] (mapr) at (8.1,-1.0) {apply first-seen map $M_r$\\to process tree, event log, and both Petri nets};
 \node[rowbox] (u1) at (12.8,1.5) {row 1: $(T_u,N_u^{(1)},L_u)$};
 \node[rowbox] (u2) at (12.8,0.5) {row 2: $(T_u,N_u^{(2)},L_u)$};
 \node[rowbox] (r1) at (12.8,-0.5) {row 3: $(T_r,N_r^{(1)},L_r)$};
@@ -119,7 +120,7 @@ Figure~\ref{fig:tree-sampler} separates recursive topology construction from acc
 \draw[rowarrow] (mapr)--(r2);
 \end{tikzpicture}%
 }
-\caption{Observation-specific relabeling and row expansion. Subscript $u$ or $r$ denotes the corresponding mapped artifact. Each first-seen map is applied consistently across artifact types before the two log observations and two Petri-net realizations form their $2\times2$ Cartesian product.}
+\caption{Observation-specific relabeling and row expansion. Subscript $u$ or $r$ denotes the corresponding mapped artifact. Each first-seen map is applied consistently across artifact types before the two event log observations and two Petri net realizations form their $2\times2$ Cartesian product.}
 \label{fig:row-expansion}
 \end{figure}
 
@@ -137,7 +138,7 @@ For local deployment, the Streamlit front end can be started directly or through
 
 \subsection{Interactive workflow}
 
-The browser interface turns the model pipeline into an inspectable three-step workflow. First, the artifact workspace in Fig.~\ref{fig:tool-workspace} imports individual files or bundled examples and organizes related artifacts into process groups. Previews expose event-log variants, process-tree structure, or Petri-net topology before inference. The workspace register then makes modality, size, activity count, encoding state, decoding state, and validation state visible in one place. Canonical-label mappings and preprocessing diagnostics remain available for audit, and the complete workspace can be exported as a machine-readable archive.
+The browser interface turns the model pipeline into an inspectable three-step workflow. First, the artifact workspace in Fig.~\ref{fig:tool-workspace} imports individual files or bundled examples and organizes related artifacts into process groups. Previews expose event log variants, process tree structure, or Petri net topology before inference. The workspace register then makes modality, size, activity count, encoding state, decoding state, and validation state visible in one place. Canonical-label mappings and preprocessing diagnostics remain available for audit, and the complete workspace can be exported as a machine-readable archive.
 
 \begin{figure}[H]
 \centering
@@ -146,7 +147,7 @@ The browser interface turns the model pipeline into an inspectable three-step wo
 \label{fig:tool-workspace}
 \end{figure}
 
-Second, the translation studio decodes either one artifact embedding or an equal-weight fusion of several selected embeddings. It exposes the token budget, source-activity constraint, and repeated-label policy, and it displays the grammar mask as the prefix is generated. Crucially, the result view in Fig.~\ref{fig:tool-translation} reports separate gates for end-of-sequence emission, grammar closure, operator arity, vocabulary, Petri-net convertibility, source-alphabet compliance, repeated labels, and length. This makes the distinction between syntactic validity and behavioral fidelity operational: users can inspect the restored-label tree, the deterministically derived Petri net, and source-versus-output comparisons instead of interpreting a successful parse as evidence of behavioral agreement. Outputs can be exported as PTML, a JSON validation report, derived PNML, or a simulated XES log.
+Second, the translation studio decodes either one artifact embedding or an equal-weight fusion of several selected embeddings. It exposes the token budget, source-activity constraint, and repeated-label policy, and it displays the grammar mask as the prefix is generated. Crucially, the result view in Fig.~\ref{fig:tool-translation} reports separate gates for end-of-sequence emission, grammar closure, operator arity, vocabulary, Petri net convertibility, source-alphabet compliance, repeated labels, and length. This makes the distinction between syntactic validity and behavioral fidelity operational: users can inspect the restored-label process tree, the deterministically derived Petri net, and source-versus-output comparisons instead of interpreting a successful parse as evidence of behavioral agreement. Outputs can be exported as PTML, a JSON validation report, derived PNML, or a simulated XES event log.
 
 \begin{figure}[H]
 \centering
@@ -167,7 +168,7 @@ Third, the latent explorer in Fig.~\ref{fig:tool-latent} supports the representa
 \FloatBarrier
 \subsection{Programmatic reproduction}
 
-The command-line layer supports corpus generation, checkpoint training and evaluation, embedding export, and direct translation to PTML. External labels are canonicalized internally and restored after decoding whenever the source mapping is unambiguous. The corpus manifest, checkpoint provenance, machine-readable synthetic results, and real-log result record accompany the manuscript source. The principal reproduction commands are:
+The command-line layer supports corpus generation, checkpoint training and evaluation, embedding export, and direct translation to PTML. External labels are canonicalized internally and restored after decoding whenever the source mapping is unambiguous. The corpus manifest, checkpoint provenance, machine-readable synthetic results, and real event log result record accompany the manuscript source. The principal reproduction commands are:
 
 \begin{lstlisting}[basicstyle=\ttfamily\footnotesize,frame=single,breaklines=true]
 ./sample.py --data-dir data --train-families 4096 \
@@ -187,9 +188,9 @@ python paper/generate_real_log_evaluation.py \
   --checkpoint checkpoints/proc_rosetta.best.pt
 \end{lstlisting}
 
-The training command sets a maximum horizon of 100 epochs. The reported run stopped after 17 completed epochs under the configured stopping policy, and epoch~11 was retained as the selected eligible checkpoint. In the test command, \texttt{--curriculum complex} selects only the complex test corpus; the simple and medium commands are run separately to produce the other result columns.
+The training command sets a maximum horizon of 100 epochs. The reported run stopped after 17 completed epochs under the configured stopping policy, and epoch~11 was retained as the selected eligible checkpoint. In the test command, \texttt{-{}-curriculum complex} selects only the complex test corpus; the simple and medium commands are run separately to produce the other result columns.
 
-The last command repeats both duplicate-label policies on the fixed real-log samples, fits the Inductive Miner baselines, writes \texttt{real\_log\_evaluation.json}, and regenerates Fig.~\ref{M-fig:real-log-tree} as TikZ from PM4Py and Graphviz layout data. It does not create a PDF or raster asset. The repository README documents environment setup, the hosted and local browser interfaces, the trust boundary for checkpoints, and further import and export commands.
+The last command repeats both duplicate-label policies on the fixed real event log samples, fits the Inductive Miner baselines, writes \texttt{real\_log\_evaluation.json}, and regenerates Fig.~\ref{M-fig:real-log-tree} as TikZ from PM4Py and Graphviz layout data. It does not create a PDF or raster asset. The repository README documents environment setup, the hosted and local browser interfaces, the trust boundary for checkpoints, and further import and export commands.
 
 \FloatBarrier
 
@@ -207,8 +208,8 @@ Table~\ref{tab:loss-weights} resolves the conceptual objective groups in Section
 \toprule
 Term & Weight & Term & Weight \\
 \midrule
-Tree reconstruction & 1.00 & Event-log reconstruction & 1.00 \\
-Petri-net reconstruction & 1.00 & Fused reconstruction & 1.00 \\
+Process tree reconstruction & 1.00 & Event log reconstruction & 1.00 \\
+Petri net reconstruction & 1.00 & Fused reconstruction & 1.00 \\
 Fused subset reconstruction & 0.25 & Constrained reconstruction & 0.25 \\
 Exact cross-artifact contrast & 0.30 & Within-type contrast & 0.25 \\
 Semantic exact contrast & 0.15 & Cross-batch memory contrast & 0.10 \\
@@ -217,8 +218,8 @@ Soft behavioral geometry & 0.25 & Observed-distance regression & 0.20 \\
 Observed-distance ranking & 0.20 & Latent alignment & 0.075 \\
 Beam minimum-risk & 0.05 & Variance regularization & 0.10 \\
 Covariance regularization & 0.01 & EOS / length / slots / completion & 0.05 each \\
-Tree-complexity penalty & 0 & Duplicate-activity penalty & 0 \\
-Kullback--Leibler & 0 & -- & -- \\
+Process tree complexity penalty & 0 & Duplicate-activity penalty & 0 \\
+Kullback-Leibler & 0 & & \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -258,15 +259,16 @@ Epoch & Training loss & Validation loss & Selection score & Eligible & Learning 
 
 \section{Running Example and Complete Serializations}\label{sec:supp-running}
 
-The external running example demonstrates that the released interface can ingest all three supported file types and return process-tree output. It is a software-level illustration rather than an additional quantitative evaluation. Table~\ref{tab:running} summarizes the translations. Petri-net input produces the closest tree, but even direct process-tree reconstruction changes routing.
+The external running example demonstrates that the released interface can ingest all three supported file types and return process tree output. It is a software-level illustration rather than an additional quantitative evaluation. Table~\ref{tab:running} summarizes the translations. Petri net input produces the closest process tree, but even direct process tree reconstruction changes routing.
 
 \begin{table}[H]
 \centering
-\caption{Running-example translation. Conformance compares each decoded process model with the source event log; lower tree edit and higher conformance indicate better agreement.}
+\caption{Running-example translation. Conformance checking compares each decoded process model with the source event log; lower process tree edit and higher fitness, precision, and F1 indicate better agreement.}
 \label{tab:running}
+\setlength{\tabcolsep}{4pt}
 \begin{tabular}{@{}lrrrrrr@{}}
 \toprule
-Input & Output size & Depth & Tree edit $\downarrow$ & Fitness & Precision & F1 \\
+Input & Output size & Depth & Process tree edit $\downarrow$ & Fitness & Precision & F1 \\
 \midrule
 Source reference & 14 & 6 & 0.000 & 1.000 & 1.000 & 1.000 \\
 Process tree & 16 & 6 & 0.360 & 0.474 & 0.360 & 0.409 \\
@@ -276,7 +278,7 @@ Petri net & 14 & 5 & \best{0.182} & \best{0.860} & \best{0.700} & \best{0.772} \
 \end{tabular}
 \end{table}
 
-Figure~\ref{fig:running-example} compares the loop fragments of the source tree and the best decoded tree. The decoded version moves the decision and reinitiation sequence from the loop body/redo boundary. Section~\ref{app:serialized-example} gives the complete folded prefix forms for auditability.
+Figure~\ref{fig:running-example} compares the loop fragments of the source process tree and the best decoded process tree. The decoded version moves the decision and reinitiation sequence from the loop body/redo boundary. Section~\ref{app:serialized-example} gives the complete folded prefix forms for auditability.
 
 \input{figures/running-example}
 
@@ -286,21 +288,21 @@ Figure~\ref{fig:running-example} compares the loop fragments of the source tree 
 
 The complete folded prefix forms underlying Table~\ref{tab:running} and Fig.~\ref{fig:running-example} are listed below.
 
-\paragraph{Source tree.}
+\paragraph{Source process tree.}
 \begin{quote}\ttfamily\small\raggedright
 SEQ(register request, LOOP(SEQ(AND(check ticket,
 XOR(examine thoroughly, examine casually)), decide),
 reinitiate request), XOR(reject request, pay compensation)).
 \end{quote}
 
-\paragraph{Decoded from process-tree input.}
+\paragraph{Decoded from process tree input.}
 \begin{quote}\ttfamily\small\raggedright
 SEQ(register request, LOOP(AND(examine casually,
 XOR(decide, AND(examine thoroughly, reinitiate request))),
 SEQ(pay compensation, reject request)), XOR(tau, check ticket)).
 \end{quote}
 
-\paragraph{Decoded from event-log input.}
+\paragraph{Decoded from event log input.}
 \begin{quote}\ttfamily\small\raggedright
 SEQ(register request, XOR(examine casually,
 AND(check ticket, decide, reinitiate request,
@@ -308,7 +310,7 @@ LOOP(examine thoroughly, pay compensation))),
 XOR(tau, reject request)).
 \end{quote}
 
-\paragraph{Decoded from Petri-net input.}
+\paragraph{Decoded from Petri net input.}
 \begin{quote}\ttfamily\small\raggedright
 SEQ(register request, LOOP(AND(check ticket,
 XOR(examine thoroughly, examine casually)),

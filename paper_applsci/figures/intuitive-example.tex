@@ -50,7 +50,7 @@
 
 \node[task,fill=prlightgold] (shared) at (5.4,-3.2) {shared semantic\\representation};
 \node[task,fill=prlightteal] (retrieve) at (9.4,-3.2) {cross-artifact\\retrieval};
-\node[task,fill=prlightred] (translate) at (1.4,-3.2) {process-tree\\translation};
+\node[task,fill=prlightred] (translate) at (1.4,-3.2) {process tree\\translation};
 \draw[flow] (logpanel.south) -- (shared.north west);
 \draw[flow] (treepanel.south) -- (shared.north);
 \draw[flow] (netpanel.south) -- (shared.north east);
@@ -58,6 +58,6 @@
 \draw[flow] (shared) -- (translate);
 \end{tikzpicture}%
 }
-\caption{One process expressed as an event log, a process tree, and a Petri net. The shared representation supports retrieval and translation, but the finite log does not uniquely determine the underlying model.}
+\caption{One process expressed as an event log, a process tree, and a Petri net. The shared representation supports retrieval and translation, but the finite event log does not uniquely determine the underlying model.}
 \label{fig:intuitive-example}
 \end{figure}

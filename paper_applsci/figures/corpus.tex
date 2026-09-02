@@ -15,11 +15,11 @@
 \node[tag,above=1mm of models] {construct};
 
 \node[stage,fill=prlightteal] (observe) at (8.8,0)
-  {relation evidence\\and two log observations\\$L^{(u)},L^{(r)}$};
+  {relation evidence\\and two event log observations\\$L^{(u)},L^{(r)}$};
 \node[tag,above=1mm of observe] {relate and observe};
 
 \node[stage,fill=prlightred,minimum width=38mm] (rows) at (13.5,0)
-  {canonicalize labels\\pair models with logs\\\textbf{one family $\rightarrow$ four rows}};
+  {canonicalize labels\\pair models with event logs\\\textbf{one family $\rightarrow$ four rows}};
 \node[tag,above=1mm of rows] {align};
 
 \draw[flow] (generate)--(models);
@@ -27,6 +27,6 @@
 \draw[flow] (observe)--(rows);
 \end{tikzpicture}%
 }
-\caption{Behavior-family construction in four stages. Family membership is established before row expansion, so both model realizations and both log observations remain in the same data split.}
+\caption{Behavior-family construction in four stages. Family membership is established before row expansion, so both model realizations and both event log observations remain in the same data split.}
 \label{fig:corpus}
 \end{figure}
