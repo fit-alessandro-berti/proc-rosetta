@@ -602,50 +602,64 @@ Total & & 6,263,248 & six 192-dimensional memory tokens; 96-dimensional semantic
 
 \subsection{Grammar-Constrained Candidate Decoder and Structural Guarantees}\label{sec:decoder-guarantees}
 
-The shared decoder predicts process tree structure, operator arity, and visible activities. Its copy component can reuse activities represented in source memory. During generation, a small automaton tracks open child slots and masks illegal tokens. End-of-sequence is available only when every slot is filled; if the search budget is exhausted, deterministic completion closes the remaining slots.
+Candidate generation is useful only if its output is a valid process model. An ordinary token decoder does not provide this guarantee. It may stop while an operator is still missing a child, produce an activity when an operator arity is required, or otherwise return a token sequence that cannot be parsed as a process tree. Rejecting such sequences only after decoding would waste search effort and could leave the analyst without any usable candidate. The decoder therefore applies the process tree grammar while it generates the sequence.
 
-The constrained procedure guarantees three structural properties: the prefix closes all required child slots, only permitted activity labels are emitted, and the resulting process tree can be parsed and converted to a Petri net. The decoder must still learn every behaviorally important choice: which operator to select, where to place each activity, how large the process tree should be, and whether the resulting process model reproduces the source behavior. Grammar validity therefore removes malformed outputs but does not solve process reconstruction. The evaluated synthetic policy restricts activities to the source alphabet and suppresses repeated visible labels. Because repeated labels can be legitimate, the external event log cases also evaluate the same source representation with that mask disabled.
+The need for this constraint is easiest to see in prefix notation. After the decoder emits a two-child sequence operator, it must generate exactly two complete child subtrees before it may close that part of the expression. Ending after the first child would produce an incomplete tree. Conversely, once all required children have been supplied, another child cannot be added to that operator. These requirements are determined by the grammar, so they need not be learned from examples.
+
+To enforce them, the shared decoder works together with a small grammar controller. The neural decoder proposes the process tree structure, operator arities, and visible activities; its copy component can reuse activities stored in the source memory. At every step, the controller records whether an arity is expected and how many child positions remain open. It then masks every token that is illegal in the current state. End-of-sequence becomes available only when no child position remains open. If ordinary search reaches its budget first, a deterministic completion rule fills the outstanding positions and closes the expression, provided that the completion budget is sufficient.
+
+Two additional masks control visible activities. The \emph{source-alphabet mask} prevents the decoder from introducing an activity that is absent from the permitted source alphabet. In the synthetic evaluation, a separate policy also suppresses repeated visible labels. Repeated labels can be legitimate in real processes, so the external event log cases are evaluated both with and without that repeated-label restriction.
+
+These constraints have a deliberately limited purpose. They ensure that a completed output is well formed, uses only permitted activities when the corresponding mask is enabled, and can be converted from a process tree to a Petri net. They do not tell the decoder which valid tree best represents the source. The decoder must still learn the appropriate operators, activity positions, tree size, and control-flow behavior. A grammar-valid candidate can therefore be behaviorally wrong. The following propositions state precisely what is and is not guaranteed.
 
 \begin{Proposition}[Grammar-mask validity]
 Let $p$ be a decoder prefix whose maintained grammar state is valid. If the next token is selected only from the mask induced by that state, then the extended prefix does not violate the arity and token-type rules in Eq.~\eqref{eq:grammar}.
 \end{Proposition}
 \begin{proof}[Proof sketch]
-The automaton state records whether an operator requires an arity and how many child slots remain open. Each mask admits exactly the token classes allowed by that state. The claim follows by induction on prefix length.
+The controller records the token type expected next and the number of open child positions. Its mask admits exactly the tokens allowed in that state. Therefore, adding an admitted token preserves validity. Repeating this argument for each decoding step proves the claim.
 \end{proof}
 
 \begin{Proposition}[Deterministic completion]
 Assume a valid prefix, at least one permitted terminal token, and a completion budget sufficient to fill every open slot and emit end-of-sequence. The deterministic completion rule returns a closed expression in the grammar.
 \end{Proposition}
 \begin{proof}[Proof sketch]
-Each completion step fills a pending arity or decreases the number of open child slots; no step introduces a new unfinished operator. The non-negative slot count therefore reaches zero after finitely many steps, after which end-of-sequence is legal.
+The completion rule first supplies any pending arity and then fills open child positions without introducing another unfinished operator. Each such step reduces the remaining work. Because the completion budget is assumed to be sufficient, the number of open positions eventually reaches zero and end-of-sequence becomes legal.
 \end{proof}
 
 \begin{Proposition}[Source-alphabet restriction]
 When the source-alphabet mask is enabled, every visible activity in a completed output belongs to the permitted source alphabet.
 \end{Proposition}
 \begin{proof}[Proof sketch]
-All activity tokens outside the permitted set receive zero admissibility at every decoding step. Structural tokens and $\tauact$ do not introduce a visible activity.
+Every activity token outside the permitted alphabet is masked at every step. The remaining structural tokens and $\tauact$ introduce no visible activity. Hence every visible activity in the completed output belongs to the permitted alphabet.
 \end{proof}
 
 \begin{Proposition}[Structural guarantees do not imply behavioral equivalence]
 Grammar validity, source-alphabet compliance, and process tree-to-Petri net convertibility do not jointly imply visible-language or partial-order equivalence to the source.
 \end{Proposition}
 \begin{proof}[Proof sketch]
-For permitted activities $A$ and $B$, both $\mathsf{SEQ}(A,B)$ and $\mathsf{XOR}(A,B)$ are grammar-valid, alphabet-compliant, block-structured, and convertible, but they have different visible languages. Likewise, a parallel composition and an explicit choice between its serializations can share complete visible traces while differing in partial-order semantics.
+For permitted activities $A$ and $B$, both $\mathsf{SEQ}(A,B)$ and $\mathsf{XOR}(A,B)$ are valid, alphabet-compliant, and convertible. However, the first requires both activities in order, while the second chooses one of them, so their visible languages differ. Similarly, a parallel composition and a choice between its serial orders can agree on complete visible traces while representing different partial-order behavior.
 \end{proof}
 
 \begin{Proposition}[Representational convertibility]
 Every completed expression accepted by the grammar in Eq.~\eqref{eq:grammar} denotes a block-structured process tree and therefore admits the standard process tree to Petri net construction used by the implementation.
 \end{Proposition}
 \begin{proof}[Proof sketch]
-The grammar permits only activity or silent leaves and the sequence, exclusive-choice, parallel, and two-child loop constructors. The standard construction supplies a Petri net fragment for each leaf and composes fragments recursively for each constructor \cite{vanDerAalst2016}. This establishes representational conversion; it does not compare the resulting Petri net with a source artifact.
+The grammar contains only visible or silent leaves and the sequence, exclusive-choice, parallel, and two-child loop constructors. The standard conversion creates a Petri net fragment for each leaf and recursively combines those fragments for each constructor \cite{vanDerAalst2016}. It therefore converts every completed grammar expression. This result concerns convertibility only; it does not establish agreement with the source artifact.
 \end{proof}
 
-Thus the guarantees are syntactic and representational. Sound Petri net conversion follows from the block-structured process tree formalism used by the implementation, whereas behavioral fidelity remains an empirical claim evaluated separately.
+In summary, grammar masking prevents malformed prefixes, deterministic completion can close an unfinished valid prefix under the stated assumptions, and the resulting block-structured process tree supports the standard sound Petri net conversion. These are \emph{structural guarantees}. Whether the candidate reproduces the behavior of its source is a separate empirical question, evaluated with the behavioral measures described in Section~\ref{sec:setting}.
 
 \subsection{Computational Cost}\label{sec:complexity}
 
-Let $E_L$ be the number of presented events in an event log, $R$ the number of presented traces, $n_T$ the number of process tree tokens, $V_N$ and $E_N$ the Petri net node and arc counts, $d$ the hidden dimension, $k$ the message-passing steps, $M$ the repository size, $B$ the beam width, and $G$ the generated length. Ignoring fixed layer counts, the recurrent event log path costs $O(E_Ld^2)$ plus set aggregation over $R$ traces; full attention in the process tree encoder costs $O(n_T^2d)$; and the graph encoder costs $O(k(V_Nd^2+E_Nd))$. Exact cosine search over a materialized candidate collection costs $O(Md)$ per query and $O(Md)$ storage; approximate indexing could alter this trade-off but is not evaluated here. Beam decoding costs $O(BG)$ decoder steps, each including attention to the fixed source memory and a vocabulary projection. The selected checkpoint contains 6,263,248 parameters. The experimental protocol does not include wall-clock or memory measurements, so the paper makes no empirical scalability claim beyond these analytical costs and the parameter count.
+Computational cost matters because the system performs three different operations: it encodes process artifacts, searches a repository of stored representations, and generates process tree candidates. These operations scale with different properties of the input. The following analysis therefore describes them separately. It gives asymptotic costs, which explain how the required work grows, rather than measured execution times.
+
+\emph{Encoding cost} depends on the structure of the source artifact. Let $d_h$ denote the encoder hidden dimension. For an event log containing $E_L$ presented events in $R$ traces, the recurrent trace encoder costs $O(E_Ld_h^2)$, followed by set aggregation over the $R$ trace representations. For a process tree containing $n_T$ tokens, the full-attention term costs $O(n_T^2d_h)$ because every token can attend to every other token. For a Petri net with $V_N$ nodes and $E_N$ arcs, $k$ message-passing steps cost $O\!\left(k(V_Nd_h^2+E_Nd_h)\right)$. These expressions ignore fixed numbers of encoder layers.
+
+\emph{Retrieval cost} is incurred after the repository artifacts have been encoded and their semantic vectors have been stored. Let $M$ be the number of stored artifacts and $d_z$ the semantic-vector dimension. An exact query compares the query vector with all $M$ stored vectors, requiring $O(Md_z)$ work and $O(Md_z)$ storage for the collection. An approximate index could reduce query time at the cost of additional approximation and index-management choices, but approximate retrieval is not evaluated in this study.
+
+\emph{Generation cost} depends mainly on how many candidate prefixes the decoder explores and how long they become. With beam width $B$ and generated length $G$, beam search performs $O(BG)$ decoder steps. Each step also attends to the fixed source memory and computes a projection over the output vocabulary. The grammar mask restricts the legal choices but does not remove these decoder operations.
+
+The selected checkpoint contains 6,263,248 trainable parameters. This number describes model size, not observed speed. The experimental protocol does not measure encoding latency, repository query time, decoding latency, or peak memory. Consequently, the study reports the analytical costs above but makes no empirical scalability claim.
 
 \subsection{Training objectives}\label{sec:training}
 
