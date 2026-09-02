@@ -401,4 +401,218 @@
   \source{ProcRosetta paper, discussion and conclusion.}
 \end{frame}
 
+% =============================================================================
+% Appendix: ordered by relevance for likely technical questions.
+\appendix
+
+% -----------------------------------------------------------------------------
+\begin{frame}[t]{A1. Generation fidelity by source}
+  \vspace{2mm}
+  \centering
+  \scriptsize
+  \renewcommand{\arraystretch}{1.03}
+  \setlength{\tabcolsep}{3.4pt}
+  \begin{tabular}{@{}llrrrr@{}}
+    \toprule
+    Level & Source & Evaluable & Exact & $d_B$ $\downarrow$ & Tree edit $\downarrow$ \\
+    \midrule
+    \multirow{4}{*}{\texttt{simple}}
+      & Process tree & 100.0\% & 34.4\% & .861 & .509 \\
+      & Event log    & 100.0\% & 0.0\%  & 1.169 & .519 \\
+      & Petri net    & 100.0\% & 12.5\% & 1.094 & .661 \\
+      & Fusion       & 100.0\% & 3.1\%  & 1.148 & .589 \\
+    \midrule
+    \multirow{4}{*}{\texttt{medium}}
+      & Process tree & 100.0\% & 28.1\% & .950 & .549 \\
+      & Event log    & 96.9\%  & 0.0\%  & 1.246 & .553 \\
+      & Petri net    & 100.0\% & 6.2\%  & 1.130 & .645 \\
+      & Fusion       & 100.0\% & 0.0\%  & 1.222 & .668 \\
+    \midrule
+    \multirow{4}{*}{\texttt{complex}}
+      & Process tree & 100.0\% & 15.6\% & 1.105 & .645 \\
+      & Event log    & 100.0\% & 0.0\%  & 1.291 & .562 \\
+      & Petri net    & 100.0\% & 6.2\%  & 1.245 & .673 \\
+      & Fusion       & 93.8\%  & 0.0\%  & 1.273 & .676 \\
+    \bottomrule
+  \end{tabular}
+  \source{ProcRosetta paper, candidate-generation results; 16 families per level.}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+\begin{frame}[t]{A2. Cross-artifact neighborhoods}
+  \vspace{-2mm}
+  \paperfigure{figures/pca}
+  \vspace{-1mm}
+  \centering\small Each triangle connects the log, Petri net, and tree of one behavior family.
+  \source{ProcRosetta paper, PCA of 12 complex families; retrieval uses the full 96D vectors.}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+\begin{frame}[t]{A3. Same-family variants stay nearest}
+  \vspace{2mm}
+  \centering
+  \scriptsize
+  \renewcommand{\arraystretch}{1.03}
+  \setlength{\tabcolsep}{4.2pt}
+  \begin{tabular}{@{}llrrrr@{}}
+    \toprule
+    Level & Encoder & Within & Between & Margin & Recall@1 \\
+    \midrule
+    \multirow{4}{*}{\texttt{simple}} & Fusion & .995 & .227 & .223 & 1.000 \\
+      & Petri net & .985 & .220 & .230 & 1.000 \\
+      & Event log & .985 & .316 & .137 & 1.000 \\
+      & Process tree & .999 & .163 & .323 & 1.000 \\
+    \midrule
+    \multirow{4}{*}{\texttt{medium}} & Fusion & .993 & .155 & .287 & 1.000 \\
+      & Petri net & .985 & .151 & .298 & 1.000 \\
+      & Event log & .976 & .260 & .156 & 1.000 \\
+      & Process tree & .999 & .118 & .370 & 1.000 \\
+    \midrule
+    \multirow{4}{*}{\texttt{complex}} & Fusion & .995 & .101 & .291 & 1.000 \\
+      & Petri net & .985 & .103 & .326 & 1.000 \\
+      & Event log & .982 & .221 & .182 & 1.000 \\
+      & Process tree & .999 & .065 & .372 & 1.000 \\
+    \bottomrule
+  \end{tabular}
+  \source{ProcRosetta paper, within-artifact stability table; fixed 48-family subset.}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+\begin{frame}[t]{A4. External-log underfitting}
+  \vspace{0mm}
+  \keyline{Repeated-label policy does not change either result.}
+  \vspace{2mm}
+  \centering
+  \scriptsize
+  \renewcommand{\arraystretch}{1.10}
+  \setlength{\tabcolsep}{3.5pt}
+  \begin{tabular}{@{}llrrrrr@{}}
+    \toprule
+    Event log & Method & Size & Repeat & Fitness & Precision & F1 \\
+    \midrule
+    \multirow{3}{*}{Receipt}
+      & \model, duplicates allowed & 9 & 0 & .508 & .500 & .504 \\
+      & \model, duplicates disallowed & 9 & 0 & .508 & .500 & .504 \\
+      & Inductive Miner & 47 & 0 & 1.000 & .462 & \best{.632} \\
+    \midrule
+    \multirow{3}{*}{Road traffic}
+      & \model, duplicates allowed & 11 & 0 & .661 & .391 & .491 \\
+      & \model, duplicates disallowed & 11 & 0 & .661 & .391 & .491 \\
+      & Inductive Miner & 29 & 0 & 1.000 & .621 & \best{.766} \\
+    \bottomrule
+  \end{tabular}
+  \par\vspace{1mm}
+  \begin{columns}[c,onlytextwidth]
+    \column{0.48\textwidth}
+      {\fontsize{21}{24}\selectfont\bfseries\color{prred}6 / 27}\par
+      \small receipt activities retained
+    \column{0.48\textwidth}
+      {\fontsize{21}{24}\selectfont\bfseries\color{prgold}8 / 10}\par
+      \small road-traffic activities retained
+  \end{columns}
+  \source{ProcRosetta paper, external event-log stress-test table.}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+\begin{frame}[t]{A5. The road-traffic candidate is compact}
+  \vspace{-2mm}
+  \paperfigure{figures/real-log-tree}
+  \vspace{-2mm}
+  \centering\small The decoded tree retains 8 of 10 activities and compresses several behaviors.
+  \source{ProcRosetta paper, road-traffic process tree decoded by ProcRosetta.}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+\begin{frame}[t]{A6. Ordinary-family decoding}
+  \vspace{0mm}
+  \keyline{Controlled motifs stay small; ordinary targets become larger and deeper.}
+  \vspace{3mm}
+  \centering
+  \footnotesize
+  \renewcommand{\arraystretch}{1.16}
+  \setlength{\tabcolsep}{4.5pt}
+  \begin{tabular}{@{}lccc@{}}
+    \toprule
+    Family type & \texttt{simple} & \texttt{medium} & \texttt{complex} \\
+    \midrule
+    Duplicate prefix & 1.136 / .546 & 1.187 / .546 & 1.165 / .546 \\
+    Concurrency / interleaving & 1.087 / .491 & 1.081 / .491 & 1.063 / .491 \\
+    M-pattern & 1.175 / .378 & 1.170 / .378 & 1.130 / .378 \\
+    \textbf{Ordinary} & \textbf{1.224 / .662} & \textbf{1.580 / .798} & \textbf{1.715 / .832} \\
+    \bottomrule
+  \end{tabular}
+  \par\vspace{4mm}
+  \small Each cell is behavior distance $d_B$ / normalized tree-edit distance; lower is better.
+  \source{ProcRosetta paper, event-log decoding by family type; 16 families per level.}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+\begin{frame}[t]{A7. Native encoders by artifact}
+  \vspace{1mm}
+  \centering
+  \small
+  \renewcommand{\arraystretch}{1.20}
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{@{}>{\bfseries}l
+                      >{\raggedright\arraybackslash}p{0.43\textwidth}
+                      >{\raggedright\arraybackslash}p{0.28\textwidth}@{}}
+    \toprule
+    Artifact & Required bias & Encoder \\
+    \midrule
+    Process tree & hierarchy, token order, depth, parent relations & Prefix Transformer \\
+    Event log & order within traces; invariance to trace presentation & Bidirectional GRU + set attention \\
+    Petri net & typed directed graph, labels, and markings & Edge-aware message passing \\
+    \bottomrule
+  \end{tabular}
+  \vspace{7mm}
+  \begin{columns}[c,onlytextwidth]
+    \column{0.33\textwidth}
+      {\fontsize{22}{25}\selectfont\bfseries\color{prblue}6.26M}\par
+      \small parameters
+    \column{0.33\textwidth}
+      {\fontsize{22}{25}\selectfont\bfseries\color{prteal}96D}\par
+      \small semantic vector
+    \column{0.33\textwidth}
+      {\fontsize{22}{25}\selectfont\bfseries\color{prgold}6 $\times$ 192D}\par
+      \small memory tokens
+  \end{columns}
+  \source{ProcRosetta paper, encoder rationale and selected-checkpoint architecture tables.}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+\begin{frame}[t]{A8. Benchmark generation bounds}
+  \vspace{2mm}
+  \centering
+  \footnotesize
+  \renewcommand{\arraystretch}{1.18}
+  \setlength{\tabcolsep}{5pt}
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    Profile & Recursion cap & Min. depth & Folded nodes & Visible labels \\
+    \midrule
+    \texttt{simple} & 3 & 2 & 5--11 & 3--6 \\
+    \texttt{medium} & 5 & 3 & 12--19 & 5--14 \\
+    \texttt{complex} & 7 & 4 & 20--80 & 8--28 \\
+    \bottomrule
+  \end{tabular}
+  \vspace{3mm}
+  \begin{columns}[c,onlytextwidth]
+    \column{0.25\textwidth}
+      {\fontsize{19}{22}\selectfont\bfseries\color{prblue}30}\par
+      \small activity labels
+    \column{0.25\textwidth}
+      {\fontsize{19}{22}\selectfont\bfseries\color{prteal}2 $\times$ 128}\par
+      \small log observations $\times$ traces
+    \column{0.25\textwidth}
+      {\fontsize{19}{22}\selectfont\bfseries\color{prgold}75\%}\par
+      \small ordinary families
+    \column{0.25\textwidth}
+      {\fontsize{19}{22}\selectfont\bfseries\color{prred}13}\par
+      \small global seed
+  \end{columns}
+  \vspace{2mm}
+  \small Controlled motifs are generated separately in randomized contexts of 4--12 nodes.
+  \source{ProcRosetta paper, generator configuration table.}
+\end{frame}
+
 \end{document}
