@@ -144,8 +144,9 @@ Table~\ref{tab:related-positioning} uses only capabilities explicitly establishe
 
 \begin{table*}[!t]
 \caption{Comparison with the closest verified publications. EL: event log; PT: process tree; PN: Petri net.\label{tab:related-positioning}}
-\begin{adjustwidth}{-\extralength}{0cm}
+\centering
 \scriptsize
+\resizebox{\textwidth}{!}{%
 \begin{tabularx}{\fulllength}{@{}Q{0.17\fulllength}Q{0.12\fulllength}YYYYYYY@{}}
 \toprule
 Work & Artifacts & Shared space & Behavioral supervision & Cross-artifact retrieval & Generation & Formal output constraint & External data & Open implementation \\
@@ -158,8 +159,8 @@ van Zelst and Leemans \cite{vanZelst2020NetToTree} & PN, PT & No & Formal langua
 Sommers et al. \cite{Sommers2023} & EL, PN & No & Training examples & No & Process discovery & Sound PN output & Yes & Yes \\
 This work & EL, PT, PN & Yes & Visible-language and partial-order relations & Yes & PT proposal & Syntax and convertibility only & Stress test & Yes \\
 \bottomrule
-\end{tabularx}
-\end{adjustwidth}
+\end{tabularx}%
+}
 \end{table*}
 
 Formal similarity, exact transformation, learned retrieval, and process discovery each address part of the broader problem. \model contributes their cross-artifact combination: native encoding of event logs, process trees, and Petri nets; relation-aware supervision of a common retrieval space; and an auxiliary constrained process tree proposer. It neither defines a new universal equivalence relation nor guarantees behavioral preservation.
