@@ -935,9 +935,49 @@ Figure~\ref{fig:running-example} compares the loop fragments of the source tree 
 \input{figures/running-example}
 
 \FloatBarrier
-\section{Reproducibility and software use}\label{sec:reproduction}
+\section{Reference implementation and interactive tool}\label{sec:reproduction}
 
-The released software supports three workflows. It encodes XES event logs, PTML process trees, and PNML Petri nets into the shared representation. It retrieves artifacts using cosine similarity and translates supported inputs into PTML. It also fuses available semantic vectors and exports validation reports. External labels are canonicalized internally and restored after decoding. The corpus manifest, checkpoint provenance, machine-readable synthetic results, and real-log result record accompany the manuscript source.
+\subsection{Implementation and access}
+
+The open-source reference implementation is available in the public \href{https://github.com/fit-alessandro-berti/proc-rosetta}{ProcRosetta repository}, and a public, installation-free deployment of the interactive tool is available at \href{https://rosetta-pm.app}{rosetta-pm.app}. The Python implementation separates artifact I/O and preprocessing, modality-specific encoding, constrained decoding, behavioral evaluation, and presentation. Both the command-line utilities and the browser application call the same inference services and load the same serialized model format; the web application is therefore an inspection and execution layer over the evaluated implementation rather than a separate demonstration model.
+
+The tool accepts XES event logs, PTML process trees, and PNML Petri nets. On import it parses and validates the source, records preprocessing warnings, constructs a first-seen canonical activity map, checks the checkpoint's vocabulary and size limits, and computes the modality-specific representation. The session workspace retains the source artifact, its canonical map, the checkpoint-specific embedding, and any subsequent decoding result. Content- and configuration-derived cache keys avoid recomputation while preventing embeddings or decodes produced under a different checkpoint or decoding policy from being silently reused.
+
+For local deployment, the Streamlit front end can be started directly or through the supplied Docker Compose configuration. The container runs as an unprivileged user behind an NGINX reverse proxy. Checkpoints are selected only from a server-controlled directory because PyTorch checkpoint files must be treated as trusted executable content; the browser does not accept arbitrary checkpoint uploads. The evaluated checkpoint and the generated corpora are also provided as downloadable archives.\footnote{Evaluated checkpoint archive: \url{https://www.alessandroberti.it/checkpoint_rosetta_latest.tar.gz}}\footnote{Generated-data archive: \url{https://www.alessandroberti.it/data_rosetta_latest.tar.gz}}
+
+\subsection{Interactive workflow}
+
+The browser interface turns the model pipeline into an inspectable three-step workflow. First, the artifact workspace in Fig.~\ref{fig:tool-workspace} imports individual files or bundled examples and organizes related artifacts into process groups. Previews expose event-log variants, process-tree structure, or Petri-net topology before inference. The workspace register then makes modality, size, activity count, encoding state, decoding state, and validation state visible in one place. Canonical-label mappings and preprocessing diagnostics remain available for audit, and the complete workspace can be exported as a machine-readable archive.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=\textwidth]{screenshots/rosetta-pm-artifact-workspace.png}
+\caption{Artifact workspace of the public \model interface. XES, PTML, and PNML files are parsed, canonicalized, and embedded with the active checkpoint, while a shared register exposes the state and provenance of every imported artifact.}
+\label{fig:tool-workspace}
+\end{figure*}
+
+Second, the translation studio decodes either one artifact embedding or an equal-weight fusion of several selected embeddings. It exposes the token budget, source-activity constraint, and repeated-label policy, and it displays the grammar mask as the prefix is generated. Crucially, the result view in Fig.~\ref{fig:tool-translation} reports separate gates for end-of-sequence emission, grammar closure, operator arity, vocabulary, Petri-net convertibility, source-alphabet compliance, repeated labels, and length. This makes the distinction between syntactic validity and behavioral fidelity operational: users can inspect the restored-label tree, the deterministically derived Petri net, and source-versus-output comparisons instead of interpreting a successful parse as evidence of behavioral agreement. Outputs can be exported as PTML, a JSON validation report, derived PNML, or a simulated XES log.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=\textwidth]{screenshots/rosetta-pm-translation-studio.png}
+\caption{Translation studio after a constrained decode. Independent validation badges state exactly which guarantees passed; the selected tab visualizes the restored-label process tree, while adjacent views retain the decoder trace, derived Petri net, and source comparison.}
+\label{fig:tool-translation}
+\end{figure*}
+
+Third, the latent explorer in Fig.~\ref{fig:tool-latent} supports the representation-level use case that performs most strongly in the evaluation. It provides pairwise cosine similarity, PCA projection, process-group agreement, nearest-neighbor inspection, per-dimension views, latent interpolation, and a checkpoint-specific reference gallery. Equal-weight group means can be shown alongside the individual modalities, and vectors can be exported as JSON, CSV, or NumPy arrays. These views are diagnostic aids for investigating neighborhoods and failure cases; in particular, the two-dimensional PCA display is not used as a substitute for the quantitative retrieval and geometry protocols in Section~\ref{sec:results}.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=\textwidth]{screenshots/rosetta-pm-latent-explorer.png}
+\caption{Latent-space explorer with a PCA projection of event logs, process trees, Petri nets, and equal-weight fused group means. Connecting artifacts assigned to the same process group makes cross-modal agreement and disagreement directly inspectable.}
+\label{fig:tool-latent}
+\end{figure*}
+
+\FloatBarrier
+\subsection{Programmatic reproduction}
+
+The command-line layer supports corpus generation, checkpoint training and evaluation, embedding export, and direct translation to PTML. External labels are canonicalized internally and restored after decoding whenever the source mapping is unambiguous. The corpus manifest, checkpoint provenance, machine-readable synthetic results, and real-log result record accompany the manuscript source. The principal reproduction commands are:
 
 \begin{lstlisting}[basicstyle=\ttfamily\footnotesize,frame=single,breaklines=true]
 ./sample.py --data-dir data --train-families 4096 \
@@ -959,7 +999,7 @@ python paper/generate_real_log_evaluation.py \
 
 The training command sets a maximum horizon of 100 epochs. The reported run stopped after 17 completed epochs under the configured stopping policy, and epoch~11 was retained as the selected eligible checkpoint. In the test command, \texttt{--curriculum complex} selects only the complex test corpus; the simple and medium commands are run separately to produce the other result columns.
 
-The last command repeats both duplicate-label policies on the fixed real-log samples, fits the Inductive Miner baselines, writes \texttt{real\_log\_evaluation.json}, and regenerates Fig.~\ref{fig:real-log-tree} as TikZ from PM4Py and Graphviz layout data. It does not create a PDF or raster asset. The repository README documents environment setup, the browser interface, and further export commands.
+The last command repeats both duplicate-label policies on the fixed real-log samples, fits the Inductive Miner baselines, writes \texttt{real\_log\_evaluation.json}, and regenerates Fig.~\ref{fig:real-log-tree} as TikZ from PM4Py and Graphviz layout data. It does not create a PDF or raster asset. The repository README documents environment setup, the hosted and local browser interfaces, the trust boundary for checkpoints, and further import and export commands.
 
 \FloatBarrier
 \section{Discussion}\label{sec:discussion}
@@ -1199,13 +1239,13 @@ Not applicable. No new human-subject data were collected. The external evaluatio
 Not applicable.
 
 \bmhead{Data availability}
-The deterministic corpus generator, generation command, validators, and evaluation code are available at \url{https://github.com/fit-alessandro-berti/proc-rosetta}. The manuscript sources include the recorded curriculum manifest and machine-readable synthetic and real-log result tables. The generated corpus is approximately 1.7 GB and can be reproduced from seed 13 with the settings in Sections~\ref{sec:generation} and~\ref{sec:data-specification}. The external logs are cited by their repository DOIs in Section~\ref{sec:real-log-design}.
+The deterministic corpus generator, generation command, validators, and evaluation code are available at \url{https://github.com/fit-alessandro-berti/proc-rosetta}. The manuscript sources include the recorded curriculum manifest and machine-readable synthetic and real-log result tables. A snapshot of the generated corpus is available at \url{https://www.alessandroberti.it/data_rosetta_latest.tar.gz}; it can also be reproduced from seed 13 with the settings in Sections~\ref{sec:generation} and~\ref{sec:data-specification}. The external logs are cited by their repository DOIs in Section~\ref{sec:real-log-design}.
 
 \bmhead{Materials availability}
 Not applicable beyond the software, reproducible synthetic data, and experimental artifacts described above.
 
 \bmhead{Code availability}
-Source code, command-line tools, the Streamlit inspection application, Docker configuration, tests, and reproduction instructions are available in the repository above. The evaluated revision, software environment, and model configuration are recorded in the accompanying checkpoint-provenance file.
+Source code, command-line tools, the Streamlit inspection application, Docker configuration, tests, and reproduction instructions are available in the repository above. The hosted interface is available at \url{https://rosetta-pm.app}, and the model checkpoint can be downloaded from \url{https://www.alessandroberti.it/checkpoint_rosetta_latest.tar.gz}. The evaluated revision, software environment, and model configuration are recorded in the accompanying checkpoint-provenance file.
 
 \bmhead{Author contributions}
 Alessandro Berti: conceptualization, methodology, software, data curation, investigation, formal analysis, visualization, and writing---original draft. Wil M. P. van der Aalst: conceptualization, methodology, supervision, validation, and writing---review and editing. Both authors approved the submitted version and accept responsibility for the work.
