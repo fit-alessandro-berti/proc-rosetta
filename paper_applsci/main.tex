@@ -504,9 +504,11 @@ For each observation, the same activity mapping is applied to the event log, the
 
 \subsection{Generator implementation and relation checks}\label{sec:generation}
 
-Reproducibility requires structural sampling, event log sampling, and augmentation to remain independent. The global seed is therefore expanded with BLAKE2b into family-specific streams for the process structure, representation variant, playout, event log observation, and augmentation.
+The generator must satisfy two requirements. First, it must be \emph{reproducible}: using the same configuration and seed must recreate the same families. Second, it must produce \emph{trustworthy supervision}: every retained family must contain usable process models, and every claimed behavioral relationship must be supported by the recorded evidence. Randomly producing artifacts without these checks could introduce invalid Petri nets or label uncertain pairs as equivalent.
 
-Algorithm~\ref{alg:generation} condenses the preceding construction into implementation order. It shows where candidates are rejected and when relation metadata becomes available; the semantic meaning of each step is defined above.
+Reproducibility is more subtle than assigning one global random seed. Family construction contains several random decisions: sampling the process structure, creating a representation variant, simulating traces, forming event log observations, and applying augmentation. If all decisions shared one random sequence, changing the number of random draws in one stage could change the outcomes of later stages. The implementation therefore derives a separate, family-specific random stream for each purpose from the global seed using BLAKE2b. This keeps the random components independent while allowing the complete dataset to be recreated.
+
+Algorithm~\ref{alg:generation} presents the construction in execution order. Each loop iteration attempts to create one family. A candidate is retained only after its process tree, Petri nets, behavioral evidence, event logs, and activity mappings have been constructed and checked. If a required check fails, the candidate is discarded and a new attempt begins. The algorithm is kept compact; the paragraphs after it explain the main checks and their consequences.
 
 \begin{algorithm}[H]
 \centering
@@ -536,9 +538,15 @@ Algorithm~\ref{alg:generation} condenses the preceding construction into impleme
 \end{algorithmic}
 \end{algorithm}
 
-For non-looping families, marking exploration stops after 5,000 visited states, 10,000 completed traces, visible length 32, or the silent-transition firing safeguard. During construction of the training split, a candidate whose certificate is neither exact nor isomorphic is rejected and replaced. Held-out splits may retain bounded-evidence families, but those families are not interpreted as exact visible-language positives. None occurs in the fixed evaluation subset: the simple subset contains 14 exact and two isomorphic families, while the medium and complex subsets each contain 12 exact and four isomorphic families.
+The first checks concern \emph{model validity}. Both Petri net realizations must be constructed successfully, their final markings must be reachable, and they must contain no dead transitions. A family that fails any of these checks is rejected. This prevents the relation analysis from comparing models that cannot execute as intended.
 
-The generator also rejects unreachable final markings and dead transitions. Its coverage check verifies the required motif quotas and confirms that every controlled motif appears in both Petri net realization slots. The relation certificate is stored in every row rather than reconstructed later from surface similarity.
+The next checks concern \emph{behavioral evidence}. For a non-looping family, the implementation explores the reachable markings of both Petri nets and collects their visible traces. Exploration is stopped if it visits 5,000 states, completes 10,000 traces, reaches visible length 32, or triggers the safeguard for silent transitions. These limits prevent a difficult candidate from consuming unbounded time or memory.
+
+The result of exploration determines the relation certificate. If both searches finish and return the same complete visible language, the evidence is \emph{exact}. If a safeguard stops either search, any agreement applies only to the traces collected so far and the evidence is \emph{bounded}. For ordinary looping families, where exhaustive enumeration may be impossible, a structure-preserving construction provides an \emph{isomorphic} certificate instead.
+
+The training split retains only families with exact or isomorphic certificates. A candidate with bounded evidence is rejected and replaced because it cannot support an exact positive relation. Validation and test splits may retain bounded-evidence families, but such families are never interpreted as exact visible-language positives. The fixed evaluation subset happens to contain no bounded cases: the simple subset contains 14 exact and two isomorphic families, while the medium and complex subsets each contain 12 exact and four isomorphic families.
+
+Finally, the generator checks \emph{corpus coverage}. It verifies the required motif quotas and confirms that each controlled motif occurs in both Petri net realization positions. Once a family passes all checks, its relation certificate is copied into every stored row. Training can then use the recorded certificate directly instead of trying to reconstruct behavioral relationships from activity labels or surface structure.
 
 \subsection{Cross-artifact architecture}\label{sec:architecture}
 
