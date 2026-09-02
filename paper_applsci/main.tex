@@ -1002,11 +1002,20 @@ The evaluation retains repeated observations and realizations within each family
 
 \subsection{\RQone: Representation alignment and behavioral ordering}
 
-The shared representation successfully groups related artifacts on the fixed evaluation subset. Alternative observations and realizations achieve within-type family Recall@1 of 1.000 at every complexity level. Agreement between fused-vector distance and the experiment-specific behavior distance also increases from 0.577 on \texttt{simple} families to 0.743 on \texttt{medium} families and 0.791 on \texttt{complex} families. These results support the use of the representation for cross-artifact neighborhoods and retrieval. They do not establish a universal process-semantic metric: $d_B$ overlaps the supervision used during training, and the deterministic trace-variant baseline remains stronger on the \texttt{simple} families. Table~\ref{tab:geometry} gives the complete comparison.
+\RQone{} asks whether the shared representation has two properties at the same time. First, it should be \emph{stable}: different observations or realizations of the same behavior family should remain close. Second, it should be \emph{behaviorally sensitive}: families with more different behavior should be placed farther apart. Both properties are necessary. A representation that maps everything to almost the same point would be stable but useless for comparison, while a representation that separates every input could incorrectly treat two observations of the same process as unrelated.
+
+We examine these properties separately on the fixed evaluation subset. Behavioral sensitivity is evaluated by asking whether distances in the learned space order family pairs in the same way as the experiment-specific behavior distance $d_B$. Stability is evaluated by comparing alternative observations and realizations within each artifact type. The results support both properties under the evaluated protocol: the fused representation follows the ordering induced by $d_B$, especially for the \texttt{medium} and \texttt{complex} families, and every within-type query has a nearest neighbor from the same family. The following paragraphs explain these two results in detail.
+
+\paragraph{Behavioral ordering.}
+For every pair of behavior families, the evaluation compares two quantities: the distance between their representations and their behavioral distance $d_B$. Spearman $\rho$ measures whether these quantities produce a similar ranking of family pairs. For example, if $d_B$ indicates that family $F_1$ is behaviorally closer to $F_2$ than to $F_3$, a well-ordered representation should also place $F_1$ closer to $F_2$. Spearman $\rho$ evaluates this relative order; it does not require the representation distance and $d_B$ to have the same numerical scale.
+
+The direction of this metric is important: \emph{a higher positive Spearman $\rho$ is better}. The value ranges from $-1$ to $1$. A value of $1$ means that representation distance and $d_B$ rank all evaluated family pairs in exactly the same order. A value near $0$ means that there is no consistent monotonic ordering between them. A negative value is undesirable here because it means that pairs judged more different by $d_B$ tend to be placed closer together by the representation. Thus, 0.791 indicates stronger agreement than 0.743, and both indicate stronger agreement than 0.577.
+
+Table~\ref{tab:geometry} reports this comparison. For the fused representation, Spearman $\rho$ increases from 0.577 on \texttt{simple} families to 0.743 on \texttt{medium} families and 0.791 on \texttt{complex} families. Because higher positive values are better, this increase means that agreement with $d_B$ becomes stronger across the three evaluated levels. All three correlations are positive, so larger behavioral differences generally correspond to larger distances in the learned space.
 
 \begin{table}[H]
 \centering
-\caption{Spearman correlation between representation distance and the experiment-specific behavior distance $d_B$ on the fixed 48-family detailed subset (16 families and 64 stored rows per level). The evaluation unit is a family pair; repeated observations and realizations remain in the family representation. Higher values indicate stronger agreement. Intervals are family-bootstrap intervals for the fused representation.}
+\caption{Behavioral ordering on the fixed 48-family subset. Each value is the Spearman correlation between representation distance and the experiment-specific behavior distance $d_B$. Spearman $\rho$ ranges from $-1$ to $1$; values closer to $1$ are better here because they indicate more similar rankings, values near zero indicate little consistent ordering, and negative values indicate opposing orderings. Each level contains 16 families and 64 stored rows, and the evaluation unit is a family pair. The intervals are family-bootstrap intervals for the fused representation.}
 \label{tab:geometry}
 \begin{tabular}{@{}lccc@{}}
 \toprule
@@ -1035,17 +1044,22 @@ PM4Py Petri net Node2Vec & 0.189 & 0.201 & 0.535 \\
 \end{tabular}
 \end{table}
 
-Figure~\ref{fig:geometry-bars} emphasizes the changing balance between the learned and deterministic representations across complexity levels.
+The table also compares the learned representations with deterministic alternatives. The event log baselines summarize trace variants, directly-follows relations, eventually-follows relations, activity frequencies, or aggregate log properties. The Petri net baselines use structural counts or graph neighborhoods. These baselines help determine whether the learned cross-artifact representation captures useful ordering beyond information available from a single artifact-specific summary.
+
+Figure~\ref{fig:geometry-bars} highlights the most important comparison across the three complexity levels.
 
 \input{figures/geometry-bars}
 
-Figure~\ref{fig:geometry-bars} also shows that the deterministic trace-variant distribution is strongest on the \texttt{simple} families. One possible explanation is that short synthetic processes are often well characterized by a small set of variants, whereas larger processes benefit more from combining structural and observational information. The present experiment does not isolate that explanation.
+The best representation depends on process complexity. On the \texttt{simple} families, the deterministic trace-variant distribution reaches 0.713, compared with 0.577 for the fused embedding. For short synthetic processes, a small collection of complete trace variants may already describe much of the measured behavior, so a learned combination offers no advantage in this case. On the \texttt{medium} and \texttt{complex} families, the fused embedding reaches the highest value in the table. It also improves over each learned single-artifact embedding at those levels, suggesting that the combination of structural and observational information becomes more useful as the generated processes become more involved. This explanation is plausible but not established by the experiment, and the table should not be read as a significance test between individual methods.
 
-Alternative observations and realizations are also stable within each artifact type. A positive margin means that even the least similar matching observation or realization remains more similar than the most similar non-matching one. Event log embeddings have the smallest nearest-positive margin because finite trace frequencies vary between observations. Table~\ref{tab:invariance} reports the complete within-type diagnostic.
+\paragraph{Stability under alternative observations and realizations.}
+The second part of RQ1 asks whether the representation remains stable when the same family is observed or realized in a different way. This test is performed separately for each artifact type. For event logs, the alternatives are finite observations sampled from the same family. For Petri nets, they are alternative net realizations. The fusion row evaluates the combined family representation.
+
+Table~\ref{tab:invariance} uses four complementary quantities. \emph{Within} is the average cosine similarity between rows from the same family, whereas \emph{Between} is the average similarity between rows from different families. A useful representation should therefore have high Within values and lower Between values. The \emph{margin} compares the similarity of the nearest same-family neighbor with that of the nearest different-family neighbor. A positive margin means that the closest related row is more similar than the closest unrelated row. Finally, \emph{Recall@1} reports how often the single nearest neighbor belongs to the correct family.
 
 \begin{table}[H]
 \centering
-\caption{Within-type family invariance on the fixed 48-family detailed subset (16 families and 64 stored rows per level). The evaluation unit is an artifact row; repeated observations and Petri net realizations are retained. Within and between are mean cosine similarities; margin and Recall@1 are higher-is-better.}
+\caption{Stability within each artifact type on the fixed 48-family subset. Each level contains 16 families and 64 stored rows. Within and Between are the mean cosine similarities to rows from the same and different families, respectively. Margin is the nearest same-family similarity minus the nearest different-family similarity. Recall@1 is the fraction of rows whose nearest neighbor belongs to the same family. Higher Within, Margin, and Recall@1 values and lower Between values are better.}
 \label{tab:invariance}
 \begin{tabular}{@{}llrrrr@{}}
 \toprule
@@ -1069,11 +1083,16 @@ Level & Encoder & Within & Between & Margin & Recall@1 \\
 \end{tabular}
 \end{table}
 
-Figure~\ref{fig:pca} provides only a two-dimensional illustration of this neighborhood structure. Retrieval and distance calculations use the full semantic vectors.
+The pattern is consistent across all three complexity levels. Within-family similarities are high, between-family similarities are substantially lower, and every reported margin is positive. Recall@1 is 1.000 in every row, meaning that the nearest neighbor always belongs to the same family under this within-type test. Process tree embeddings are the most stable, with Within values of 0.999. Event log embeddings have the smallest margins because two finite samples of the same process can contain different trace frequencies. Even so, their margins remain positive and their Recall@1 remains perfect on this subset.
+
+Figure~\ref{fig:pca} gives an intuitive two-dimensional view of the resulting neighborhoods. The connected markers represent different artifact types from the same family. Nearby markers can make alignment easier to see, but PCA discards information when it projects the learned vectors into two dimensions. The figure is therefore illustrative only: all reported similarities, margins, correlations, and retrieval results are computed using the full semantic vectors.
 
 \input{figures/pca}
 
-The geometry result must be interpreted in light of its supervision. Components of $d_B$ also contribute to the training descriptor, so correlation measures agreement with the optimized experiment-specific ordering. Retrieval below and footprint-based conformance checking provide complementary evidence that does not reuse this exact scalar target.
+\paragraph{Interpretation.}
+Taken together, the results support RQ1 within the stated synthetic evaluation setting. Alternative observations and realizations remain close to their families, while distances between families reflect the ordering defined by $d_B$. This makes the representation suitable for neighborhood inspection and motivates the cross-artifact retrieval experiment in RQ2.
+
+The conclusion is deliberately limited. First, $d_B$ summarizes trace variants, directly-follows relations, and trace lengths; it is not a complete test of visible-language or partial-order equivalence. Second, related components of $d_B$ also contribute to the training descriptor. The reported correlation therefore shows that the model learned the intended experiment-specific behavioral ordering, not that it discovered a universal process-semantic distance. The retrieval results below and the footprint-based conformance results provide complementary evidence because they do not reuse this exact scalar target.
 
 \FloatBarrier
 \subsection{\RQtwo: Cross-Artifact Retrieval}\label{sec:retrieval-results}
