@@ -74,9 +74,9 @@ $^{1}$ \quad Process and Data Science Group, RWTH Aachen University, Ahornstrass
 $^{2}$ \quad Celonis, Munich, Germany}
 \corres{Correspondence: a.berti@pads.rwth-aachen.de}
 
-\featuredapplication{Process mining analysts can use an event log to retrieve related process models and validate proposed process trees through conformance checking.}
+\featuredapplication{ProcRosetta learns a shared behavior-aware representation for retrieving related event logs, process trees, and Petri nets across artifact types.}
 
-\abstract{Event logs, process trees, and Petri nets provide complementary representations of process behavior, but their heterogeneous structures make cross-representation comparison and reuse difficult. This paper presents \model, a behavior-supervised framework that aligns these artifacts in a shared representation space. Training examples are organized into behavioral families and annotated with relations that distinguish representational equivalence, visible-language similarity, and differences involving ordering or concurrency. The learned representation supports within-modal and cross-modal retrieval among event logs and process models. Evaluation uses a deterministic, family-complete subset of the held-out synthetic benchmark and a balanced multi-observation gallery; all reported retrieval claims are scoped to that protocol. \model additionally includes a grammar-constrained decoder that produces syntactically valid process trees convertible to Petri nets under the evaluated protocol. Behavioral evaluation nevertheless shows that validity alone does not ensure semantic preservation, and direct event log to process tree generation remains weaker than specialized process discovery. Experiments on two external event logs further expose this generalization boundary. These results position \model as a retrieval and candidate-proposal component in a workflow that retrieves, proposes, and validates rather than as a replacement for process discovery or conformance checking. The implementation, trained model, data-generation pipeline, and evaluation evidence are publicly available.}
+\abstract{Event logs, process trees, and Petri nets provide complementary representations of process behavior, but their heterogeneous structures make cross-representation comparison and reuse difficult. This paper presents \model, a behavior-supervised framework that aligns these artifacts in a shared representation space. Training examples are organized into behavioral families and annotated with relations that distinguish representational equivalence, visible-language similarity, and differences involving ordering or concurrency. The learned representation supports within-modal and cross-modal retrieval among event logs and process models. Evaluation uses a deterministic, family-complete subset of the held-out synthetic benchmark and a balanced multi-observation gallery; all reported retrieval claims are scoped to that protocol. \model additionally includes a grammar-constrained decoder that produces syntactically valid process trees convertible to Petri nets under the evaluated protocol. Behavioral evaluation nevertheless shows that validity alone does not ensure semantic preservation, and direct event log to process tree generation remains weaker than specialized process discovery. Experiments on two external event logs further expose this generalization boundary. These results position \model as a retrieval and candidate-proposal component in a workflow that retrieves, proposes, and validates rather than as a replacement for process discovery or conformance checking. The code, data, and trained model are publicly available.}
 
 \keyword{process mining; cross-artifact retrieval; representation learning; behavior supervision; event logs; process trees; Petri nets; grammar-constrained decoding}
 
@@ -261,7 +261,7 @@ The generator performs six steps:
 \item construct a trace pool and two finite event log observations; and
 \item relabel each observation consistently across artifact types and expand the family into four rows.
 \end{enumerate}
-Figure~\ref{fig:corpus} groups these steps into four visual stages. Read it from left to right. The generator first selects an underlying process tree or controlled motif. It then constructs alternative process-model realizations, records the relation between them, and samples two finite event log observations. Only after these relationships have been established are observation-specific activity mappings applied and the family expanded into four stored rows. Family membership is fixed before the final Cartesian product; Supplementary Figure~S2 makes the observation-specific relabeling and row expansion explicit.
+Figure~\ref{fig:corpus} groups these steps into four visual stages. Read it from left to right. The generator first selects an underlying process tree or controlled motif. It then constructs alternative process-model realizations, records the relation between them, and samples two finite event log observations. Only after these relationships have been established are observation-specific activity mappings applied and the family expanded into four stored rows. Family membership is fixed before the final Cartesian product.
 
 \input{figures/corpus}
 
@@ -277,7 +277,7 @@ Activities are assigned only after the topology has been accepted. The generator
 
 Before measuring or storing a target, the generator normalizes it with the same \texttt{pm4py-fold-v1} procedure used during evaluation. This PM4Py fold removes redundant silent leaves from sequence and parallel nodes, merges nested sequence, XOR, and parallel operators of the same type, and simplifies empty or unary internal constructs. XOR and parallel child order is canonicalized separately before folding. We call the normalized result the \emph{folded process tree}; all size, depth, exact-match, and process tree edit measurements refer to this representation.
 
-A candidate is retained only when its folded size, depth, and visible-activity count satisfy the ordinary profile. Otherwise, the generator restarts; it never inserts artificial sequential structure merely to reach the activity floor. After 4,000 unsuccessful attempts, generation fails explicitly instead of silently relaxing the profile. Supplementary Figure~S1 visualizes this acceptance loop.
+A candidate is retained only when its folded size, depth, and visible-activity count satisfy the ordinary profile. Otherwise, the generator restarts; it never inserts artificial sequential structure merely to reach the activity floor. After 4,000 unsuccessful attempts, generation fails explicitly instead of silently relaxing the profile.
 
 Controlled families place one of three small contrasts inside the same randomized context for both realizations. Their contexts remain between 4 and 12 nodes at every level and bypass the ordinary size, depth, and activity filters. Consequently, ``simple'', ``medium'', and ``complex'' refer to the corpus in which an anchor appears, not necessarily to the size of the anchor itself. This design keeps the diagnostic contrast stable while the surrounding ordinary families become larger and deeper.
 
@@ -584,7 +584,7 @@ Strong positives align pairs that agree under both recorded semantics. Hierarchi
  +\mathcal{L}_{\mathrm{reg}}.
 \label{eq:objective}
 \end{align}
-In Eq.~\eqref{eq:objective}, $\mathcal{L}_{\mathrm{recon}}$ contains the artifact-specific reconstruction terms and $\mathcal{L}_{\mathrm{fuse}}$ contains fused-input reconstruction. The remaining terms correspond to exact-pair alignment, hierarchical relation ordering, observation consistency, behavioral geometry, and latent regularization. The four principal reconstruction weights are 1.00; exact cross-artifact contrast is weighted 0.30, hierarchical ordering and observation consistency 0.15 each, and soft behavioral geometry 0.25. Supplementary Section~S3 expands these conceptual groups into the implementation-level coefficients, including inactive terms. The semantic representation is deterministic rather than sampled from a learned probability distribution. Consequently, no Kullback-Leibler regularizer is applicable and its configured coefficient is zero.
+In Eq.~\eqref{eq:objective}, $\mathcal{L}_{\mathrm{recon}}$ contains the artifact-specific reconstruction terms and $\mathcal{L}_{\mathrm{fuse}}$ contains fused-input reconstruction. The remaining terms correspond to exact-pair alignment, hierarchical relation ordering, observation consistency, behavioral geometry, and latent regularization. The four principal reconstruction weights are 1.00; exact cross-artifact contrast is weighted 0.30, hierarchical ordering and observation consistency 0.15 each, and soft behavioral geometry 0.25. The semantic representation is deterministic rather than sampled from a learned probability distribution. Consequently, no Kullback-Leibler regularizer is applicable and its configured coefficient is zero.
 
 \subsection{Curriculum learning and checkpoint selection}\label{sec:curriculum}
 
@@ -641,7 +641,7 @@ A checkpoint trained only on simple or medium data cannot be selected as the fin
 
 Epoch~10 has the higher displayed balanced score (0.796 versus 0.787), but belongs to the medium stage and is ineligible. Epoch~11 is the first complex-stage checkpoint. It remains selected because no later eligible checkpoint improves the ordered criterion above. Test results are not used for selection.
 
-Adaptive validation balancing also changes source reconstruction multipliers slightly. At the selected epoch they are 1.000 for process tree input, 1.099 for event log input, 1.064 for Petri net input, and 1.122 for fusion. Figure~\ref{fig:training} shows the optimization history and stage changes; Supplementary Section~S3 gives all 17 rows.
+Adaptive validation balancing also changes source reconstruction multipliers slightly. At the selected epoch they are 1.000 for process tree input, 1.099 for event log input, 1.064 for Petri net input, and 1.122 for fusion. Figure~\ref{fig:training} shows the optimization history and stage changes.
 
 \input{figures/training}
 
@@ -683,7 +683,7 @@ Complex & 7 & 4 & 20 to 80 & 8 to 28 \\
 \end{tabular}
 \end{table}
 
-The displayed size, depth, and activity intervals are acceptance criteria for ordinary folded decoder targets, not global ranges for every family. Controlled anchors bypass these profile filters and remain present at all three levels, so aggregate statistics may legitimately fall outside an ordinary-profile interval. Within each level, the training quotas are 3,056 ordinary, 347 duplicate-prefix, 347 concurrency, and 346 M-pattern families. Validation and test use 376, 45, 46, and 45 families, respectively. The exact generation command appears in Supplementary Section~S2; the implemented defaults and post-generation checks are stored in the manifest.
+The displayed size, depth, and activity intervals are acceptance criteria for ordinary folded decoder targets, not global ranges for every family. Controlled anchors bypass these profile filters and remain present at all three levels, so aggregate statistics may legitimately fall outside an ordinary-profile interval. Within each level, the training quotas are 3,056 ordinary, 347 duplicate-prefix, 347 concurrency, and 346 M-pattern families. Validation and test use 376, 45, 46, and 45 families, respectively.
 
 \subsection{Dataset at a glance}
 
@@ -775,7 +775,7 @@ Road traffic & 100 & 390 & 10 & 10 & 100 & 10 \\
 
 Each selected sample is canonicalized and encoded once. The resulting event log memory and semantic vector, as well as the beam width of two and token budget of 512, are held fixed across two policies: repeated visible labels allowed, or repeated visible labels masked after their first occurrence. Both policies retain the source-alphabet constraint. Inductive Miner is fitted to the same selected cases. PM4Py extensive event log footprint fitness and precision are computed on those cases, so the only change between the two neural rows is the duplicate-label mask.
 
-These cases reveal failure patterns but do not estimate average real-world performance. They contain only two processes, were not selected as a representative benchmark, and do not provide aligned reference process trees and Petri nets. No real event log hyperparameter tuning was performed. A separate repository running example is also held outside the synthetic curriculum. Its event log, process tree, and Petri net files are encoded independently and used to propose process trees as a software-level illustration in the Supplementary Materials.
+These cases reveal failure patterns but do not estimate average real-world performance. They contain only two processes, were not selected as a representative benchmark, and do not provide aligned reference process trees and Petri nets. No real event log hyperparameter tuning was performed.
 
 \FloatBarrier
 
@@ -785,7 +785,7 @@ Figure~\ref{fig:application-workflow} turns the representation task into a proce
 
 \input{figures/workflow}
 
-The open-source reference implementation accepts XES event logs, PTML process trees, and PNML Petri nets through shared command-line and browser-facing services. It records canonical activity mappings, preprocessing diagnostics, checkpoint identity, embeddings, decoding traces, and validation outcomes. The implementation is available at \url{https://github.com/fit-alessandro-berti/proc-rosetta}; an installation-free inspection interface is available at \url{https://rosetta-pm.app}. Detailed commands, interface views, serialization examples, generator schematics, and training tables are moved to the Supplementary Materials.
+The open-source reference implementation accepts XES event logs, PTML process trees, and PNML Petri nets through shared command-line and browser-facing services. It records canonical activity mappings, preprocessing diagnostics, checkpoint identity, embeddings, decoding traces, and validation outcomes. The implementation is available at \url{https://github.com/fit-alessandro-berti/proc-rosetta}; an installation-free inspection interface is available at \url{https://rosetta-pm.app}.
 
 \FloatBarrier
 
@@ -1049,7 +1049,7 @@ The two external event logs expose a distribution shift rather than validate dep
 
 The learned model is appropriate for encoding heterogeneous artifacts, retrieving related material, comparing neighborhoods, and proposing process tree candidates for validation. A realistic workflow retrieves, proposes, and validates. An incoming event log or process model is first embedded to retrieve related known artifacts. The decoder may then propose one or more process tree candidates. Established conformance checking routines and human inspection determine whether any candidate is behaviorally acceptable. This workflow uses the capability that currently performs well without treating syntactic validity as semantic evidence.
 
-The learned model is not an unattended replacement for process discovery or conformance checking. Direct candidate generation uses source memory, retrieval uses semantic vectors, and exploratory fusion combines semantic vectors before decoding. Simple mean fusion assumes that all artifact types are equally reliable and that their semantic vectors are directly compositional. Its lack of reconstruction improvement suggests that future fusion should learn type-specific confidence or attend jointly to source memories rather than averaging only their global summaries. Supplementary Section~S2 documents the operational interface and commands.
+The learned model is not an unattended replacement for process discovery or conformance checking. Direct candidate generation uses source memory, retrieval uses semantic vectors, and exploratory fusion combines semantic vectors before decoding. Simple mean fusion assumes that all artifact types are equally reliable and that their semantic vectors are directly compositional. Its lack of reconstruction improvement suggests that future fusion should learn type-specific confidence or attend jointly to source memories rather than averaging only their global summaries.
 
 \FloatBarrier
 \section{Limitations}\label{sec:threats}
@@ -1072,23 +1072,21 @@ The synthetic experiments and two real event log illustrations show that direct 
 
 \FloatBarrier
 
-\supplementary{The supporting information is provided in \texttt{supplementary.tex} and contains generator schematics, the reference-implementation and interface description, complete training coefficients and history, the running example, and full serialized process trees.}
-
 \authorcontributions{Conceptualization and methodology, both authors; software, formal analysis, investigation, data curation, visualization, and writing (original draft preparation), A.B.; validation, supervision, and writing (review and editing), W.M.P.v.d.A. All authors have read and agreed to the published version of the manuscript.}
 
 \funding{Funded by the European Union. This work has received funding from the EuroHPC Joint Undertaking and BMFTR, MKW NRW, and HMWK under Grant Agreement No. 101250682. Views and opinions expressed are, however, those of the authors only and do not necessarily reflect those of the European Union or the granting authorities.}
 
-\institutionalreview{Not applicable. No new human-subject data were collected. The external analysis uses previously published event logs and extracts only case groupings and activity sequences; the remaining study data are synthetic or software examples.}
+\institutionalreview{Not applicable. The study did not collect new human-subject data.}
 
 \informedconsent{Not applicable.}
 
-\dataavailability{Source code is available at \url{https://github.com/fit-alessandro-berti/proc-rosetta}; the evaluated software revision recorded with the checkpoint is \texttt{\seqsplit{52a92f09f07ddc6b9b30463c5216973db7c76f83}}. The manuscript package includes the curriculum manifest, checkpoint provenance, and machine-readable synthetic and external event log result records. The recorded curriculum-manifest SHA-256 is \texttt{\seqsplit{9a48ee723f8a717c01677d203b2df84841c1a7b0d04b4389ce681aff91cbe1db}}; the evaluated checkpoint SHA-256 is \texttt{\seqsplit{5ed9abf8496ee5571a941becf016186d2f44441a1015c288bea07e416495aeaa}}. Public corpus and checkpoint snapshots are available at \url{https://www.alessandroberti.it/data_rosetta_latest.tar.gz} and \url{https://www.alessandroberti.it/checkpoint_rosetta_latest.tar.gz}, respectively. The external event logs are cited through their repository publications in Section~\ref{sec:real-log-design}.}
+\dataavailability{Code, data, and the trained model are available at \url{https://github.com/fit-alessandro-berti/proc-rosetta}. The external event logs are cited in Section~\ref{sec:real-log-design}.}
 
-\acknowledgments{The authors thank the Process and Data Science group at RWTH Aachen University for the research environment in which this work was developed.}
+\acknowledgments{The authors thank the Process and Data Science group at RWTH Aachen University.}
 
-\conflictsofinterest{Wil M. P. van der Aalst is affiliated with Celonis. The authors declare no other financial or non-financial competing interests relevant to this work.}
+\conflictsofinterest{Wil M. P. van der Aalst is affiliated with Celonis. No other competing interests are declared.}
 
-\specialsection{Use of Generative Artificial Intelligence}{During manuscript preparation, the authors used OpenAI Codex to assist with source review, LaTeX drafting, generation of TikZ figures and tables, consistency checks, and language editing. The authors inspected the underlying source code and artifacts, verified the reported calculations, claims, citations, and references, revised the generated text, and take full responsibility for the scientific content, analysis, and validation.}
+\specialsection{Use of Generative Artificial Intelligence}{The authors used OpenAI Codex for language and LaTeX editing. The authors reviewed the resulting text and take full responsibility for the content of the manuscript.}
 
 \reftitle{References}
 \bibliography{references}
