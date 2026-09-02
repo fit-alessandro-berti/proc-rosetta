@@ -252,17 +252,50 @@ For readability, this notation shows the activities using their original names. 
 
 \subsection{Cross-Artifact Retrieval Task}
 
-For artifact type $m\in\{T,L,N\}$, an encoder produces two representations. The contextual memory $H_m$ retains detailed, local information and is used by the decoder. The normalized vector $\vect z_m$ is a compact summary used for retrieval, distance calculations, and fusion. Given a query vector from one modality and a candidate collection from another, cross-artifact retrieval ranks candidates by cosine similarity. Relevance is defined by the recorded relation used in the particular experiment, not by surface equality.
+Process repositories often contain different representations of related behavior. An analyst may have an event log from a running system but need to find an existing Petri net for comparison. Conversely, an analyst may have a process tree and want to find event logs that exhibit similar behavior. Ordinary lookup is insufficient in these cases: an event log has neither the nodes of a process tree nor the places and transitions of a Petri net. The artifacts must be compared through their behavior rather than through a common file structure.
+
+The goal of \emph{cross-artifact retrieval} is to rank existing artifacts of one type using a query of another type. For example, the request event log introduced earlier can be used to search a collection of Petri nets. The duplicated-prefix net and the shared-prefix net should both rank highly because they represent the relevant request behavior, even though neither is structurally identical to the log or to the other net. The same task can be reversed: a Petri net can query a collection of event logs, or a process tree can query a collection of Petri nets.
+
+Retrieval searches among artifacts that already exist. It does not translate the query, construct a new process model, or select a final model for the analyst. Its output is simply an ordered list in which candidates judged more behaviorally related to the query appear earlier. This makes retrieval useful as a first step for finding precedents, related variants, or models that can subsequently be examined through conformance checking and analyst review.
+
+To compare the three artifact types, \model maps each of them into the same vector space. We use $m\in\{T,L,N\}$ to denote the artifact type: $T$ for process trees, $L$ for event logs, and $N$ for Petri nets. Each type has its own encoder because its native structure is different. Nevertheless, all three encoders produce vectors with the same dimension, so a vector obtained from an event log can be compared directly with one obtained from a process tree or Petri net.
+
+Each encoder produces two outputs with different purposes. The \emph{contextual memory} $H_m$ retains several local representations, such as information about individual activities or graph nodes. It is used later by the decoder when detailed structure is needed for candidate generation. The \emph{retrieval vector} $\vect z_m$ compresses the complete artifact into one fixed-size summary and is normalized to unit length. Only this compact vector is needed to rank retrieval candidates.
+
+Let $q$ be a query artifact and $c$ one candidate from the collection being searched. Their retrieval score is the cosine similarity between their normalized vectors:
+\begin{equation}
+\operatorname{score}(q,c)
+=\cos(\vect z_q,\vect z_c)
+=\vect z_q^{\mathsf T}\vect z_c.
+\label{eq:retrieval-score}
+\end{equation}
+A larger score places the candidate earlier in the ranked list. Because the vectors share one space, the same rule applies to every direction, including event log to Petri net, Petri net to process tree, and process tree to event log retrieval.
+
+The meaning of a \emph{relevant candidate} follows the behavioral relations defined above. It is not determined by identical labels, matching serializations, or membership in the same family alone. The evaluation uses the relation appropriate to the experiment to decide which candidates count as relevant. A high retrieval score therefore means that the learned representation predicts a behavioral relationship; it is not a proof of equivalence, soundness, or conformance. Any retrieved model intended for reuse must still be validated independently.
 
 \subsection{Constrained Candidate-Generation Task}
 
-Candidate generation conditions the process tree decoder on the detailed source memory and returns a process tree in Eq.~\eqref{eq:grammar}. Fusion is intentionally simple: it averages the available compact vectors,
+Retrieval is useful when the repository already contains an appropriate artifact. In some situations, however, no existing candidate adequately represents the behavior of interest. An analyst may then want the system to propose a new process model from an event log, a Petri net, a process tree, or a combination of available artifacts. This motivates a second task: \emph{candidate generation}.
+
+The task produces a process tree in the grammar of Eq.~\eqref{eq:grammar}. Using one output type gives all supported inputs a common destination. Process trees are suitable for this role because their hierarchical grammar is compact, can be checked while it is generated, and has a standard conversion to a Petri net. The choice also imposes an important limitation: the decoder can propose only block-structured behavior, even when the source Petri net has a more general topology.
+
+For example, consider the event log in the earlier request example. Each case first records \textsf{register} and then records either \textsf{accept} or \textsf{reject}. From this log, the decoder may propose a tree that performs \textsf{register} before choosing between the two outcomes. Given either Petri net from the same example, it should aim for a process tree that captures the same visible behavior. The output does not need to reproduce the source's internal graph because a process tree and a Petri net organize behavior differently.
+
+When generation uses one source artifact, the decoder reads its \emph{contextual memory} $H_m$. This memory retains local information that the single retrieval vector cannot preserve, such as activity order in a trace, parent--child relations in a process tree, or neighboring nodes in a Petri net. The decoder attends to these details while choosing the operators, activities, and structure of the output tree. We call this the \emph{direct-generation} setting.
+
+Generation can also use more than one artifact. For example, an event log may provide evidence about executions while a related Petri net provides explicit routing information. To offer a simple common interface for such inputs, \model averages their normalized retrieval vectors. For a set $S$ of available artifact types, the fused representation is
 \begin{equation}
 \vect z_{\mathrm{fuse}}=\frac{1}{|S|}\sum_{m\in S}\vect z_m,
 \qquad S\subseteq\{T,L,N\},
 \label{eq:fusion}
 \end{equation}
-and projects their mean into decoder memory. Fusion is a baseline common interface rather than a learned reliability-aware aggregation mechanism. The generated artifact is always a process tree candidate, even when the source is a Petri net. These tasks instantiate \RQone, \RQtwo, and \RQthree{} from the Introduction.
+The mean is projected into a memory that the same process tree decoder can read. This \emph{fusion} mechanism treats all available inputs equally. It does not learn that one source may be more reliable than another, and it does not explicitly resolve disagreements between them. It is therefore a baseline for testing whether the shared representation contains enough compatible information to support generation from multiple artifact types.
+
+The word \emph{constrained} refers to how the output is formed. At each decoding step, the process tree grammar masks choices that would make the expression invalid. The decoder must fill every required child position, may emit only permitted token types and activity labels, and may finish only after the tree is complete. Under the evaluated protocol, these constraints ensure that the output can be parsed as a process tree and converted into a Petri net. They prevent malformed structures; they do not determine which valid structure best represents the source.
+
+For this reason, every output is called a \emph{candidate}. A syntactically valid tree can still omit an activity, introduce an incorrect choice, serialize behavior that should be concurrent, or permit traces unsupported by the source. Candidate generation therefore does not provide a behavior-preserving translation guarantee and does not replace process discovery or conformance checking. Its role is to propose a structurally admissible model that can then be evaluated behaviorally and reviewed by an analyst.
+
+Together, behavior-aware representation learning, cross-artifact retrieval, and constrained candidate generation define the three tasks examined by \RQone, \RQtwo, and \RQthree{} in the Introduction.
 
 \FloatBarrier
 \section{Materials and Methods}\label{sec:model}
