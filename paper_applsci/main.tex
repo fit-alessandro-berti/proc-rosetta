@@ -1085,10 +1085,6 @@ Level & Encoder & Within & Between & Margin & Recall@1 \\
 
 The pattern is consistent across all three complexity levels. Within-family similarities are high, between-family similarities are substantially lower, and every reported margin is positive. Recall@1 is 1.000 in every row, meaning that the nearest neighbor always belongs to the same family under this within-type test. Process tree embeddings are the most stable, with Within values of 0.999. Event log embeddings have the smallest margins because two finite samples of the same process can contain different trace frequencies. Even so, their margins remain positive and their Recall@1 remains perfect on this subset.
 
-Figure~\ref{fig:pca} gives an intuitive two-dimensional view of the resulting neighborhoods. The connected markers represent different artifact types from the same family. Nearby markers can make alignment easier to see, but PCA discards information when it projects the learned vectors into two dimensions. The figure is therefore illustrative only: all reported similarities, margins, correlations, and retrieval results are computed using the full semantic vectors.
-
-\input{figures/pca}
-
 \paragraph{Interpretation.}
 Taken together, the results support RQ1 within the stated synthetic evaluation setting. Alternative observations and realizations remain close to their families, while distances between families reflect the ordering defined by $d_B$. This makes the representation suitable for neighborhood inspection and motivates the cross-artifact retrieval experiment in RQ2.
 
@@ -1097,10 +1093,22 @@ The conclusion is deliberately limited. First, $d_B$ summarizes trace variants, 
 \FloatBarrier
 \subsection{\RQtwo: Cross-Artifact Retrieval}\label{sec:retrieval-results}
 
-Under the fixed multi-observation protocol, the shared space supports cross-artifact search: directional Recall@1 ranges from 0.656 to 0.875, versus a random relevance-group baseline of 0.0625. Event log queries retrieving process trees are the hardest direction, while process tree queries retrieving event logs are strongest. The result supports retrieval within this controlled row-level candidate set; it is not evidence for full-test or deduplicated process-level retrieval.
+Process repositories rarely contain only one artifact type. An analyst may have an event log but need an existing process tree, or may have a Petri net and want to find related logs. Ordinary repository search cannot directly compare these artifacts because their structures are different. \RQtwo{} therefore asks whether the shared representation can support \emph{cross-artifact retrieval}: using one artifact type as a query to rank artifacts of another type.
+
+\paragraph{Retrieval setting.}
+The evaluation considers all six ordered directions among event logs, Petri nets, and process trees. For example, event log $\rightarrow$ process tree means that an event log is the query and only process tree representations are searched. Reversing the arrow creates a different task: process tree $\rightarrow$ event log uses a process tree as the query and searches only event logs.
+
+A candidate is relevant when it belongs to the same behavior family as the query. At each complexity level, the candidate set contains 64 stored rows from 16 families. Each family contributes four rows, and all four rows from the query's family are treated as relevant. The experiment is therefore a \emph{multi-observation, row-level retrieval task}. It tests whether related stored representations form a useful neighborhood, not whether the system can retrieve one unique, deduplicated model from a large production repository.
+
+\paragraph{Metrics and their direction.}
+Two metrics describe the ranking. \emph{Recall@1} asks a strict question: does the first retrieved row belong to the correct family? It is the fraction of queries for which the answer is yes. Recall@1 ranges from zero to one, and \emph{higher is better}. A value of 1.000 means that every query retrieves a relevant row first; a value of 0.750 means that this happens for three quarters of the queries.
+
+\emph{Mean reciprocal rank (MRR)} also considers where the first relevant row appears when it is not ranked first. If the first relevant row is at rank one, the query receives a score of $1$; at rank two, it receives $1/2$; at rank four, it receives $1/4$. MRR is the average of these scores across all queries. It also ranges from zero to one, and \emph{higher is better}. MRR therefore gives partial credit when a relevant result is near the top, whereas Recall@1 gives credit only when a relevant result is first.
+
+The 16 families are equally represented. A random ranking places one of the four relevant rows first with probability $4/64=1/16=0.0625$. This value is the random Recall@1 baseline. It provides a simple reference point: results substantially above 0.0625 show that the ranking uses information beyond random group selection.
 
 \begin{table}[H]
-\caption{Directional cross-artifact retrieval as Recall@1 / MRR on the fixed 48-family detailed subset (16 families per level). For each direction and level, the evaluation unit is a query row and the candidate set contains 64 rows in 16 relevance groups; duplicate observations/realizations are permitted and all four rows in the matching group are relevant. Higher is better.\label{tab:retrieval}}
+\caption{Cross-artifact retrieval on the fixed 48-family subset, reported as Recall@1 / MRR. In every cell, the value before the slash is Recall@1 and the value after it is MRR; higher values are better for both metrics. Each level contains 16 families and a 64-row candidate set. For every query row, all four rows from its behavior family are relevant.\label{tab:retrieval}}
 \centering
 \begin{tabular}{@{}lccc@{}}
 \toprule
@@ -1116,7 +1124,28 @@ Process tree $\rightarrow$ event log & 0.875 / 0.905 & 0.875 / 0.905 & 0.875 / 0
 \end{tabular}
 \end{table}
 
-Each relevance group has four candidate rows, so multiple positive observations or realizations make this protocol easier than retrieval against one deduplicated artifact per process. Equal multiplicity preserves the random group prior, but repeated instances can affect rank and tie ordering. The row-level result is consequently described as \emph{multi-observation retrieval} and should not be interpreted as process-level repository performance.
+\paragraph{Retrieval results.}
+Every tested direction is well above the random Recall@1 baseline. Recall@1 ranges from 0.656 to 0.875, compared with 0.0625 for random group selection. Thus, the shared representation contains substantial information about behavior-family membership even when the query and candidate use different artifact types. The values are not perfect, however. A Recall@1 of 0.656 means that the first result is relevant for 65.6\% of queries and incorrect for the remaining 34.4\%.
+
+The strongest direction is process tree $\rightarrow$ event log, with Recall@1 of 0.875 and MRR of 0.905 at every complexity level. Process tree $\rightarrow$ Petri net is also strong, increasing from 0.812 / 0.867 on \texttt{simple} families to 0.875 / 0.908 on the two higher levels. These results mean that process tree queries usually place a related model or observation first and, when they do not, a relevant result still tends to appear near the top.
+
+The most difficult direction is event log $\rightarrow$ process tree. Its Recall@1 is 0.656 on the \texttt{simple} and \texttt{medium} families and 0.688 on the \texttt{complex} families. This difficulty is consistent with the information available in the artifacts: an event log contains only finite observed executions, whereas a process tree explicitly describes control-flow structure and may permit behavior absent from the log. The experiment does not isolate this as the only cause, but it explains why this direction is intrinsically less direct.
+
+The direction of retrieval matters. Petri net $\rightarrow$ event log improves from 0.703 / 0.755 to 0.828 / 0.855 across the three levels, while event log $\rightarrow$ Petri net remains around 0.72--0.75 Recall@1. This asymmetry does not contradict the use of cosine similarity: the similarity of one specific pair is symmetric, but reversing a retrieval task changes which artifacts act as queries and which collection is ranked. The two directions can therefore produce different aggregate results.
+
+\paragraph{Two-dimensional illustration.}
+Figure~\ref{fig:pca} gives an intuitive view of the cross-artifact neighborhoods behind the numerical results. Each connected set contains the event log, Petri net, and process tree representations of one behavior family. When the three markers are close, the visualization suggests that the encoders place the different artifact types in a similar region of the shared space. This is the relationship needed to retrieve one artifact type by using another as the query.
+
+\input{figures/pca}
+
+The PCA view is only an illustration. It compresses the learned vectors to two dimensions and therefore loses information and can distort distances. The Recall@1 and MRR values in Table~\ref{tab:retrieval} are computed from the full 96-dimensional semantic vectors, not from the positions shown in Figure~\ref{fig:pca}. The figure helps explain the retrieval setting, but it is not additional quantitative evidence of retrieval quality.
+
+\paragraph{Interpretation and scope.}
+The results support RQ2 under the evaluated protocol: artifacts from the same behavior family can often be retrieved across artifact types, and the first relevant result is usually at or near the top of the ranking. This supports using the shared representation to suggest related artifacts for analyst inspection.
+
+The scope of this conclusion is limited by the candidate set. Each relevance group contains four candidate rows, so a query has several positive observations or realizations that it can retrieve. This makes the task easier than searching a repository containing one deduplicated artifact per process. Equal multiplicity keeps the random family prior at $1/16$, but repeated rows can still affect ranks and the deterministic ordering of ties. The results must therefore be described as \emph{multi-observation retrieval}, not as deduplicated process-level retrieval.
+
+The evaluation also uses a fixed subset generated by the same corpus design as the training data. It does not measure retrieval from a large external repository, and it does not show that the top-ranked artifact is behaviorally equivalent to a new production query. In the intended application, retrieved artifacts remain candidates that require behavioral checking and analyst review.
 
 \FloatBarrier
 \subsection{\RQthree: Structural Guarantees and Behavioral Limits of Candidate Generation}\label{sec:decode-results}
