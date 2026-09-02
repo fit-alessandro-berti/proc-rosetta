@@ -110,7 +110,7 @@ The paper makes five contributions. First, it formulates behavior-aware alignmen
 
 \subsection{Process Model Similarity, Matching, and Repository Search}
 
-Process model relations may be defined over labels, graph structure, executable traces, or behavioral ordering relations \cite{Dijkman2011}, \cite{Schoknecht2017SimilaritySurvey}, and \cite{Zampino2026BehavioralSimilarity}. Observed-behavior measures compare executions \cite{deMedeiros2008ObservedBehavior}, whereas behavioral profiles summarize ordering and exclusiveness between activities \cite{Weidlich2011BehavioralProfiles}. Workflow embeddings and Siamese graph networks support efficient similarity-based candidate retrieval within workflow-model collections \cite{Klein2019WorkflowEmbeddings,Hoffmann2020SiameseWorkflowRetrieval}. These approaches motivate repository search, but generally assume a common model representation. \model instead asks whether an event log, a process tree, or a marked Petri net can query a gallery expressed in another representation.
+Process model relations may be defined over labels, graph structure, executable traces, or behavioral ordering relations \cite{Dijkman2011}, \cite{Schoknecht2017SimilaritySurvey}, and \cite{Zampino2026BehavioralSimilarity}. Observed-behavior measures compare executions \cite{deMedeiros2008ObservedBehavior}, whereas behavioral profiles summarize ordering and exclusiveness between activities \cite{Weidlich2011BehavioralProfiles}. Workflow embeddings and Siamese graph networks support efficient similarity-based candidate retrieval within workflow-model collections \cite{Klein2019WorkflowEmbeddings,Hoffmann2020SiameseWorkflowRetrieval}. These approaches motivate repository search, but generally assume a common model representation. \model instead asks whether an event log, a process tree, or a marked Petri net can query a candidate collection expressed in another representation.
 
 Conformance checking addresses a related but distinct question. Fitness measures whether a model can reproduce observed executions; precision measures whether it permits substantially more behavior than those observations support \cite{Adriansyah2013}. Directly-follows summaries are cheaper but omit longer-range dependencies and can conceal concurrency \cite{vanDerAalst2019DFG}. Retrieval can therefore identify candidates before conformance checking, but a high retrieval rank is not itself a certificate from conformance checking.
 
@@ -122,7 +122,7 @@ Trace encodings range from handcrafted features to sequence models \cite{Barbon2
 
 Classical process discovery maps finite event logs to generalizing process models, with methods trading fitness, precision, simplicity, scalability, and representational bias \cite{Augusto2019DiscoveryBenchmark}. Inductive Miner recursively detects cuts and returns a sound block-structured model \cite{Leemans2013}; Split Miner targets accurate, simple BPMN models and may express non-block-structured dependencies \cite{Augusto2019SplitMiner}. Learned process discovery estimates process structure from examples, including with graph neural networks \cite{Sommers2023}. Natural-language-to-model generation and specialized language models provide further structured-generation settings \cite{Kourani2024LLMProcessModeling,Berti2025RLProcessModeling}.
 
-Retrieval, process discovery, and candidate generation must not be conflated. Process discovery constructs a model from an event log; retrieval searches an existing gallery; candidate generation proposes a model that still requires validation. Only event log to process tree decoding overlaps directly with classical process discovery in this study, so Inductive Miner is a baseline for that decoding task, not for cross-artifact retrieval.
+Retrieval, process discovery, and candidate generation must be distinguished. Process discovery constructs a model from an event log; retrieval searches an existing collection of candidate models; candidate generation proposes a model that still requires validation. Only event log to process tree decoding overlaps directly with classical process discovery in this study, so Inductive Miner is a baseline for that decoding task, not for cross-artifact retrieval.
 
 \subsection{Multimodal and Multi-View Representation Learning}
 
@@ -164,41 +164,11 @@ Formal similarity, exact transformation, learned retrieval, and process discover
 
 \subsection{Heterogeneous Process Artifacts}
 
-Training examples are generated as families rather than as independent triples. Consider a process that first registers a request and then either accepts or rejects it. The repeated prefix can be represented structurally in more than one way:
-\begin{equation}
-T=\mathsf{XOR}\bigl(
-  \mathsf{SEQ}(\textsf{register},\textsf{accept}),
-  \mathsf{SEQ}(\textsf{register},\textsf{reject})
-\bigr).
-\label{eq:worked-family}
-\end{equation}
-One Petri net realization, $N^{(1)}$, has a distinct transition labeled \textsf{register} on each choice branch. A second realization, $N^{(2)}$, uses one shared \textsf{register} transition followed by two silent routing transitions. Their internal structures differ, but both allow exactly
-\[
-\langle\textsf{register},\textsf{accept}\rangle
-\quad\text{and}\quad
-\langle\textsf{register},\textsf{reject}\rangle.
-\]
-The generator creates two finite event logs from this common trace pool. The cycled-coverage observation repeats available variants evenly before shuffling, whereas the resampled observation draws variants independently with replacement. Pairing each event log with each realization gives the four rows in Table~\ref{tab:worked-family}.
+Event logs, process trees, and Petri nets are \emph{heterogeneous process artifacts}: they can refer to the same process behavior, but they do not contain the same kind or amount of information. An event log records executions that happened to be observed. A process tree and a Petri net are executable models that describe behavior that may occur, including paths that are absent from a particular log. Moreover, process trees organize behavior hierarchically, whereas Petri nets encode state and routing in a graph. The difference is therefore not merely one of file format or serialization; it concerns \emph{observability}, \emph{structure}, and \emph{behavioral semantics}.
 
-\begin{table}[H]
-\centering
-\caption{Four rows produced by the worked duplicate-prefix family.}
-\label{tab:worked-family}
-\begin{tabularx}{\textwidth}{@{}cP{0.12\textwidth}p{0.34\textwidth}Y@{}}
-\toprule
-Row & Process tree target & Petri net realization & Event log observation \\
-\midrule
-1 & $T$ & duplicated visible prefix $N^{(1)}$ & cycled-coverage observation \\
-2 & $T$ & shared prefix with silent routing $N^{(2)}$ & cycled-coverage observation \\
-3 & $T$ & duplicated visible prefix $N^{(1)}$ & independent resample \\
-4 & $T$ & shared prefix with silent routing $N^{(2)}$ & independent resample \\
-\bottomrule
-\end{tabularx}
-\end{table}
+Let $\mathcal{A}$ be a finite activity alphabet and $\tauact$ an invisible activity. A trace $\sigma\in\mathcal{A}^{*}$ is one finite sequence of visible activities, and an event log $L$ is a finite multiset of such traces. The word ``multiset'' is important: if ten cases follow $\langle a,b\rangle$ and one follows $\langle a,c\rangle$, the log retains those empirical frequencies. However, the absence of $\langle a,c\rangle$ from a smaller sample does not prove that the underlying process forbids it. An event log is thus a \emph{finite observation}, not a complete behavioral specification.
 
-The four rows are deliberately not treated as four independent processes. They show two kinds of variation around one designated target: structural variation between the Petri net realizations and observational variation between the finite event logs. Keeping the four rows together lets the learning objective compare these variations directly and prevents related artifacts from leaking across data splits. Family membership organizes the comparisons, while the relation record determines whether a particular pair is equivalent under both recorded semantics or related under a weaker notion. We now formalize the artifact types and tasks illustrated by this example.
-
-Let $\mathcal{A}$ be a finite activity alphabet and $\tauact$ an invisible activity. A trace is a word $\sigma\in\mathcal{A}^{*}$, and an event log $L$ is a finite multiset of traces. A process tree $T$ is generated by
+A process tree $T$ is generated by
 \begin{equation}
 T ::= a \mid \tauact \mid \mathsf{SEQ}_{k}(T_1,\ldots,T_k)
  \mid \mathsf{XOR}_{k}(T_1,\ldots,T_k)
@@ -206,32 +176,83 @@ T ::= a \mid \tauact \mid \mathsf{SEQ}_{k}(T_1,\ldots,T_k)
  \mid \mathsf{LOOP}(T_1,T_2),
 \label{eq:grammar}
 \end{equation}
-where $a\in\mathcal{A}$ and $k\geq2$. A labeled Petri net is a tuple $N=(P,U,F,\ell,m_0,m_f)$ with places $P$, transitions $U$, flow relation $F$, labels $\ell:U\rightarrow\mathcal{A}\cup\{\tauact\}$, and initial and final markings $m_0,m_f$.
+where $a\in\mathcal{A}$ and $k\geq2$. The operator $\mathsf{SEQ}$ executes its children in order, $\mathsf{XOR}$ selects one child, and $\mathsf{AND}$ permits concurrent execution of its children. In $\mathsf{LOOP}(T_1,T_2)$, the body $T_1$ executes at least once and the redo branch $T_2$ determines how another iteration is entered. This grammar gives a compact, \emph{block-structured specification}, but it cannot express every valid Petri net topology.
 
-The operators have their usual process tree meaning. \textsf{SEQ} executes its children in order, \textsf{XOR} selects one child, and \textsf{AND} permits its children to proceed concurrently. In $\mathsf{LOOP}(T_1,T_2)$, the body $T_1$ executes at least once and the redo branch $T_2$ determines how another iteration is entered. The grammar produces block-structured process trees and cannot express every valid Petri net topology.
+A labeled Petri net is a tuple $N=(P,U,F,\ell,m_0,m_f)$ with places $P$, transitions $U$, flow relation $F$, labels $\ell:U\rightarrow\mathcal{A}\cup\{\tauact\}$, and initial and final markings $m_0,m_f$. Tokens in the marking determine which transitions are enabled, so a Petri net represents choices, synchronization, and concurrency through its execution state. Transitions labeled $\tauact$ can change that state without adding a visible activity to a trace. A Petri net is consequently a \emph{state-based process model}, rather than a hierarchical expression or a sample of executions.
 
-Each family contains one designated process tree target, which serves as the unique supervised output for decoding. It is canonical within the dataset construction, but need not be the only process tree compatible with a finite event log. Its compact grammar supports constrained generation and conversion into a sound Petri net, while limiting the output to block-structured behavior.
+These differences make literal matching unsuitable. Two models can have different nodes and routing structures yet permit the same visible executions; conversely, the same finite log can be compatible with several models that differ on unobserved behavior or concurrency. The relevant correspondence is therefore a \emph{declared behavioral relation}, not equality of syntax, identifiers, or observed frequencies.
+
+Consider a process that first registers a request and then either accepts or rejects it. One process tree representation is
+\begin{equation}
+T=\mathsf{XOR}\bigl(
+  \mathsf{SEQ}(\textsf{register},\textsf{accept}),
+  \mathsf{SEQ}(\textsf{register},\textsf{reject})
+\bigr).
+\label{eq:worked-family}
+\end{equation}
+The tree contains two distinct leaves with the visible label \textsf{register}, one in each exclusive-choice branch. A corresponding Petri net realization, $N^{(1)}$, likewise has a separate \textsf{register} transition on each branch. Another realization, $N^{(2)}$, factors out the repeated prefix: it uses one shared \textsf{register} transition and then two silent routing transitions that select \textsf{accept} or \textsf{reject}. Thus $N^{(1)}$ and $N^{(2)}$ differ in their numbers of visible transitions and in their routing graphs, but both allow exactly
+\[
+\langle\textsf{register},\textsf{accept}\rangle
+\quad\text{and}\quad
+\langle\textsf{register},\textsf{reject}\rangle.
+\]
+This is a concrete example of \emph{structural non-uniqueness}: different internal models describe the same visible trace set.
+
+To complete the example, consider how the same behavior appears in an event log. Every completed case records one of the two traces above. However, an event log contains only a finite number of cases, so two logs observed from the same process need not contain the two variants in the same proportions. One log may contain the accept and reject variants about equally often, while another may contain mostly accept cases and only a few reject cases. This difference reflects \emph{observational variation}: the cases happened to be sampled with different frequencies, but the set of behavior permitted by the process has not changed.
+
+The dataset uses two complementary observations to make this distinction visible during learning. The \emph{coverage-oriented observation}, denoted $L^{(u)}$, cycles through the available trace variants before repeating them. It therefore presents the model with broad coverage of the known trace pool. The \emph{independently sampled observation}, denoted $L^{(r)}$, draws traces with replacement and can therefore contain an uneven empirical distribution. The first observation reduces accidental omissions; the second exposes the model to the frequency variation that naturally arises in finite samples. Neither observation is treated as a complete description of the process.
+
+We can now explain why the training data are organized into \emph{behavior families}. For the worked example, the family contains one process tree target $T$, two structurally different Petri net realizations $N^{(1)}$ and $N^{(2)}$, and two finite event log observations $L^{(u)}$ and $L^{(r)}$. Pairing each Petri net with each event log produces the four aligned rows in Table~\ref{tab:worked-family}. The process tree appears in every row because it is the common decoding target, not because four different process trees were created.
+
+\begin{table}[H]
+\centering
+\caption{Four aligned rows in the worked duplicate-prefix behavior family.}
+\label{tab:worked-family}
+\begin{tabularx}{\textwidth}{@{}cP{0.12\textwidth}p{0.34\textwidth}Y@{}}
+\toprule
+Row & Process tree target & Petri net realization & Event log observation \\
+\midrule
+1 & $T$ & duplicated visible prefix $N^{(1)}$ & coverage-oriented $L^{(u)}$ \\
+2 & $T$ & shared prefix with silent routing $N^{(2)}$ & coverage-oriented $L^{(u)}$ \\
+3 & $T$ & duplicated visible prefix $N^{(1)}$ & independently sampled $L^{(r)}$ \\
+4 & $T$ & shared prefix with silent routing $N^{(2)}$ & independently sampled $L^{(r)}$ \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The four rows represent one related group, not four independent processes. Within the group, changing $N^{(1)}$ to $N^{(2)}$ isolates \emph{structural variation}: the routing graph changes while the visible trace set remains the same. Changing $L^{(u)}$ to $L^{(r)}$ isolates \emph{observational variation}: the sampled cases and their frequencies change while their source behavior remains the same. Presenting both forms of variation helps the representation learn that node identities, routing layout, case order, and empirical trace frequency are not by themselves reliable indicators of behavioral difference.
+
+Keeping the complete family in one training, validation, or test split is equally important. If related rows were divided across splits, the system could be evaluated on another view of a process it had already seen during training. Family-level splitting prevents this direct leakage. Within a split, family membership identifies which artifacts belong to the same comparison group. It does not, by itself, claim that every pair is equivalent under every behavioral semantics; the relation record introduced in the next subsection specifies the exact relation used for supervision.
+
+Finally, the family uses one \emph{designated process tree target} because supervised decoding requires a single reference output. This is a dataset convention, not a uniqueness claim. Several process trees may be compatible with the same finite event log, especially when the log omits possible behavior. The designated target provides a consistent training signal, while the grammar restricts generated outputs to well-formed, block-structured process trees that can be converted into Petri nets.
 
 \subsection{Behavioral Relations and Equivalence Levels}
 
-A \emph{behavior family} is a data-generation and split unit containing related artifacts. Family membership alone does not assert equivalence under every behavioral semantics. The accompanying relation record states whether two artifacts share their complete visible trace language, their recorded partial-order semantics, both, or only bounded evidence. These recorded relations, rather than family membership alone, determine how the pair is used during training.
+The previous subsection grouped several artifacts around one process tree. This raises a central question: \emph{what does it mean for two process artifacts to describe the same behavior?} Structural equality is too strict because the duplicate-prefix nets $N^{(1)}$ and $N^{(2)}$ have different routing graphs but allow the same visible executions. At the same time, equality of visible traces can be too weak because it does not always preserve information about causality or concurrency. Finally, agreement with a finite event log says only that a model can explain the observed cases; it does not establish agreement on behavior that the log never recorded.
 
-Throughout the paper, we distinguish three levels. The \emph{underlying specification} is the designated process tree before observation-specific relabeling. An \emph{artifact realization} is a process tree or Petri net structure related to that specification under a declared relation. A \emph{finite observation} is an event log sampled from the trace pool.
+The paper therefore records behavioral agreement along two separate semantic dimensions. \emph{Visible-language agreement} means that two process models permit the same complete set of visible activity sequences. \emph{Partial-order agreement} means that they also agree on the recorded ordering and concurrency relations between activities. When analysis observes matching behavior only within a search limit, the result is retained as \emph{bounded evidence}; it is not promoted to a claim of complete-language equivalence.
 
-Formally, family $f$ contains a designated process tree $T_f$, two Petri net realizations $N_f^{(1)},N_f^{(2)}$, and two event log observations $L_f^{(u)},L_f^{(r)}$, where $u$ denotes the cycled-coverage implementation mode and $r$ the independent resample. Their pairing is
-\[
-\begin{array}{c|cc}
- & L_f^{(u)} & L_f^{(r)}\\
-\hline
-N_f^{(1)} & (T_f,N_f^{(1)},L_f^{(u)}) & (T_f,N_f^{(1)},L_f^{(r)})\\
-N_f^{(2)} & (T_f,N_f^{(2)},L_f^{(u)}) & (T_f,N_f^{(2)},L_f^{(r)})
-\end{array}
-\]
-Thus one family produces four aligned rows. For readability, the notation suppresses observation-specific activity relabeling. The family has one designated process tree before relabeling, but the stored rows contain consistently relabeled copies $T_f^{(u)}$ and $T_f^{(r)}$, together with the corresponding relabeled Petri nets and event logs. The two stored process tree targets are therefore surface-different copies of the same underlying target. Each event log observation and Petri net realization participates in two rows.
+For example, one model may allow \textsf{check credit} and \textsf{prepare invoice} to run in parallel, while another explicitly allows either sequential order. Both models permit the visible traces $\langle\textsf{check credit},\textsf{prepare invoice}\rangle$ and $\langle\textsf{prepare invoice},\textsf{check credit}\rangle$, so they have visible-language agreement. Only the first model represents the activities as concurrent, so they do not have partial-order agreement.
+
+Keeping these dimensions separate makes the supervision explicit. A pair that agrees under both recorded semantics can be used as a strong positive example. A pair with the same visible language but a different partial-order relation is still behaviorally related, but it receives weaker supervision so that the model is not taught to erase the concurrency difference. Bounded evidence never creates an exact positive. The later methods section describes how these relations are established and checked.
+
+This distinction also explains the role of a \emph{behavior family}. A family is a data-generation and split unit that collects artifacts which should be compared with one another. It is deliberately broader than an equivalence class. Family membership places artifacts in the same controlled comparison; it does not declare them identical under every semantics. The family's relation record states the more precise relationship and determines how each comparison is used during training.
+
+To describe the contents of a family clearly, we use three terms for three different roles:
+\begin{itemize}
+\item The \emph{underlying specification} is the original process tree on which the family is based. In the request example, it is the tree in Eq.~\eqref{eq:worked-family}. It provides the common reference for the family.
+\item An \emph{artifact realization} is a concrete process model representing that specification. In the request example, the duplicated-prefix Petri net and the shared-prefix Petri net are two realizations. They use different structures to represent the same visible traces.
+\item A \emph{finite observation} is an event log containing cases sampled from the process. The coverage-oriented and independently sampled logs are two observations. They can contain different trace frequencies because neither log records every possible execution of the process.
+\end{itemize}
+These terms describe different roles, not different degrees of correctness. The specification anchors the family, a realization models its behavior, and an observation records a finite sample of that behavior.
+
+For a family identified by $f$, we write $T_f$ for the underlying process tree, $N_f^{(1)}$ and $N_f^{(2)}$ for the two Petri net realizations, and $L_f^{(u)}$ and $L_f^{(r)}$ for the two event log observations. Here, $u$ denotes the coverage-oriented observation and $r$ the independently sampled observation. A stored row combines $T_f$, one of the two Petri nets, and one of the two event logs. Using every such combination produces the four rows shown in Table~\ref{tab:worked-family}. Keeping $T_f$ fixed while changing the Petri net isolates structural variation; keeping the Petri net fixed while changing the event log isolates observational variation.
+
+For readability, this notation shows the activities using their original names. The stored data use consistent neutral activity names within each row, as explained in Section~\ref{sec:relations}. This renaming can make two artifacts from the same family look different at the label level without changing their recorded relationship. The relation record, rather than surface labels, therefore determines how the artifacts are compared.
 
 \subsection{Cross-Artifact Retrieval Task}
 
-For artifact type $m\in\{T,L,N\}$, an encoder produces two representations. The contextual memory $H_m$ retains detailed, local information and is used by the decoder. The normalized vector $\vect z_m$ is a compact summary used for retrieval, distance calculations, and fusion. Given a query vector from one modality and a gallery from another, cross-artifact retrieval ranks candidates by cosine similarity. Relevance is defined by the recorded relation used in the particular experiment, not by surface equality.
+For artifact type $m\in\{T,L,N\}$, an encoder produces two representations. The contextual memory $H_m$ retains detailed, local information and is used by the decoder. The normalized vector $\vect z_m$ is a compact summary used for retrieval, distance calculations, and fusion. Given a query vector from one modality and a candidate collection from another, cross-artifact retrieval ranks candidates by cosine similarity. Relevance is defined by the recorded relation used in the particular experiment, not by surface equality.
 
 \subsection{Constrained Candidate-Generation Task}
 
@@ -545,7 +566,7 @@ Thus the guarantees are syntactic and representational. Sound Petri net conversi
 
 \subsection{Computational Cost}\label{sec:complexity}
 
-Let $E_L$ be the number of presented events in an event log, $R$ the number of presented traces, $n_T$ the number of process tree tokens, $V_N$ and $E_N$ the Petri net node and arc counts, $d$ the hidden dimension, $k$ the message-passing steps, $M$ the repository size, $B$ the beam width, and $G$ the generated length. Ignoring fixed layer counts, the recurrent event log path costs $O(E_Ld^2)$ plus set aggregation over $R$ traces; full attention in the process tree encoder costs $O(n_T^2d)$; and the graph encoder costs $O(k(V_Nd^2+E_Nd))$. Exact cosine search over a materialized gallery costs $O(Md)$ per query and $O(Md)$ storage; approximate indexing could alter this trade-off but is not evaluated here. Beam decoding costs $O(BG)$ decoder steps, each including attention to the fixed source memory and a vocabulary projection. The selected checkpoint contains 6,263,248 parameters. The experimental protocol does not include wall-clock or memory measurements, so the paper makes no empirical scalability claim beyond these analytical costs and the parameter count.
+Let $E_L$ be the number of presented events in an event log, $R$ the number of presented traces, $n_T$ the number of process tree tokens, $V_N$ and $E_N$ the Petri net node and arc counts, $d$ the hidden dimension, $k$ the message-passing steps, $M$ the repository size, $B$ the beam width, and $G$ the generated length. Ignoring fixed layer counts, the recurrent event log path costs $O(E_Ld^2)$ plus set aggregation over $R$ traces; full attention in the process tree encoder costs $O(n_T^2d)$; and the graph encoder costs $O(k(V_Nd^2+E_Nd))$. Exact cosine search over a materialized candidate collection costs $O(Md)$ per query and $O(Md)$ storage; approximate indexing could alter this trade-off but is not evaluated here. Beam decoding costs $O(BG)$ decoder steps, each including attention to the fixed source memory and a vocabulary projection. The selected checkpoint contains 6,263,248 parameters. The experimental protocol does not include wall-clock or memory measurements, so the paper makes no empirical scalability claim beyond these analytical costs and the parameter count.
 
 \subsection{Training objectives}\label{sec:training}
 
@@ -741,7 +762,7 @@ Table~\ref{tab:rq-metrics} maps each question to its evaluation. Grammar validit
 Question & Evaluation unit & Main metrics & Baselines \\
 \midrule
 \RQone: alignment & Family pairs & Cosine invariance, Recall@1, Spearman correlation with $d_B$ & Deterministic event log and Petri net features \\
-\RQtwo: retrieval & Query/gallery pair & Recall@1 and MRR & Random relevance-group retrieval; available modality-specific deterministic features \\
+\RQtwo: retrieval & Query/candidate-type pair & Recall@1 and MRR & Random relevance-group retrieval; available modality-specific deterministic features \\
 \RQthree: candidate generation & Decoded artifact or event log & Exact match, normalized process tree edit, $d_B$, evaluator coverage, footprint fitness, precision, and F1 & Inductive Miner for event log input \\
 \bottomrule
 \end{tabularx}
@@ -751,7 +772,7 @@ Normalized process tree edit distance is the ordered process tree edit cost divi
 
 For \RQone, within-type invariance compares alternate event log observations and Petri net realizations. Behavioral ordering compares cosine distance with $d_B$. Baselines include trace-variant, directly-follows, eventually-follows, activity, and aggregate event log features, along with Petri net counts and a Node2Vec-style embedding \cite{Grover2016}.
 
-For \RQtwo, the row-level retrieval gallery retains the balanced expansion: the underlying process tree contributes four instances, while each event log observation and Petri net realization contributes two. Observation-specific activity maps can make repeated instances surface-different. All four rows of the matching relevance group are relevant. With 16 equally represented groups, random group-level Recall@1 is $1/16=0.0625$. Equal multiplicity leaves that prior unchanged, but multiple positive instances can make this protocol easier than a deduplicated gallery; the claim is therefore limited to the stated row-level setting. MRR can also depend on deterministic tie order and is treated as secondary.
+For \RQtwo, the row-level retrieval candidate set retains the balanced expansion: the underlying process tree contributes four instances, while each event log observation and Petri net realization contributes two. Observation-specific activity maps can make repeated instances surface-different. All four rows of the matching relevance group are relevant. With 16 equally represented groups, random group-level Recall@1 is $1/16=0.0625$. Equal multiplicity leaves that prior unchanged, but multiple positive instances can make this protocol easier than a deduplicated candidate set; the claim is therefore limited to the stated row-level setting. MRR can also depend on deterministic tie order and is treated as secondary.
 
 For \RQthree, every output is parsed, folded, and converted to a Petri net before semantic evaluation. Exact process tree match, normalized edit distance, $d_B$, and behavioral-simulation coverage are reported separately. Behavioral averages are conditional on successful simulation, so coverage appears in Table~\ref{tab:decode}. The process discovery comparison evaluates process trees decoded from event logs and Inductive Miner using footprint fitness and precision. Its coverage value is the fraction for which the footprint conformance checking routine completes; it is distinct from behavioral-simulation coverage in Table~\ref{tab:decode}.
 
@@ -876,10 +897,10 @@ The geometry result must be interpreted in light of its supervision. Components 
 \subsection{\RQtwo: Cross-Artifact Retrieval}\label{sec:retrieval-results}
 
 \paragraph{\RQtwo answer.}
-Under the fixed multi-observation protocol, the shared space supports cross-artifact search: directional Recall@1 ranges from 0.656 to 0.875, versus a random relevance-group baseline of 0.0625. Event log queries retrieving process trees are the hardest direction, while process tree queries retrieving event logs are strongest. The result supports retrieval within this controlled row-level gallery; it is not evidence for full-test or deduplicated process-level retrieval.
+Under the fixed multi-observation protocol, the shared space supports cross-artifact search: directional Recall@1 ranges from 0.656 to 0.875, versus a random relevance-group baseline of 0.0625. Event log queries retrieving process trees are the hardest direction, while process tree queries retrieving event logs are strongest. The result supports retrieval within this controlled row-level candidate set; it is not evidence for full-test or deduplicated process-level retrieval.
 
 \begin{table}[H]
-\caption{Directional cross-artifact retrieval as Recall@1 / MRR on the fixed 48-family detailed subset (16 families per level). For each direction and level, the evaluation unit is a query row and the gallery contains 64 rows in 16 relevance groups; duplicate observations/realizations are permitted and all four rows in the matching group are relevant. Higher is better.\label{tab:retrieval}}
+\caption{Directional cross-artifact retrieval as Recall@1 / MRR on the fixed 48-family detailed subset (16 families per level). For each direction and level, the evaluation unit is a query row and the candidate set contains 64 rows in 16 relevance groups; duplicate observations/realizations are permitted and all four rows in the matching group are relevant. Higher is better.\label{tab:retrieval}}
 \centering
 \begin{tabular}{@{}lccc@{}}
 \toprule
@@ -895,7 +916,7 @@ Process tree $\rightarrow$ event log & 0.875 / 0.905 & 0.875 / 0.905 & 0.875 / 0
 \end{tabular}
 \end{table}
 
-Each relevance group has four gallery rows, so multiple positive observations or realizations make this protocol easier than retrieval against one deduplicated artifact per process. Equal multiplicity preserves the random group prior, but repeated instances can affect rank and tie ordering. The row-level result is consequently described as \emph{multi-observation retrieval} and should not be interpreted as process-level repository performance.
+Each relevance group has four candidate rows, so multiple positive observations or realizations make this protocol easier than retrieval against one deduplicated artifact per process. Equal multiplicity preserves the random group prior, but repeated instances can affect rank and tie ordering. The row-level result is consequently described as \emph{multi-observation retrieval} and should not be interpreted as process-level repository performance.
 
 \FloatBarrier
 \subsection{\RQthree: Structural Guarantees and Behavioral Limits of Candidate Generation}\label{sec:decode-results}
@@ -958,7 +979,7 @@ Table~\ref{tab:discovery} compares event log decoding with Inductive Miner. \mod
 
 \begin{table}[H]
 \centering
-\caption{Process discovery from event logs on the fixed 48-family detailed subset using 64 event log source rows per level (16 families; repeated observations retained; no retrieval gallery). The evaluation unit is a discovered model. Higher fitness, precision, and F1 values are better; evaluable is the percentage for which the footprint routine completed. Intervals are family-bootstrap intervals for F1.}
+\caption{Process discovery from event logs on the fixed 48-family detailed subset using 64 event log source rows per level (16 families; repeated observations retained; no retrieval candidate set). The evaluation unit is a discovered model. Higher fitness, precision, and F1 values are better; evaluable is the percentage for which the footprint routine completed. Intervals are family-bootstrap intervals for F1.}
 \label{tab:discovery}
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{@{}llrrrrl@{}}
@@ -986,7 +1007,7 @@ For the real event logs, the dominant failure is underfitting rather than repeat
 
 \begin{table}[H]
 \centering
-\caption{External event log generation stress test for two event logs (Receipt: 128 selected cases; Road Traffic: 100 cases; no retrieval gallery). The evaluation unit is one generated or mined model per method and event log. Higher fitness, precision, and F1 values are better. ``Repeat'' counts visible leaves beyond the first occurrence of each label.}
+\caption{External event log generation stress test for two event logs (Receipt: 128 selected cases; Road Traffic: 100 cases; no retrieval candidate set). The evaluation unit is one generated or mined model per method and event log. Higher fitness, precision, and F1 values are better. ``Repeat'' counts visible leaves beyond the first occurrence of each label.}
 \label{tab:real-log-results}
 \small
 \setlength{\tabcolsep}{3pt}
@@ -1025,7 +1046,7 @@ Behavior families expose nuisance variation directly. Finite sampling changes an
 
 \subsection{Implications for Artifact Retrieval and Reuse}
 
-The directional retrieval results support a common interface for querying a controlled repository across notation boundaries. An event log can retrieve stored models, and a process tree can retrieve related Petri nets or observations without a notation-specific pairwise matcher. In practice, those neighbors could act as precedents for model reuse, variant comparison, or candidate selection before conformance checking. The present evidence is limited to the multi-observation gallery; it does not establish performance for a large, deduplicated repository.
+The directional retrieval results support a common interface for querying a controlled repository across notation boundaries. An event log can retrieve stored models, and a process tree can retrieve related Petri nets or observations without a notation-specific pairwise matcher. In practice, those neighbors could act as precedents for model reuse, variant comparison, or candidate selection before conformance checking. The present evidence is limited to the multi-observation candidate set; it does not establish performance for a large, deduplicated repository.
 
 \subsection{Why Deterministic Baselines Remain Strong}
 
