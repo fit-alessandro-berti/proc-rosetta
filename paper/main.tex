@@ -417,8 +417,6 @@ Figure~\ref{fig:architecture} separates three paths. In the upper path, normaliz
 
 \input{figures/architecture}
 
-\FloatBarrier
-
 The encoders differ because each artifact requires a different inductive bias:
 
 \begin{table*}[!t]
@@ -461,12 +459,11 @@ The shared decoder predicts tree structure, operator arity, and visible activiti
 
 The constrained procedure guarantees three structural properties: the prefix closes all required child slots, only permitted activity labels are emitted, and the resulting tree can be parsed and converted to a Petri net. The decoder must still learn every behaviorally important choice: which operator to select, where to place each activity, how large the tree should be, and whether the resulting process model reproduces the source behavior. Grammar validity therefore removes malformed outputs but does not solve process reconstruction. The evaluated synthetic policy restricts activities to the source alphabet and suppresses repeated visible labels. Because repeated labels can be legitimate, the external-log cases also evaluate the same source representation with that mask disabled.
 
-\input{figures/decoder}
-
-\FloatBarrier
 \subsection{Training objectives}\label{sec:training}
 
 The losses address three different failure modes. Reconstruction losses teach the decoder to produce the designated tree from each individual modality and from fused inputs. Alignment losses teach the semantic vectors which differences to ignore and which distinctions to retain. Regularization losses prevent the shared space from collapsing and stabilize structured generation. The fields produced by the generator determine which loss can be applied; Table~\ref{tab:data-to-loss} makes that connection explicit.
+
+\input{figures/decoder}
 
 \begin{table*}[!t]
 \centering
@@ -626,7 +623,6 @@ Across the three levels, the training split contains 12,288 families and 49,152 
 
 Training and quantitative testing use the same generator design. The test split contains no training family, but independent families can still share a visible language or designated tree across splits. The experiments therefore measure generalization to newly generated families, not to a different data-generating process. Section~\ref{sec:generation} states the relation checks, and Section~\ref{sec:data-specification} states the fixed generation settings.
 
-\FloatBarrier
 \subsection{Fixed evaluation subset}
 
 The full test split contains 512 families per level. Repeated beam decoding, behavioral simulation, and process-discovery evaluation over all three full splits would require a multi-hour exhaustive pass. The detailed evaluation therefore uses a deterministic family-complete subset of 16 families per level, chosen by interleaving motif and observation strata. This yields 48 families, 192 stored rows, and 768 decoding runs across the four source conditions. Results refer to this subset unless explicitly described as corpus statistics.
@@ -828,7 +824,6 @@ Ordinary & 1.224 / 0.662 & 1.580 / 0.798 & 1.715 / 0.832 \\
 \end{tabular}
 \end{table*}
 
-\FloatBarrier
 \subsection{\RQthree: Cross-modal retrieval and specialized discovery}
 
 \paragraph{\RQthree answer.}
@@ -909,7 +904,6 @@ Figure~\ref{fig:real-log-tree} shows the road-traffic output using the process-t
 
 \input{figures/real-log-tree}
 
-\FloatBarrier
 \subsection{Illustrative running example}
 
 The external running example demonstrates that the released interface can ingest all three supported file types and return process-tree output. It is a software-level illustration rather than an additional quantitative evaluation. Table~\ref{tab:running} summarizes the translations. Petri-net input produces the closest tree, but even direct process-tree reconstruction changes routing.
@@ -934,7 +928,6 @@ Figure~\ref{fig:running-example} compares the loop fragments of the source tree 
 
 \input{figures/running-example}
 
-\FloatBarrier
 \section{Reference implementation and interactive tool}\label{sec:reproduction}
 
 \subsection{Implementation and access}
