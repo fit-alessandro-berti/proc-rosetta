@@ -1,0 +1,20 @@
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+ ybar,bar width=8pt,width=0.94\textwidth,height=5.7cm,
+ ymin=0,ymax=0.9,ylabel={Spearman $\rho$},
+ symbolic x coords={Simple,Medium,Complex},xtick=data,
+ legend style={at={(0.5,-0.20)},anchor=north,legend columns=4,draw=none,font=\scriptsize,column sep=1.2ex},
+ grid=major,grid style={prgray!15},
+]
+\addplot[fill=prblue,draw=prblue] coordinates {(Simple,0.577) (Medium,0.743) (Complex,0.791)};
+\addplot[fill=prteal,draw=prteal] coordinates {(Simple,0.713) (Medium,0.628) (Complex,0.453)};
+\addplot[fill=prgold,draw=prgold] coordinates {(Simple,0.550) (Medium,0.693) (Complex,0.750)};
+\addplot[fill=prpurple,draw=prpurple] coordinates {(Simple,0.189) (Medium,0.201) (Complex,0.535)};
+\legend{fused embedding,trace variants,directly follows,Petri-net Node2Vec}
+\end{axis}
+\end{tikzpicture}
+\caption{Agreement with the supervised operational behavioral distance. The fused embedding strengthens across complexity levels, while deterministic event-log features remain competitive.}
+\label{fig:geometry-bars}
+\end{figure}

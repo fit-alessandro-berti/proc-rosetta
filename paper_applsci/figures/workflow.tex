@@ -1,0 +1,29 @@
+\begin{figure}[H]
+\centering
+\resizebox{0.98\textwidth}{!}{%
+\begin{tikzpicture}[
+  node distance=5mm,
+  stage/.style={draw=prgray!75,rounded corners=2pt,minimum height=10mm,
+    text width=31mm,align=center,inner sep=3pt},
+  gate/.style={draw=prred!75,rounded corners=2pt,minimum height=10mm,
+    text width=34mm,align=center,inner sep=3pt,fill=prlightred},
+  flow/.style={-{Stealth[length=1.8mm]},semithick,draw=prblue}
+]
+\node[stage,fill=prlightgold] (query) {query artifact\\log, tree, or net};
+\node[stage,fill=prlightblue,right=of query] (encode) {modality-specific\\encoder};
+\node[stage,fill=prlightteal,right=of encode] (space) {shared behavior-aware\\representation};
+\node[stage,fill=prlightblue,right=of space] (search) {repository search\\and ranked artifacts};
+\node[stage,fill=prlightgold,below=10mm of search] (propose) {optional constrained\\tree proposal};
+\node[gate,left=of propose] (validate) {conformance, soundness,\\and semantic validation};
+\node[stage,fill=prlightteal,left=of validate] (analyst) {analyst accepts, rejects,\\or refines};
+\draw[flow] (query)--(encode);
+\draw[flow] (encode)--(space);
+\draw[flow] (space)--(search);
+\draw[flow] (search)--node[right,font=\scriptsize]{optional}(propose);
+\draw[flow] (search.south west) to[out=-150,in=35] node[above,font=\scriptsize]{reuse retrieved model} (analyst.north east);
+\draw[flow] (propose)--(validate);
+\draw[flow] (validate)--(analyst);
+\end{tikzpicture}%
+}
+\caption{Intended retrieve--propose--validate workflow. Retrieval precedes optional candidate generation; neither a high rank nor syntactic validity bypasses established validation or analyst judgment.\label{fig:application-workflow}}
+\end{figure}

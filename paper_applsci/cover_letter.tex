@@ -1,0 +1,43 @@
+\documentclass[10pt]{article}
+\usepackage[a4paper,margin=22mm]{geometry}
+\usepackage[hidelinks]{hyperref}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+
+\begin{document}
+
+\begin{flushright}
+Process and Data Science Group\\
+RWTH Aachen University\\
+Ahornstrasse 55, 52074 Aachen, Germany\\
+\texttt{a.berti@pads.rwth-aachen.de}\\[5pt]
+2 September 2026
+\end{flushright}
+
+Guest Editors\\
+Applied Sciences Special Issue\\
+``Process Mining: Theory and Applications''
+
+Dear Guest Editors,
+
+Please consider our Research Article, ``ProcRosetta: Behavior-Supervised Alignment and Retrieval of Heterogeneous Process Mining Artifacts,'' for the Applied Sciences Special Issue ``Process Mining: Theory and Applications.''
+
+The manuscript studies how to compare and retrieve behaviorally related event logs, process trees, and Petri nets despite their different structures. ProcRosetta organizes heterogeneous examples into behavior families and trains modality-specific encoders in a shared space using relation-aware supervision. On the fixed 48-family held-out subset, directional cross-artifact Recall@1 ranges from 0.656 to 0.875 under the reported multi-observation protocol. The revision scopes these values to that protocol and does not infer full-test or deduplicated-repository performance.
+
+The work fits the Special Issue through its treatment of event logs, process-model retrieval, AI-assisted discovery support, conformance-based validation, and computational feasibility. Its intended application is a retrieve--propose--validate workflow: an analyst queries a heterogeneous repository, optionally requests a process-tree candidate, and subjects that candidate to established conformance, soundness, and behavioral checks before acceptance.
+
+The grammar-constrained decoder guarantees well-formed process-tree expressions and their representational conversion to Petri nets under the stated assumptions. These properties do not guarantee behavioral preservation. The manuscript retains the negative generation and external-log results and shows that direct event-log-to-tree generation is currently weaker than the reported Inductive Miner baseline. ProcRosetta is presented as an alignment, retrieval, and candidate-proposal framework, not as a replacement for process discovery or conformance checking.
+
+The source code, data-generation pipeline, trained checkpoint, recorded evaluation evidence, and inspection interface are publicly available, with exact revision and checksum information in the manuscript. Supplementary material provides implementation, training, and qualitative detail.
+
+This manuscript is original, has not been published previously, and is not under consideration by another journal. All authors approved the manuscript and agree with its submission. Wil M. P. van der Aalst is affiliated with Celonis; the authors declare no other relevant financial or non-financial competing interests. The manuscript discloses the use of generative AI during preparation; the authors remain responsible for all scientific content, analysis, citations, and validation.
+
+Thank you for considering our manuscript.
+
+Sincerely,
+
+Alessandro Berti\\
+on behalf of all authors
+
+\end{document}

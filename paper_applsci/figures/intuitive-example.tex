@@ -1,0 +1,63 @@
+\begin{figure}[H]
+\centering
+\resizebox{0.94\textwidth}{!}{%
+\begin{tikzpicture}[
+ panel/.style={draw=prgray!55,rounded corners=3pt,minimum width=43mm,minimum height=32mm,align=center},
+ head/.style={font=\small\bfseries},
+ box/.style={draw,rounded corners=2pt,fill=prlightblue,minimum height=7mm,align=center,font=\scriptsize},
+ op/.style={circle,draw,fill=prlightgold,minimum size=6mm,font=\scriptsize,inner sep=0pt},
+ leaf/.style={draw,rounded corners=2pt,fill=prlightblue,minimum width=12mm,minimum height=6mm,font=\scriptsize},
+ place/.style={circle,draw,minimum size=5mm,inner sep=0pt},
+ trans/.style={rectangle,draw,fill=prlightteal,minimum width=10mm,minimum height=5mm,font=\scriptsize},
+ task/.style={draw,rounded corners=3pt,minimum width=31mm,minimum height=10mm,align=center,font=\small},
+ flow/.style={-{Stealth[length=2mm]},thick,prblue}
+]
+\node[panel] (logpanel) at (0,0) {};
+\node[head] at (0,1.15) {Event log};
+\node[font=\scriptsize,align=left] at (0,0) {
+  $\langle\text{register},\text{accept}\rangle$\\
+  $\langle\text{register},\text{reject}\rangle$\\
+  $\langle\text{register},\text{accept}\rangle$
+};
+\node[font=\scriptsize,text=prred] at (0,-1.1) {finite observations};
+
+\node[panel,minimum width=46mm] (treepanel) at (5.4,0) {};
+\node[head] at (5.4,1.15) {Process tree};
+\node[op] (seq) at (5.4,0.55) {$\rightarrow$};
+\node[leaf] (reg) at (4.3,-0.35) {register};
+\node[op] (xor) at (6.35,-0.35) {$\times$};
+\node[leaf] (acc) at (5.6,-1.15) {accept};
+\node[leaf] (rej) at (7.05,-1.15) {reject};
+\draw[-{Stealth[length=1.4mm]}] (seq)--(reg);
+\draw[-{Stealth[length=1.4mm]}] (seq)--(xor);
+\draw[-{Stealth[length=1.4mm]}] (xor)--(acc);
+\draw[-{Stealth[length=1.4mm]}] (xor)--(rej);
+
+\node[panel,minimum width=54mm] (netpanel) at (11.2,0) {};
+\node[head] at (11.2,1.15) {Petri net};
+\node[place,fill=black] (p0) at (9.15,-0.1) {};
+\node[trans] (treg) at (10.2,-0.1) {register};
+\node[place] (p1) at (11.25,-0.1) {};
+\node[trans] (tacc) at (12.25,0.45) {accept};
+\node[trans] (trej) at (12.25,-0.65) {reject};
+\node[place,double] (pf) at (13.35,-0.1) {};
+\draw[-{Stealth[length=1.4mm]}] (p0)--(treg);
+\draw[-{Stealth[length=1.4mm]}] (treg)--(p1);
+\draw[-{Stealth[length=1.4mm]}] (p1)--(tacc);
+\draw[-{Stealth[length=1.4mm]}] (p1)--(trej);
+\draw[-{Stealth[length=1.4mm]}] (tacc)--(pf);
+\draw[-{Stealth[length=1.4mm]}] (trej)--(pf);
+
+\node[task,fill=prlightgold] (shared) at (5.4,-3.2) {shared semantic\\representation};
+\node[task,fill=prlightteal] (retrieve) at (9.4,-3.2) {cross-artifact\\retrieval};
+\node[task,fill=prlightred] (translate) at (1.4,-3.2) {process-tree\\translation};
+\draw[flow] (logpanel.south) -- (shared.north west);
+\draw[flow] (treepanel.south) -- (shared.north);
+\draw[flow] (netpanel.south) -- (shared.north east);
+\draw[flow] (shared) -- (retrieve);
+\draw[flow] (shared) -- (translate);
+\end{tikzpicture}%
+}
+\caption{One process expressed as an event log, a process tree, and a Petri net. The shared representation supports retrieval and translation, but the finite log does not uniquely determine the underlying model.}
+\label{fig:intuitive-example}
+\end{figure}

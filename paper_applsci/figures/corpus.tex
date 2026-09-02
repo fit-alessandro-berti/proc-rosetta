@@ -1,0 +1,32 @@
+\begin{figure}[H]
+\centering
+\resizebox{0.94\textwidth}{!}{%
+\begin{tikzpicture}[
+ stage/.style={draw,rounded corners=3pt,minimum width=33mm,minimum height=21mm,align=center,font=\small,inner xsep=4pt},
+ flow/.style={-{Stealth[length=2mm]},very thick,prblue},
+ tag/.style={font=\scriptsize\bfseries,text=prgray}
+]
+\node[stage,fill=prlightgold] (generate) at (0,0)
+  {random process\\or controlled motif};
+\node[tag,above=1mm of generate] {generate};
+
+\node[stage,fill=prlightblue] (models) at (4.4,0)
+  {two process-model\\realizations\\$N^{(1)},N^{(2)}$};
+\node[tag,above=1mm of models] {construct};
+
+\node[stage,fill=prlightteal] (observe) at (8.8,0)
+  {relation evidence\\and two log observations\\$L^{(u)},L^{(r)}$};
+\node[tag,above=1mm of observe] {relate and observe};
+
+\node[stage,fill=prlightred,minimum width=38mm] (rows) at (13.5,0)
+  {canonicalize labels\\pair models with logs\\\textbf{one family $\rightarrow$ four rows}};
+\node[tag,above=1mm of rows] {align};
+
+\draw[flow] (generate)--(models);
+\draw[flow] (models)--(observe);
+\draw[flow] (observe)--(rows);
+\end{tikzpicture}%
+}
+\caption{Behavior-family construction in four stages. Family membership is established before row expansion, so both model realizations and both log observations remain in the same data split.}
+\label{fig:corpus}
+\end{figure}

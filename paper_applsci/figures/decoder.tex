@@ -1,0 +1,27 @@
+\begin{figure}[H]
+\centering
+\resizebox{0.94\textwidth}{!}{%
+\begin{tikzpicture}[
+ state/.style={draw,rounded corners=3pt,minimum width=29mm,minimum height=11mm,align=center,font=\small},
+ flow/.style={-{Stealth[length=2mm]},very thick,prblue},
+ branch/.style={-{Stealth[length=2mm]},thick,prred}
+]
+\node[state,fill=prlightblue] (open) {open child slots};
+\node[state,fill=prlightteal,right=12mm of open] (mask) {mask illegal\\tokens};
+\node[state,fill=prlightgold,right=12mm of mask] (emit) {emit token and\\update slots};
+\node[state,fill=prlightteal,right=20mm of emit] (eos) {slots empty\\enable EOS};
+\node[state,fill=prlightred,below=15mm of emit] (budget) {budget exhausted};
+\node[state,fill=prlightblue,right=12mm of budget] (complete) {deterministic\\legal completion};
+
+\draw[flow] (open)--(mask);
+\draw[flow] (mask)--(emit);
+\draw[flow] (emit)--node[above=0.5mm,font=\scriptsize]{slots empty}(eos);
+\draw[flow] (emit) to[bend left=27] node[below,font=\scriptsize]{slots remain} (open);
+\draw[branch] (emit)--(budget);
+\draw[branch] (budget)--(complete);
+\draw[branch] (complete)--(eos);
+\end{tikzpicture}%
+}
+\caption{Grammar-constrained decoding. The slot state masks illegal continuations and enables end-of-sequence only for a closed tree; deterministic completion handles an exhausted search budget.}
+\label{fig:decoder}
+\end{figure}

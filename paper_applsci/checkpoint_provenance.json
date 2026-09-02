@@ -1,0 +1,55 @@
+{
+  "schema": "proc-rosetta.checkpoint-provenance.v1",
+  "checkpoint_file": "proc_rosetta.best.pt",
+  "checkpoint_sha256": "5ed9abf8496ee5571a941becf016186d2f44441a1015c288bea07e416495aeaa",
+  "source_revision": "52a92f09f07ddc6b9b30463c5216973db7c76f83",
+  "source_revision_date": "2026-09-01T05:06:40+00:00",
+  "checkpoint_format_version": 7,
+  "architecture_identifier": "proc-rosetta-latent-transformer-v6",
+  "data_schema_version": 5,
+  "normalization": "pm4py-fold-v1",
+  "seed": 13,
+  "selected_epoch": 11,
+  "latest_completed_epoch": 17,
+  "selection_objective": "balanced_robust_curriculum",
+  "semantic_latent_mode": "deterministic",
+  "hidden_dimension": 192,
+  "semantic_dimension": 96,
+  "memory_tokens": 6,
+  "parameter_count": 6263248,
+  "component_parameters": {
+    "tree_encoder": 1953534,
+    "trace_encoder": 823969,
+    "petri_encoder": 1362720,
+    "tree_decoder": 2104401,
+    "contrastive_head": 18624
+  },
+  "training": {
+    "optimizer": "AdamW",
+    "initial_learning_rate": 0.0003,
+    "weight_decay": 0.0005,
+    "label_smoothing": 0.04,
+    "gradient_clip_norm": 5.0,
+    "base_batch_size": 128,
+    "effective_curriculum_batch_sizes": {
+      "simple": 128,
+      "medium": 96,
+      "complex": 64
+    },
+    "stored_traces_per_log": 128,
+    "presented_traces_per_step": 32,
+    "presented_trace_length_cap": 64,
+    "activity_remap_probability": 0.5,
+    "ema_decay": 0.995,
+    "ema_start_epoch": 3,
+    "scheduled_sampling_start_epoch": 15,
+    "scheduled_sampling_maximum": 0.2,
+    "recorded_wall_time_seconds": 19441.58,
+    "device_class": "CUDA",
+    "accelerator_model_recorded": false
+  },
+  "corpus_manifest": {
+    "file": "curriculum_manifest.json",
+    "sha256": "9a48ee723f8a717c01677d203b2df84841c1a7b0d04b4389ce681aff91cbe1db"
+  }
+}
