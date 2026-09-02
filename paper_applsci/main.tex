@@ -865,7 +865,7 @@ This distance is intentionally an \emph{experiment-specific summary}, not a comp
 
 Finally, the reported intervals describe uncertainty among the selected families. A \emph{family-level bootstrap} repeatedly draws complete families with replacement, retaining all rows and results belonging to each drawn family, and recomputes the metric \cite{Efron1994}. Each resample contains the same number of families as the evaluation set used for that metric: 16 for a level-specific result, or 48 for a result pooled across all levels. The stated percentile interval contains the central 95\% of these recomputed values. Resampling families rather than rows respects the dependence among the four rows of one family. These intervals capture variation within the selected subset only; they do not include uncertainty from generating another corpus, changing the training seed, retraining the model, or selecting another checkpoint.
 
-\subsection{RQ-aligned metrics and baselines}
+\subsection{RQ-aligned metrics and baselines}\label{sec:rq-metrics}
 
 Each research question evaluates a different capability, so no single score is sufficient. Representation metrics ask whether related artifacts occupy useful neighborhoods, retrieval metrics ask whether relevant artifacts appear early in a ranked list, and generation metrics ask whether a decoded process tree is structurally and behaviorally close to its reference. Table~\ref{tab:rq-metrics} summarizes these evaluation units, metrics, and baselines.
 
@@ -920,11 +920,76 @@ These cases reveal failure patterns but do not estimate average real-world perfo
 
 \section{Application Scenario and Reference Implementation}\label{sec:reproduction}
 
-Figure~\ref{fig:application-workflow} turns the representation task into a process mining workflow. An analyst embeds an incoming event log, process tree, or marked Petri net and searches a heterogeneous repository for related artifacts. Retrieved models can be reused directly or inspected as precedents. The decoder is optional: when invoked, it proposes a process tree candidate that proceeds to established conformance checking, soundness checks, and behavioral checks before analyst acceptance. This workflow connects representation learning with repository search, model reuse, process discovery support, and validation through conformance checking without treating the learned component as an autonomous decision maker.
+The model is useful in practice only if its output can be \emph{inspected, reproduced, and challenged}. A similarity score alone is not enough: an analyst must be able to see which artifact was encoded, which checkpoint produced the representation, why a result was retrieved, and whether a generated model passes independent checks. This section therefore presents the application scenario together with the reference implementation that supports it.
+
+\subsection{From an input artifact to an analyst decision}
+
+Figure~\ref{fig:application-workflow} summarizes the intended workflow. The starting point may be an XES event log, a PTML process tree, or a marked PNML Petri net. The system validates and canonicalizes the input, applies the corresponding encoder, and places the resulting vector in the shared representation space. The analyst can then use that vector in two complementary ways.
+
+The first and safest use is \emph{cross-artifact retrieval}. The system compares the query vector with stored vectors and ranks repository items by cosine similarity. A high cosine value means that two artifacts are close according to the learned representation; it does \emph{not} prove that they are behaviorally equivalent. The ranked items should therefore be read as useful precedents to inspect---for example, an existing Petri net that may explain an incoming event log---rather than as automatically accepted answers. Recall@1 and MRR evaluate this ranking offline when the relevant repository items are known: Recall@1 asks whether the first item is relevant, while MRR also gives credit when the first relevant item appears slightly lower in the list. Neither number is a confidence score for one new, unlabeled query.
+
+The second use is \emph{candidate generation}. If no retrieved model is suitable, the analyst may ask the constrained decoder to propose a process tree from the query representation. The grammar guarantees that the token sequence forms a well-structured tree, but syntactic validity is only the first gate. The candidate must still be converted, simulated, and compared with the available evidence. With a reference tree, exact match and normalized tree-edit distance measure structural agreement. With reference traces, the behavior distance $d_B$ measures sampled behavioral disagreement. With an event log, fitness measures how much observed behavior the candidate admits, precision measures how much candidate behavior is supported by the log, and F1 balances the two. Evaluator coverage states how often those checks could actually be completed. The formal definitions and aggregation units are given in Sections~\ref{sec:fixed-evaluation} and~\ref{sec:rq-metrics}.
 
 \input{figures/workflow}
 
-The open-source reference implementation accepts XES event logs, PTML process trees, and PNML Petri nets through shared command-line and browser-facing services. It records canonical activity mappings, preprocessing diagnostics, checkpoint identity, embeddings, decoding traces, and validation outcomes. The implementation is available at \url{https://github.com/fit-alessandro-berti/proc-rosetta}; an installation-free inspection interface is available at \url{https://rosetta-pm.app}.
+Retrieval and generation both end with the same decision point: the analyst accepts, rejects, or refines a model only after conformance checking, soundness checks, and behavioral inspection. This separation is deliberate. Dataset-level measures such as Recall@1, MRR, and Spearman $\rho$ describe the evaluated system as a whole; they must not be presented as guarantees about a single production result.
+
+\subsection{Implementation and access}
+
+The open-source implementation is available in the public \href{https://github.com/fit-alessandro-berti/proc-rosetta}{ProcRosetta repository}. An installation-free browser interface is available at \href{https://rosetta-pm.app}{rosetta-pm.app}. The implementation separates artifact input and preprocessing, the three artifact-specific encoders, grammar-constrained decoding, behavioral evaluation, and presentation. The command-line programs and the browser interface call the same inference services and load the same checkpoint format. The browser is therefore an inspection and execution layer over the evaluated implementation, not a separate demonstration model.
+
+On import, the implementation parses and validates the source artifact, records preprocessing warnings, and creates the first-seen canonical activity map described in Section~\ref{sec:relations}. It also checks the artifact against the selected checkpoint's vocabulary and size limits before computing a representation. The session workspace retains the source artifact, canonical map, checkpoint identity, embedding, decoding settings, and validation results. Cache keys depend on both content and configuration, which prevents an embedding or decode produced under one checkpoint or policy from being silently reused under another.
+
+The browser application can be started locally with Streamlit or with the supplied Docker Compose configuration. The container runs as an unprivileged user behind an NGINX reverse proxy. Checkpoints are selected from a server-controlled directory because PyTorch checkpoint files must be treated as trusted executable content; arbitrary checkpoint upload is therefore disabled in the browser.
+
+\subsection{Interactive workflow}
+
+The interface organizes the implementation into three work areas that follow the analyst's questions rather than the model's internal modules.
+
+\paragraph{Artifact workspace.}
+The first question is, ``What evidence has been loaded?'' The workspace imports XES, PTML, and PNML files or bundled examples, groups related artifacts into named process groups, and shows modality-specific previews. It also exposes the canonical activity map and preprocessing messages. Registering an artifact computes its checkpoint-specific representation and records the provenance needed for later comparison. The whole workspace can be exported so that an analysis session is not reduced to an isolated score. Figure~\ref{fig:tool-workspace} shows this view.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.96\textwidth]{screenshots/rosetta-pm-artifact-workspace.png}
+\caption{Artifact workspace. The interface groups heterogeneous inputs, previews their contents, and records canonicalization and checkpoint information before encoding.\label{fig:tool-workspace}}
+\end{figure}
+
+\paragraph{Translation studio.}
+The second question is, ``What process tree does this evidence support?'' The analyst can decode one registered embedding or the equal-weight mean of the available modalities in a process group. Before decoding, the interface makes the operational constraints visible, including the token budget, restriction to the source activity alphabet, and optional masking of repeated visible labels. After decoding, it reports grammar and conversion checks and provides process-tree, Petri-net, and textual views. The candidate and its validation information can be exported in standard formats. Figure~\ref{fig:tool-translation} illustrates these controls. They make a proposed model easier to inspect, but they do not replace the semantic checks in Figure~\ref{fig:application-workflow}.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.96\textwidth]{screenshots/rosetta-pm-translation-studio.png}
+\caption{Translation studio. An analyst selects the evidence to decode, sees the active structural constraints, and inspects and exports the resulting process model.\label{fig:tool-translation}}
+\end{figure}
+
+\paragraph{Latent explorer.}
+The third question is, ``How is this artifact related to the rest of the workspace?'' The explorer computes pairwise cosine similarities, nearest neighbors, and group-level agreement for registered artifacts. It also offers a two-dimensional PCA projection and coordinate inspection. PCA is useful for navigation, but it is only a projection of the learned space; retrieval and the reported quantitative metrics use the full representation rather than the displayed two-dimensional coordinates. Equal-weight group means make it possible to inspect the fused representations used in the experiments. Figure~\ref{fig:tool-latent} shows the explorer.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.96\textwidth]{screenshots/rosetta-pm-latent-explorer.png}
+\caption{Latent explorer. Cosine similarities and nearest neighbors support cross-artifact inspection, while the PCA view provides an explicitly exploratory two-dimensional overview.\label{fig:tool-latent}}
+\end{figure}
+
+The screenshots document the interaction offered by the reference implementation; they are not additional quantitative evidence. In particular, visually close points in the PCA panel and high similarity values in an individual session do not establish behavioral equivalence.
+
+\subsection{Programmatic reproduction}
+
+The same workflow can be executed without the browser. The following commands generate the default behavior-family corpus, train a checkpoint, evaluate one curriculum, and translate an external event log:
+
+\begin{lstlisting}[language=bash,basicstyle=\ttfamily\footnotesize,breaklines=true,frame=single]
+./sample.py --data-dir data
+./train.py --data-dir data \
+  --checkpoint checkpoints/proc_rosetta.pt
+./test.py --data-dir data --curriculum complex \
+  --checkpoint checkpoints/proc_rosetta.best.pt --json
+scripts/xes_to_ptml.py input.xes decoded.ptml \
+  --checkpoint checkpoints/proc_rosetta.best.pt
+\end{lstlisting}
+
+The test command evaluates exactly one of the \texttt{simple}, \texttt{medium}, or \texttt{complex} curricula, so it must be repeated when results for all three are required. The complete paper configuration is recorded in the curriculum manifest, the checkpoint-provenance record, and the machine-readable evaluation evidence distributed with the manuscript. These records fix the data construction, checkpoint selection, and evaluation subset instead of relying on undocumented interface state.
 
 \FloatBarrier
 
