@@ -1,4 +1,4 @@
-\begin{thebibliography}{22}
+\begin{thebibliography}{41}
 \providecommand{\natexlab}[1]{#1}
 \providecommand{\url}[1]{{#1}}
 \providecommand{\urlprefix}{URL }
@@ -9,6 +9,11 @@
 \bibitem[{van~der Aalst(2016)}]{vanDerAalst2016}
 van~der Aalst WMP (2016) Process Mining: Data Science in Action, 2nd edn.
   Springer, Berlin, Heidelberg, \doi{10.1007/978-3-662-49851-4}
+
+\bibitem[{van~der Aalst(2018)}]{vanDerAalst2018Abstractions}
+van~der Aalst WMP (2018) Process discovery from event data: Relating models and
+  logs through abstractions. Wiley Interdisciplinary Reviews: Data Mining and
+  Knowledge Discovery 8(3). \doi{10.1002/widm.1244}
 
 \bibitem[{van~der Aalst(2019)}]{vanDerAalst2019DFG}
 van~der Aalst WMP (2019) A practitioner's guide to process mining: Limitations
@@ -23,6 +28,26 @@ Adriansyah A, Munoz-Gama J, Carmona J, et~al (2013) Alignment based precision
   Business Information Processing, vol 132. Springer, pp 137--149,
   \doi{10.1007/978-3-642-36285-9_15}
 
+\bibitem[{Augusto et~al.(2019{\natexlab{a}})Augusto, Conforti, Dumas, Rosa,
+  Maggi, Marrella, Mecella, and Soo}]{Augusto2019DiscoveryBenchmark}
+Augusto A, Conforti R, Dumas M, et~al (2019{\natexlab{a}}) Automated discovery
+  of process models from event logs: Review and benchmark. IEEE Transactions on
+  Knowledge and Data Engineering 31(4):686--705.
+  \doi{10.1109/TKDE.2018.2841877}
+
+\bibitem[{Augusto et~al.(2019{\natexlab{b}})Augusto, Conforti, Dumas, Rosa, and
+  Polyvyanyy}]{Augusto2019SplitMiner}
+Augusto A, Conforti R, Dumas M, et~al (2019{\natexlab{b}}) Split miner:
+  Automated discovery of accurate and simple business process models from event
+  logs. Knowledge and Information Systems 59(2):251--284.
+  \doi{10.1007/s10115-018-1214-x}
+
+\bibitem[{Baltru{\v{s}}aitis et~al.(2019)Baltru{\v{s}}aitis, Ahuja, and
+  Morency}]{Baltrusaitis2019Multimodal}
+Baltru{\v{s}}aitis T, Ahuja C, Morency LP (2019) Multimodal machine learning: A
+  survey and taxonomy. IEEE Transactions on Pattern Analysis and Machine
+  Intelligence 41(2):423--443. \doi{10.1109/TPAMI.2018.2798607}
+
 \bibitem[{Bardes et~al.(2022)Bardes, Ponce, and LeCun}]{Bardes2022}
 Bardes A, Ponce J, LeCun Y (2022) {VICReg}: Variance-invariance-covariance
   regularization for self-supervised learning. In: International Conference on
@@ -36,6 +61,12 @@ Berti A, van~der Aalst WMP (2026) An in-context foundation model for predictive
 \bibitem[{Berti et~al.(2023)Berti, van Zelst, and Schuster}]{Berti2023PM4Py}
 Berti A, van Zelst SJ, Schuster D (2023) {PM4Py}: A process mining library for
   python. Software Impacts 17:100556. \doi{10.1016/j.simpa.2023.100556}
+
+\bibitem[{Berti et~al.(2025)Berti, Wang, Kourani, and van~der
+  Aalst}]{Berti2025RLProcessModeling}
+Berti A, Wang X, Kourani H, et~al (2025) Specializing large language models for
+  process modeling via reinforcement learning with verifiable and universal
+  rewards. Process Science 2(1). \doi{10.1007/s44311-025-00034-4}
 
 \bibitem[{Buijs(2014)}]{Buijs2014Receipt}
 Buijs J (2014) Receipt phase of an environmental permit application process
@@ -53,9 +84,23 @@ Dijkman RM, Dumas M, van Dongen BF, et~al (2011) Similarity of business process
   models: Metrics and evaluation. Information Systems 36(2):498--516.
   \doi{10.1016/j.is.2010.09.006}
 
+\bibitem[{Dumas and Garc{\'i}a-Ba{\~n}uelos(2015)}]{Dumas2015EventStructures}
+Dumas M, Garc{\'i}a-Ba{\~n}uelos L (2015) Process mining reloaded: Event
+  structures as a unified representation of process models and event logs. In:
+  Application and Theory of Petri Nets and Concurrency, Lecture Notes in
+  Computer Science, vol 9115. Springer, Cham, pp 33--48,
+  \doi{10.1007/978-3-319-19488-2_2}
+
 \bibitem[{Efron and Tibshirani(1994)}]{Efron1994}
 Efron B, Tibshirani RJ (1994) An Introduction to the Bootstrap. Chapman and
   Hall/CRC, \doi{10.1201/9780429246593}
+
+\bibitem[{Gavric et~al.(2025)Gavric, Bork, and
+  Proper}]{Gavric2025MultimodalEvidence}
+Gavric A, Bork D, Proper HA (2025) Enriching business process event logs with
+  multimodal evidence. In: The Practice of Enterprise Modeling, Lecture Notes
+  in Business Information Processing, vol 538. Springer, Cham, pp 175--191,
+  \doi{10.1007/978-3-031-77908-4_11}
 
 \bibitem[{Geng et~al.(2023)Geng, Josifoski, Peyrard, and West}]{Geng2023}
 Geng S, Josifoski M, Peyrard M, et~al (2023) Grammar-constrained decoding for
@@ -69,10 +114,26 @@ Grover A, Leskovec J (2016) node2vec: Scalable feature learning for networks.
   In: Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge
   Discovery and Data Mining. ACM, pp 855--864, \doi{10.1145/2939672.2939754}
 
+\bibitem[{Hoffmann et~al.(2020)Hoffmann, Malburg, Klein, and
+  Bergmann}]{Hoffmann2020SiameseWorkflowRetrieval}
+Hoffmann M, Malburg L, Klein P, et~al (2020) Using siamese graph neural
+  networks for similarity-based retrieval in process-oriented case-based
+  reasoning. In: Case-Based Reasoning Research and Development, Lecture Notes
+  in Computer Science, vol 12311. Springer, Cham, pp 229--244,
+  \doi{10.1007/978-3-030-58342-2_15}
+
 \bibitem[{Khosla et~al.(2020)Khosla, Teterwak, Wang, Sarna, Tian, Isola,
   Maschinot, Liu, and Krishnan}]{Khosla2020}
 Khosla P, Teterwak P, Wang C, et~al (2020) Supervised contrastive learning. In:
   Advances in Neural Information Processing Systems, pp 18661--18673
+
+\bibitem[{Klein et~al.(2019)Klein, Malburg, and
+  Bergmann}]{Klein2019WorkflowEmbeddings}
+Klein P, Malburg L, Bergmann R (2019) Learning workflow embeddings to improve
+  the performance of similarity-based retrieval for process-oriented case-based
+  reasoning. In: Case-Based Reasoning Research and Development, Lecture Notes
+  in Computer Science, vol 11680. Springer, Cham, pp 188--203,
+  \doi{10.1007/978-3-030-29249-2_13}
 
 \bibitem[{Koninck et~al.(2018)Koninck, vanden Broucke, and
   Weerdt}]{DeKoninck2018}
@@ -81,9 +142,29 @@ Koninck PD, vanden Broucke S, Weerdt JD (2018) act2vec, trace2vec, log2vec, and
   Process Management, Lecture Notes in Computer Science, vol 11080. Springer,
   pp 305--321, \doi{10.1007/978-3-319-98648-7_18}
 
+\bibitem[{Kourani and van Zelst(2023)}]{Kourani2023POWL}
+Kourani H, van Zelst SJ (2023) {POWL}: Partially ordered workflow language. In:
+  Business Process Management, Lecture Notes in Computer Science, vol 14159.
+  Springer, Cham, pp 92--108, \doi{10.1007/978-3-031-41620-0_6}
+
+\bibitem[{Kourani et~al.(2024)Kourani, Berti, Schuster, and van~der
+  Aalst}]{Kourani2024LLMProcessModeling}
+Kourani H, Berti A, Schuster D, et~al (2024) Process modeling with large
+  language models. In: Enterprise, Business-Process and Information Systems
+  Modeling, Lecture Notes in Business Information Processing, vol 511.
+  Springer, Cham, pp 229--244, \doi{10.1007/978-3-031-61007-3_18}
+
 \bibitem[{Kourani et~al.(2026)Kourani, Park, and van~der Aalst}]{Kourani2026}
 Kourani H, Park G, van~der Aalst WMP (2026) A discovery technique for
-  expressive yet sound process models. Process Science 3(1)
+  expressive yet sound process models. Process Science 3(1).
+  \doi{10.1007/s44311-026-00046-8}
+
+\bibitem[{Kusner et~al.(2017)Kusner, Paige, and
+  Hern{\'a}ndez-Lobato}]{Kusner2017GrammarVAE}
+Kusner MJ, Paige B, Hern{\'a}ndez-Lobato JM (2017) Grammar variational
+  autoencoder. In: Proceedings of the 34th International Conference on Machine
+  Learning, Proceedings of Machine Learning Research, vol~70. PMLR, pp
+  1945--1954
 
 \bibitem[{Lee et~al.(2019)Lee, Lee, Kim, Kosiorek, Choi, and Teh}]{Lee2019}
 Lee J, Lee Y, Kim J, et~al (2019) Set transformer: A framework for
@@ -98,9 +179,27 @@ Leemans SJJ, Fahland D, van~der Aalst WMP (2013) Discovering block-structured
   Theory of Petri Nets and Concurrency, Lecture Notes in Computer Science, vol
   7927. Springer, pp 311--329, \doi{10.1007/978-3-642-38697-8_17}
 
+\bibitem[{Leemans et~al.(2023)Leemans, van Zelst, and
+  Lu}]{Leemans2023PartialOrderSurvey}
+Leemans SJJ, van Zelst SJ, Lu X (2023) Partial-order-based process mining: A
+  survey and outlook. Knowledge and Information Systems 65(1):1--29.
+  \doi{10.1007/s10115-022-01777-3}
+
 \bibitem[{de~Leoni and Mannhardt(2015)}]{DeLeoni2015RoadTraffic}
 de~Leoni M, Mannhardt F (2015) Road traffic fine management process.
   4TU.ResearchData, \doi{10.4121/uuid:270fd440-1057-4fb9-89a9-b699b47990f5}
+
+\bibitem[{de~Medeiros et~al.(2008)de~Medeiros, van~der Aalst, and
+  Weijters}]{deMedeiros2008ObservedBehavior}
+de~Medeiros AKA, van~der Aalst WMP, Weijters AJMM (2008) Quantifying process
+  equivalence based on observed behavior. Data \& Knowledge Engineering
+  64(1):55--74. \doi{10.1016/j.datak.2007.06.010}
+
+\bibitem[{Pasquadibisceglie et~al.(2026)Pasquadibisceglie, Donadello, Appice,
+  Lanz, Maggi, Fiameni, and Malerba}]{Pasquadibisceglie2026MultimodalPPM}
+Pasquadibisceglie V, Donadello I, Appice A, et~al (2026) Multimodal predictive
+  process monitoring and its application to explainable clinical pathways.
+  Information Systems 139:102698. \doi{10.1016/j.is.2026.102698}
 
 \bibitem[{Radford et~al.(2021)Radford, Kim, Hallacy, Ramesh, Goh, Agarwal,
   Sastry, Askell, Mishkin, Clark, Krueger, and Sutskever}]{Radford2021}
@@ -108,6 +207,12 @@ Radford A, Kim JW, Hallacy C, et~al (2021) Learning transferable visual models
   from natural language supervision. In: Proceedings of the 38th International
   Conference on Machine Learning, Proceedings of Machine Learning Research, vol
   139. PMLR, pp 8748--8763
+
+\bibitem[{Schoknecht et~al.(2017)Schoknecht, Thaler, Fettke, Oberweis, and
+  Laue}]{Schoknecht2017SimilaritySurvey}
+Schoknecht A, Thaler T, Fettke P, et~al (2017) Similarity of business process
+  models---a state-of-the-art analysis. ACM Computing Surveys 50(4):1--33.
+  \doi{10.1145/3092694}
 
 \bibitem[{Sommers et~al.(2023)Sommers, Menkovski, and Fahland}]{Sommers2023}
 Sommers D, Menkovski V, Fahland D (2023) Supervised learning of process
@@ -124,5 +229,21 @@ Tavares GM, Oyamada RS, Barbon S, et~al (2023) Trace encoding in process
   Gomez, Kaiser, and Polosukhin}]{Vaswani2017}
 Vaswani A, Shazeer N, Parmar N, et~al (2017) Attention is all you need. In:
   Advances in Neural Information Processing Systems
+
+\bibitem[{Weidlich et~al.(2011)Weidlich, Mendling, and
+  Weske}]{Weidlich2011BehavioralProfiles}
+Weidlich M, Mendling J, Weske M (2011) Efficient consistency measurement based
+  on behavioral profiles of process models. IEEE Transactions on Software
+  Engineering 37(3):410--429. \doi{10.1109/TSE.2010.96}
+
+\bibitem[{Zampino et~al.(2026)Zampino, Genga, and
+  Longo}]{Zampino2026BehavioralSimilarity}
+Zampino F, Genga L, Longo A (2026) Behavioral similarity in business process
+  models: A perspective that needs more attention. Information Systems 136.
+  \doi{10.1016/j.is.2025.102608}
+
+\bibitem[{van Zelst and Leemans(2020)}]{vanZelst2020NetToTree}
+van Zelst SJ, Leemans SJJ (2020) Translating workflow nets to process trees: An
+  algorithmic approach. Algorithms 13(11). \doi{10.3390/a13110279}
 
 \end{thebibliography}
