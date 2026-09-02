@@ -740,7 +740,7 @@ Advancement is considered only after at least five epochs in the current stage. 
 
 \begin{table}[H]
 \centering
-\caption{Training and decoding hyperparameters.}
+\caption{Training and decoding hyperparameters. A slash separates paired labels or values in the same left-to-right order; it does not denote division. For example, hidden / semantic dimension 192 / 96 means a hidden dimension of 192 and a semantic dimension of 96.}
 \label{tab:hyperparameters}
 \small
 \setlength{\tabcolsep}{3pt}
@@ -1108,7 +1108,7 @@ Two metrics describe the ranking. \emph{Recall@1} asks a strict question: does t
 The 16 families are equally represented. A random ranking places one of the four relevant rows first with probability $4/64=1/16=0.0625$. This value is the random Recall@1 baseline. It provides a simple reference point: results substantially above 0.0625 show that the ranking uses information beyond random group selection.
 
 \begin{table}[H]
-\caption{Cross-artifact retrieval on the fixed 48-family subset, reported as Recall@1 / MRR. In every cell, the value before the slash is Recall@1 and the value after it is MRR; higher values are better for both metrics. Each level contains 16 families and a 64-row candidate set. For every query row, all four rows from its behavior family are relevant.\label{tab:retrieval}}
+\caption{Cross-artifact retrieval on the fixed 48-family subset, reported as Recall@1 / MRR. The slash is a separator, not division: the value on its left is Recall@1 and the value on its right is MRR. Higher values are better for both metrics. Each level contains 16 families and a 64-row candidate set. For every query row, all four rows from its behavior family are relevant.\label{tab:retrieval}}
 \centering
 \begin{tabular}{@{}lccc@{}}
 \toprule
@@ -1127,11 +1127,11 @@ Process tree $\rightarrow$ event log & 0.875 / 0.905 & 0.875 / 0.905 & 0.875 / 0
 \paragraph{Retrieval results.}
 Every tested direction is well above the random Recall@1 baseline. Recall@1 ranges from 0.656 to 0.875, compared with 0.0625 for random group selection. Thus, the shared representation contains substantial information about behavior-family membership even when the query and candidate use different artifact types. The values are not perfect, however. A Recall@1 of 0.656 means that the first result is relevant for 65.6\% of queries and incorrect for the remaining 34.4\%.
 
-The strongest direction is process tree $\rightarrow$ event log, with Recall@1 of 0.875 and MRR of 0.905 at every complexity level. Process tree $\rightarrow$ Petri net is also strong, increasing from 0.812 / 0.867 on \texttt{simple} families to 0.875 / 0.908 on the two higher levels. These results mean that process tree queries usually place a related model or observation first and, when they do not, a relevant result still tends to appear near the top.
+The strongest direction is process tree $\rightarrow$ event log, with Recall@1 of 0.875 and MRR of 0.905 at every complexity level. Process tree $\rightarrow$ Petri net is also strong: Recall@1 increases from 0.812 to 0.875 and MRR increases from 0.867 to 0.908 between the \texttt{simple} level and the two higher levels. These results mean that process tree queries usually place a related model or observation first and, when they do not, a relevant result still tends to appear near the top.
 
 The most difficult direction is event log $\rightarrow$ process tree. Its Recall@1 is 0.656 on the \texttt{simple} and \texttt{medium} families and 0.688 on the \texttt{complex} families. This difficulty is consistent with the information available in the artifacts: an event log contains only finite observed executions, whereas a process tree explicitly describes control-flow structure and may permit behavior absent from the log. The experiment does not isolate this as the only cause, but it explains why this direction is intrinsically less direct.
 
-The direction of retrieval matters. Petri net $\rightarrow$ event log improves from 0.703 / 0.755 to 0.828 / 0.855 across the three levels, while event log $\rightarrow$ Petri net remains around 0.72--0.75 Recall@1. This asymmetry does not contradict the use of cosine similarity: the similarity of one specific pair is symmetric, but reversing a retrieval task changes which artifacts act as queries and which collection is ranked. The two directions can therefore produce different aggregate results.
+The direction of retrieval matters. For Petri net $\rightarrow$ event log, Recall@1 increases from 0.703 to 0.828 and MRR increases from 0.755 to 0.855 across the three levels. Event log $\rightarrow$ Petri net, in contrast, remains around 0.72--0.75 Recall@1. This asymmetry does not contradict the use of cosine similarity: the similarity of one specific pair is symmetric, but reversing a retrieval task changes which artifacts act as queries and which collection is ranked. The two directions can therefore produce different aggregate results.
 
 \paragraph{Two-dimensional illustration.}
 Figure~\ref{fig:pca} gives an intuitive view of the cross-artifact neighborhoods behind the numerical results. Each connected set contains the event log, Petri net, and process tree representations of one behavior family. When the three markers are close, the visualization suggests that the encoders place the different artifact types in a similar region of the shared space. This is the relationship needed to retrieve one artifact type by using another as the query.
@@ -1150,11 +1150,22 @@ The evaluation also uses a fixed subset generated by the same corpus design as t
 \FloatBarrier
 \subsection{\RQthree: Structural Guarantees and Behavioral Limits of Candidate Generation}\label{sec:decode-results}
 
-Grammar constraints solve syntactic closure, but not behavioral reconstruction. Every decoding run produces a closed process tree over the permitted activity inventory and converts to a Petri net. Exact reconstruction, however, is limited even when the source is the reference process tree: it decreases from 34.4\% for \texttt{simple} families to 15.6\% for \texttt{complex} families. No event log input exactly reconstructs its designated target at any level. Exact match alone is a strict measure because a finite event log may admit several valid process trees, but the large behavioral distances show that the failures are not merely alternative syntactic descriptions of equivalent behavior. Decoded process trees should therefore be treated as candidates that require conformance checking and inspection. Table~\ref{tab:decode} reports the learned properties together with evaluator coverage.
+\RQthree{} examines candidate generation. The central issue is that two different questions must not be confused. The first is, ``Did the decoder produce a valid process tree?'' The second is, ``Does that tree preserve the behavior of the source artifact?'' The grammar-constrained decoder guarantees the first property, but it must learn the second property from data.
+
+This distinction is easy to see in a small example. The process trees $\rightarrow(A,B)$ and $\times(A,B)$ are both syntactically valid and can both be converted to Petri nets. Their behavior is nevertheless different: the first requires $A$ before $B$, while the second permits either $A$ or $B$. A grammar can prevent missing children, invalid operators, and unfinished trees, but it cannot decide which of these two valid structures describes the source process correctly.
+
+The experiment therefore evaluates every generated tree in two stages. First, it checks the \emph{structural guarantee}. Every decoded sequence must form a closed process tree, use only permitted activity labels, respect operator arity, and convert to a Petri net. These conditions hold for every evaluated output because illegal tokens are masked during decoding. Second, it measures \emph{semantic preservation}: how closely the valid candidate matches the designated reference in structure and sampled behavior.
+
+Candidates are generated from four source conditions. \emph{Process tree} uses the reference tree as input and tests reconstruction. \emph{Event log} uses only finite observed executions. \emph{Petri net} uses the graph representation of a model realization. \emph{Fusion} uses the equal-weight combination of the available artifact representations. All four conditions produce a process tree, so their results can be compared against the same designated target.
+
+\paragraph{Metrics and their direction.}
+Table~\ref{tab:decode} reports four quantities. \emph{Evaluable} is the percentage of generated trees for which behavioral simulation finishes successfully. Higher coverage is better, but it only says that a candidate could be evaluated; it does not say that the candidate is behaviorally correct. \emph{Exact} is the percentage of generated trees that equal the folded reference tree. Higher exact-match percentages are better, and 100\% would mean that every designated target was reconstructed exactly.
+
+The remaining columns are distances, so their direction is reversed: \emph{lower is better}. The behavior distance $d_B$ compares the distributions of trace variants, directly-follows relations, and trace lengths. A value of zero means that these measured behavioral summaries agree exactly; larger values mean greater disagreement. The normalized process tree edit distance measures the structural changes needed to transform the candidate into the folded reference tree. It is also zero for an exact structural match and increases as more nodes must be inserted, deleted, or relabeled. Both distances are needed because two trees can differ structurally while exhibiting similar behavior, or look structurally similar while making an important behavioral error.
 
 \begin{table}[H]
 \centering
-\caption{Semantic preservation under constrained decoding on the fixed 48-family detailed subset. The evaluation unit is one decoded candidate from each of 64 row-level source instances per level and source condition (16 families; repeated observations and realizations retained). Evaluable is the percentage for which behavioral simulation completed; distance means are conditional on those outputs. Lower distance and edit values, but higher evaluable and exact percentages, are better.}
+\caption{Candidate-generation results on the fixed 48-family subset. Each level contains 16 families and 64 row-level source instances per source condition. Evaluable is the percentage of candidates for which behavioral simulation completed, and Exact is the percentage that equals the folded reference tree; higher values are better for both. The behavior distance $d_B$ and normalized process tree edit distance measure behavioral and structural disagreement, respectively; lower values are better. Mean $d_B$ includes only candidates for which behavioral simulation completed.}
 \label{tab:decode}
 \begin{tabular}{@{}llrrrr@{}}
 \toprule
@@ -1181,13 +1192,25 @@ Level & Source & Evaluable (\%) & Exact (\%) & $d_B$ $\downarrow$ & Process tree
 \end{tabular}
 \end{table}
 
-Process tree input is consistently the easiest source, which is expected because its structure is closest to the output grammar. Event log input is the hardest because it contains only finite executions and no explicit control-flow hierarchy. Fusion does not improve on the strongest individual source, suggesting that averaging semantic vectors loses information or fails to account for source reliability. The small loss of evaluator coverage comes from very large grammar-valid process trees whose simulated behavior cannot be computed reliably within the evaluation procedure.
+\paragraph{Results by source artifact.}
+Process tree input gives the best overall reconstruction results. This is expected because the source already has the same hierarchical structure as the output. Even in this favorable condition, however, exact match falls from 34.4\% for \texttt{simple} families to 28.1\% for \texttt{medium} families and 15.6\% for \texttt{complex} families. At the same time, $d_B$ increases from 0.861 to 1.105 and tree-edit distance increases from 0.509 to 0.645. Because lower distances are better, both trends show that reconstruction becomes less faithful as process complexity increases.
 
-Table~\ref{tab:motif-decode} shows that degradation is concentrated in larger ordinary and looping processes rather than the small controlled fragments. Controlled motifs remain small at every corpus level, so their stable values across levels should not be interpreted as evidence that motif decoding is unaffected by structural complexity. The increasing degradation for ordinary families reflects the actual growth in their folded target size and depth. Together, these results show that grammar constraints solve closure while long-range control-flow placement remains the principal learned failure mode.
+Event log input is the hardest condition. Its exact-match rate is 0\% at every level, and its behavioral distance increases from 1.169 to 1.291. An event log does not expose an explicit control-flow hierarchy and contains only the executions that happened to be sampled, so the decoder must infer choices, concurrency, loops, and unobserved paths. A zero exact-match rate is not sufficient by itself to prove behavioral failure, because several different process trees may legitimately explain the same finite log. In this experiment, however, the relatively large $d_B$ values show that the differences are not only harmless alternative tree structures.
+
+Petri net input performs between process tree and event log input for exact reconstruction. It reaches 12.5\% exact match on \texttt{simple} families and 6.2\% on the two higher levels. The Petri net contains explicit control-flow structure, but that structure must still be converted from a graph into the hierarchical organization required by a process tree. The edit and behavior distances show that this conversion remains difficult even though every output is grammatically valid.
+
+Equal-weight fusion does not improve on the strongest individual source. It reaches 3.1\% exact match on \texttt{simple} families and 0\% on the other levels, while its $d_B$ is higher than that of the best individual source at every level. This result suggests that a simple average can discard useful source-specific information or give equal influence to sources of unequal reliability. The present experiment evaluates the stated equal-weight policy only; it does not establish that every learned or reliability-aware fusion method would behave in the same way.
+
+Evaluator coverage is close to complete but must still be reported. Most conditions reach 100\%. The exceptions are event log input on \texttt{medium} families, with 96.9\%, and fusion on \texttt{complex} families, with 93.8\%. These missing evaluations arise when a grammar-valid candidate becomes too large for reliable behavioral simulation within the evaluation safeguards. This again illustrates the main distinction of RQ3: a tree may satisfy every structural rule and still be difficult to evaluate or behaviorally unsuitable.
+
+\paragraph{Where the decoding errors occur.}
+Table~\ref{tab:motif-decode} separates event-log decoding by generator family type, using behavioral and structural distance to show where errors are concentrated.
+
+The three controlled motifs remain small and have the same designed structure at every curriculum level. Their nearly unchanged values should therefore not be interpreted as evidence that decoding is unaffected by complexity. They are fixed diagnostic cases. The ordinary families, in contrast, become larger and deeper across the curricula and may contain more demanding nested or looping behavior. Their $d_B$ rises from 1.224 to 1.715, while their edit distance rises from 0.662 to 0.832. These increases localize the strongest degradation in the families whose structural complexity actually grows.
 
 \begin{table}[H]
 \centering
-\caption{Event log to process tree decoding by generator motif on the fixed 48-family detailed subset (16 families and 64 event log source rows per level, with repeated observations retained), shown as behavioral distance / normalized process tree edit distance per decoded candidate. Lower values indicate better agreement.}
+\caption{Event log to process tree decoding by family type on the fixed 48-family subset. Each cell reports $d_B$ / normalized process tree edit distance. The slash is a separator, not division: $d_B$ is on the left and tree-edit distance is on the right. Lower values are better for both quantities. Each level contains 16 families and 64 event log source rows, including repeated observations.}
 \label{tab:motif-decode}
 \begin{tabular}{@{}lccc@{}}
 \toprule
@@ -1200,6 +1223,11 @@ Ordinary & 1.224 / 0.662 & 1.580 / 0.798 & 1.715 / 0.832 \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\paragraph{Interpretation and scope.}
+The answer to RQ3 is therefore mixed but clear. The grammar constraints provide the promised \emph{structural guarantee}: every decoded output is a closed process tree over the permitted vocabulary and is convertible to a Petri net. They do not provide a \emph{behavior-preservation guarantee}. Exact reconstruction is limited, behavioral disagreement grows with ordinary-family complexity, and equal-weight fusion does not repair the problem.
+
+The decoder should consequently be used as a candidate generator rather than as an automatic translator. Its output is structurally usable, which makes subsequent analysis possible, but the candidate must still undergo conformance checking, soundness analysis, and human inspection before acceptance. The next subsection makes this practical limitation more concrete by comparing event log decoding with a specialized process discovery method.
 
 \subsection{Comparison with Specialized Process Discovery}
 
