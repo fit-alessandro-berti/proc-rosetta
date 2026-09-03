@@ -307,6 +307,19 @@
 \end{frame}
 
 % -----------------------------------------------------------------------------
+\begin{frame}[t]{RQ1: Distinct log views match 27/32 times}
+  \vspace{-2mm}
+  \begin{center}
+    \begin{minipage}{0.96\textwidth}
+      \paperfigure{figures/rq1-qualitative-retrieval}
+    \end{minipage}
+  \end{center}
+  \vspace{-3mm}
+  \keyline{The miss is local: the matching $F_{427}$ view appears at rank 3.}
+  \source{ProcRosetta paper, RQ1 distinct-view diagnostic on the \texttt{simple} subset.}
+\end{frame}
+
+% -----------------------------------------------------------------------------
 \begin{frame}[t]{Retrieval succeeds in all directions}
   \vspace{1mm}
   \begin{columns}[c,onlytextwidth]
@@ -338,6 +351,20 @@
   \centering
   \small Hardest direction: finite event log $\rightarrow$ explicit process tree.
   \source{ProcRosetta paper, cross-artifact retrieval table; 16 families per level.}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+\begin{frame}[t]{RQ2: Misses can remain near the top}
+  \vspace{-3mm}
+  \begin{center}
+    \begin{minipage}{0.72\textwidth}
+      \paperfigure{figures/rq2-qualitative-retrieval}
+    \end{minipage}
+  \end{center}
+  \vspace{-3mm}
+  \centering\small\bfseries
+  Ranks 1--4 belong to one wrong family; the first relevant tree is rank 5.
+  \source{ProcRosetta paper, RQ2 log-to-tree examples under the 64-row \texttt{simple} protocol.}
 \end{frame}
 
 % -----------------------------------------------------------------------------
