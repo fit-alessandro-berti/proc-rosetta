@@ -1,0 +1,65 @@
+\begin{figure*}[!t]
+\centering
+\resizebox{0.98\textwidth}{!}{%
+\begin{tikzpicture}[
+  panel/.style={draw=prgray!55,rounded corners=3pt,fill=white},
+  head/.style={font=\small\bfseries,anchor=west},
+  logcard/.style={
+    draw=prgray!65,rounded corners=2pt,fill=prlightblue,
+    align=left,font=\scriptsize,inner sep=3mm
+  },
+  hitcard/.style={logcard,draw=prteal,fill=prlightteal},
+  misscard/.style={logcard,draw=prred,fill=prlightred},
+  relevantcard/.style={logcard,draw=prgold,fill=prlightgold},
+  rankarrow/.style={-{Stealth[length=2mm]},line width=0.75pt},
+  score/.style={font=\scriptsize,fill=white,inner sep=1.2pt,align=center},
+  verdict/.style={font=\scriptsize\bfseries,align=center}
+]
+% A genuine alternative-observation hit.
+\node[panel,minimum width=72mm,minimum height=62mm] at (0,0) {};
+\node[head] at (-3.25,2.65) {(a) Distinct-view hit};
+\node[logcard,text width=57mm] (hitq) at (0,1.25) {%
+  \textbf{Query log \(L_q\), \(F_{237}\)}\\[1pt]
+  \(\langle A_0,A_1,A_2\rangle^{64}\)\\
+  \(\langle A_0,A_2,A_1\rangle^{64}\)};
+\node[hitcard,text width=57mm] (hitr) at (0,-1.15) {%
+  \textbf{Top 1: other view of \(F_{237}\)}\\[1pt]
+  \(\langle A_0,A_1,A_2\rangle^{60}\)\\
+  \(\langle A_0,A_2,A_1\rangle^{68}\)};
+\draw[rankarrow,draw=prteal] (hitq.south) -- (hitr.north)
+  node[midway,right=1mm,score] {\(\cos=0.999954\)};
+\node[verdict,text=prteal] at (0,-2.52)
+  {HIT: the independently sampled view is ranked first};
+
+% A genuine alternative-observation miss.
+\node[panel,minimum width=103mm,minimum height=62mm] at (9.0,0) {};
+\node[head] at (4.20,2.65) {(b) Distinct-view miss};
+\node[logcard,text width=79mm] (missq) at (9.0,1.45) {%
+  \textbf{Query log \(L_q\), \(F_{427}\)}\quad
+  \(\langle A_3\rangle^{19}\),\
+  \(\langle A_0,A_1,A_4\rangle^{19}\),\
+  \(\langle A_0,A_1,A_2\rangle^{18}\),\ \(\ldots\) (7 variants)};
+\node[misscard,text width=39mm] (wrong) at (6.55,-1.05) {%
+  \textbf{Top 1: \(F_{198}\)}\\[1pt]
+  \(\langle A_0,A_1,A_2\rangle^{24}\)\\
+  \(\langle A_1,A_2,A_0\rangle^{19}\)\\
+  \(\langle A_5,A_4\rangle^{16}\)\\
+  \(\ldots\) (9 variants)};
+\node[relevantcard,text width=39mm] (right) at (11.45,-1.05) {%
+  \textbf{First relevant: \(F_{427}\), rank 3}\\[1pt]
+  \(\langle A_3\rangle^{24}\)\\
+  \(\langle A_1,A_0,A_2\rangle^{23}\)\\
+  \(\langle A_0,A_1,A_2\rangle^{19}\)\\
+  \(\ldots\) (7 variants)};
+\draw[rankarrow,draw=prred] (missq.south west) -- (wrong.north)
+  node[pos=0.62,left=1mm,score] {Top 1\\\(\cos=0.962001\)};
+\draw[rankarrow,draw=prgold] (missq.south east) -- (right.north)
+  node[pos=0.62,right=1mm,score] {Rank 3\\\(\cos=0.937472\)};
+\node[verdict,text=prred] at (9.0,-2.52)
+  {MISS: a different family is closer than the other observation};
+\end{tikzpicture}%
+}
+\caption{Qualitative RQ1 event-log neighborhood examples from the \texttt{simple} subset, where \(F_k\) denotes family index \(k\) in that test split. One representative per \texttt{log\_view\_id} is retained, and the query itself is excluded, so every query searches 31 genuinely distinct event logs. Superscripts give trace frequencies; the complete 128-trace logs, not only the displayed variants, are embedded. In panel~(b), the relevant view's canonical labels are mapped into the query's label convention for display only.}
+\Description{Two event-log nearest-neighbor examples. In the successful example, two observations with the same two trace variants but slightly different frequencies are nearest neighbors. In the unsuccessful example, an event log from another family ranks first and the other observation of the query family ranks third.}
+\label{fig:rq1-qualitative-retrieval}
+\end{figure*}

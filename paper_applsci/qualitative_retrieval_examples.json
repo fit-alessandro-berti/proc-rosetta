@@ -1,0 +1,169 @@
+{
+  "schema": "proc-rosetta.qualitative-retrieval.v1",
+  "as_of_utc": "2026-09-03",
+  "checkpoint": {
+    "path": "checkpoints/proc_rosetta.best.pt",
+    "sha256": "5ed9abf8496ee5571a941becf016186d2f44441a1015c288bea07e416495aeaa",
+    "selected_epoch": 11,
+    "semantic_dimension": 96
+  },
+  "data": {
+    "path": "data/simple/test/samples.jsonl",
+    "sha256": "6177c3c7eca33dbf1f6c6ca85ff7b13d81c16dadad0566ad399296d6554e2c30",
+    "curriculum": "simple",
+    "selection": "fixed_test_sample_subset(samples, 64)",
+    "selected_rows": 64,
+    "selected_families": 16
+  },
+  "rq1_distinct_event_log_view_probe": {
+    "purpose": "Remove duplicate event-log rows introduced by pairing each log view with two Petri-net realizations.",
+    "protocol": "Keep the lowest selected-subset row index for each log_view_id; for each query, rank the other 31 unique log views by cosine similarity of ProcRosetta event-log embeddings.",
+    "query_count": 32,
+    "top1_hits": 27,
+    "recall_at_1": 0.84375,
+    "success": {
+      "query": {
+        "selected_subset_index": 28,
+        "family_index": 237,
+        "equivalence_id": "test-23f9b6674452f799",
+        "strong_behavior_id": "cb33478f31d46754f468ce0e988e86941520790476aadb95d1c5857fdf4fc984",
+        "log_view": "log-00",
+        "displayed_trace_variant_counts": {
+          "A0,A1,A2": 64,
+          "A0,A2,A1": 64
+        }
+      },
+      "top_candidate": {
+        "selected_subset_index": 30,
+        "family_index": 237,
+        "equivalence_id": "test-23f9b6674452f799",
+        "strong_behavior_id": "cb33478f31d46754f468ce0e988e86941520790476aadb95d1c5857fdf4fc984",
+        "log_view": "log-01",
+        "rank": 1,
+        "cosine_similarity": 0.9999541640281677,
+        "displayed_trace_variant_counts": {
+          "A0,A2,A1": 68,
+          "A0,A1,A2": 60
+        }
+      }
+    },
+    "failure": {
+      "query": {
+        "selected_subset_index": 52,
+        "family_index": 427,
+        "equivalence_id": "test-9e50bda946d16411",
+        "strong_behavior_id": "82de8aae85fc68bcf6d8559bf64e0e73cc2e2e97f7391befb52360ee713f0034",
+        "log_view": "log-00",
+        "trace_variant_count": 7,
+        "displayed_trace_variant_counts": {
+          "A3": 19,
+          "A0,A1,A4": 19,
+          "A0,A1,A2": 18
+        }
+      },
+      "top_candidate": {
+        "selected_subset_index": 14,
+        "family_index": 198,
+        "equivalence_id": "test-47b2247d6a6f655f",
+        "strong_behavior_id": "dcd6244c51c484b3ae6597cdad94c36d7534300bc2279f4b511b07d605517382",
+        "log_view": "log-01",
+        "trace_variant_count": 9,
+        "rank": 1,
+        "cosine_similarity": 0.9620005488395691,
+        "displayed_trace_variant_counts": {
+          "A0,A1,A2": 24,
+          "A1,A2,A0": 19,
+          "A5,A4": 16
+        }
+      },
+      "first_relevant": {
+        "selected_subset_index": 54,
+        "family_index": 427,
+        "equivalence_id": "test-9e50bda946d16411",
+        "strong_behavior_id": "82de8aae85fc68bcf6d8559bf64e0e73cc2e2e97f7391befb52360ee713f0034",
+        "log_view": "log-01",
+        "trace_variant_count": 7,
+        "rank": 3,
+        "cosine_similarity": 0.937472403049469,
+        "raw_to_query_display_label_map": {
+          "A0": "A3",
+          "A1": "A0",
+          "A2": "A1",
+          "A3": "A2",
+          "A4": "A4"
+        },
+        "displayed_trace_variant_counts": {
+          "A3": 24,
+          "A1,A0,A2": 23,
+          "A0,A1,A2": 19
+        }
+      }
+    }
+  },
+  "rq2_log_to_tree_reported_protocol": {
+    "protocol": "All 64 selected rows query all 64 process-tree rows; relevance is strong_behavior_id or exact_behavior_id.",
+    "query_count": 64,
+    "top1_hits": 42,
+    "recall_at_1": 0.65625,
+    "success": {
+      "query": {
+        "selected_subset_index": 28,
+        "family_index": 237,
+        "equivalence_id": "test-23f9b6674452f799",
+        "strong_behavior_id": "cb33478f31d46754f468ce0e988e86941520790476aadb95d1c5857fdf4fc984",
+        "displayed_trace_variant_counts": {
+          "A0,A1,A2": 64,
+          "A0,A2,A1": 64
+        }
+      },
+      "top_candidate": {
+        "selected_subset_index": 28,
+        "family_index": 237,
+        "equivalence_id": "test-23f9b6674452f799",
+        "strong_behavior_id": "cb33478f31d46754f468ce0e988e86941520790476aadb95d1c5857fdf4fc984",
+        "rank": 1,
+        "cosine_similarity": 0.5309339761734009,
+        "tree_prefix": "SEQ ARITY_2 A0 AND ARITY_2 A1 A2"
+      }
+    },
+    "failure": {
+      "query": {
+        "selected_subset_index": 32,
+        "family_index": 254,
+        "equivalence_id": "test-c300b810a9fd8e2d",
+        "strong_behavior_id": "77f393ad98dc3988977bd16b6183142f2c6a7919828f47ccf1df86ddd629fe72",
+        "displayed_trace_variant_counts": {
+          "A0,A2,A1,A3": 43,
+          "A0,A4,A3": 43,
+          "A0,A1,A2,A3": 42
+        }
+      },
+      "top_candidate": {
+        "selected_subset_index": 42,
+        "family_index": 320,
+        "equivalence_id": "test-e7e386d27b286216",
+        "strong_behavior_id": "45a50e862bedcf7b949c54a288a1d31d94190ed437604abb284f17bbb1695737",
+        "rank": 1,
+        "cosine_similarity": 0.42996349930763245,
+        "tree_prefix": "SEQ ARITY_3 XOR ARITY_2 A5 AND ARITY_2 A0 A1 A2 XOR ARITY_2 A3 A4"
+      },
+      "first_relevant": {
+        "selected_subset_index": 34,
+        "family_index": 254,
+        "equivalence_id": "test-c300b810a9fd8e2d",
+        "strong_behavior_id": "77f393ad98dc3988977bd16b6183142f2c6a7919828f47ccf1df86ddd629fe72",
+        "rank": 5,
+        "cosine_similarity": 0.40079444646835327,
+        "raw_tree_prefix": "SEQ ARITY_3 A0 XOR ARITY_2 A1 AND ARITY_2 A3 A4 A2",
+        "raw_to_query_display_label_map": {
+          "A0": "A0",
+          "A1": "A4",
+          "A2": "A3",
+          "A3": "A1",
+          "A4": "A2"
+        },
+        "display_tree_prefix": "SEQ ARITY_3 A0 XOR ARITY_2 A4 AND ARITY_2 A1 A2 A3"
+      }
+    }
+  }
+}

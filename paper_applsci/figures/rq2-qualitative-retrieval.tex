@@ -1,0 +1,101 @@
+\begin{figure*}[!t]
+\centering
+\resizebox{0.98\textwidth}{!}{%
+\begin{tikzpicture}[
+  panel/.style={draw=prgray!55,rounded corners=3pt,fill=white},
+  head/.style={font=\small\bfseries,anchor=west},
+  logcard/.style={
+    draw=prblue,rounded corners=2pt,fill=prlightblue,
+    align=left,font=\scriptsize,inner sep=3mm
+  },
+  candidate/.style={draw=prgray!55,rounded corners=2pt,fill=white},
+  goodcandidate/.style={candidate,draw=prteal,fill=prlightteal},
+  badcandidate/.style={candidate,draw=prred,fill=prlightred},
+  relevantcandidate/.style={candidate,draw=prgold,fill=prlightgold},
+  op/.style={
+    circle,draw=prgray!75,fill=prlightgold,minimum size=5.4mm,
+    inner sep=0pt,font=\scriptsize\bfseries
+  },
+  leaf/.style={
+    rectangle,rounded corners=1pt,draw=prgray!70,fill=white,
+    minimum width=7mm,minimum height=4.8mm,inner sep=1pt,font=\scriptsize
+  },
+  edge/.style={draw=prgray!75,line width=0.55pt},
+  rankarrow/.style={-{Stealth[length=2mm]},line width=0.8pt},
+  score/.style={font=\scriptsize,fill=white,inner sep=1.2pt,align=center},
+  result/.style={font=\scriptsize\bfseries,align=center}
+]
+% Successful log-to-tree retrieval.
+\node[panel,minimum width=172mm,minimum height=37mm] at (0,3.0) {};
+\node[head] at (-8.15,4.42) {(a) Event log \(\rightarrow\) process tree: hit};
+\node[logcard,text width=43mm] (sq) at (-5.65,2.85) {%
+  \textbf{Query log, \(F_{237}\)}\\[1pt]
+  \(\langle A_0,A_1,A_2\rangle^{64}\)\\
+  \(\langle A_0,A_2,A_1\rangle^{64}\)};
+\node[goodcandidate,minimum width=48mm,minimum height=28mm] (sg) at (0.35,2.82) {};
+\node[font=\scriptsize\bfseries,text=prteal] at (0.35,3.88)
+  {Top 1: relevant \(F_{237}\), \(\cos=0.530934\)};
+\node[op] (sseq) at (0.35,3.25) {\(\rightarrow\)};
+\node[leaf] (sa0) at (-0.55,2.45) {\(A_0\)};
+\node[op] (sand) at (1.25,2.45) {\(\wedge\)};
+\node[leaf] (sa1) at (0.82,1.82) {\(A_1\)};
+\node[leaf] (sa2) at (1.68,1.82) {\(A_2\)};
+\draw[edge] (sseq)--(sa0); \draw[edge] (sseq)--(sand);
+\draw[edge] (sand)--(sa1); \draw[edge] (sand)--(sa2);
+\draw[rankarrow,draw=prteal] (sq.east) -- (sg.west)
+  node[midway,above=1mm,score] {rank 1};
+\node[result,text=prteal] at (5.75,2.85)
+  {HIT\\the first four rows are relevant};
+
+% Unsuccessful log-to-tree retrieval.
+\node[panel,minimum width=172mm,minimum height=57mm] at (0,-1.65) {};
+\node[head] at (-8.15,0.60) {(b) Event log \(\rightarrow\) process tree: miss};
+\node[logcard,text width=37mm] (fq) at (-6.15,-1.60) {%
+  \textbf{Query log, \(F_{254}\)}\\[1pt]
+  \(\langle A_0,A_2,A_1,A_3\rangle^{43}\)\\
+  \(\langle A_0,A_4,A_3\rangle^{43}\)\\
+  \(\langle A_0,A_1,A_2,A_3\rangle^{42}\)};
+
+\node[badcandidate,minimum width=50mm,minimum height=44mm] (fbad) at (-1.45,-1.72) {};
+\node[font=\scriptsize\bfseries,text=prred] at (-1.45,0.02)
+  {Top 1: non-relevant \(F_{320}\), \(\cos=0.429963\)};
+\node[op] (bseq) at (-1.45,-0.62) {\(\rightarrow\)};
+\node[op] (bx1) at (-2.95,-1.38) {\(\times\)};
+\node[leaf] (ba2) at (-1.45,-1.38) {\(A_2\)};
+\node[op] (bx2) at (0.05,-1.38) {\(\times\)};
+\node[leaf] (ba5) at (-3.55,-2.25) {\(A_5\)};
+\node[op] (band) at (-2.45,-2.25) {\(\wedge\)};
+\node[leaf] (ba0) at (-2.88,-3.13) {\(A_0\)};
+\node[leaf] (ba1) at (-2.02,-3.13) {\(A_1\)};
+\node[leaf] (ba3) at (-0.38,-2.25) {\(A_3\)};
+\node[leaf] (ba4) at (0.48,-2.25) {\(A_4\)};
+\draw[edge] (bseq)--(bx1); \draw[edge] (bseq)--(ba2); \draw[edge] (bseq)--(bx2);
+\draw[edge] (bx1)--(ba5); \draw[edge] (bx1)--(band);
+\draw[edge] (band)--(ba0); \draw[edge] (band)--(ba1);
+\draw[edge] (bx2)--(ba3); \draw[edge] (bx2)--(ba4);
+
+\node[relevantcandidate,minimum width=50mm,minimum height=44mm] (fgood) at (5.15,-1.72) {};
+\node[font=\scriptsize\bfseries,text=prgold] at (5.15,0.02)
+  {First relevant \(F_{254}\): rank 5, \(\cos=0.400794\)};
+\node[op] (gseq) at (5.15,-0.62) {\(\rightarrow\)};
+\node[leaf] (ga0) at (3.70,-1.38) {\(A_0\)};
+\node[op] (gx) at (5.15,-1.38) {\(\times\)};
+\node[leaf] (ga3) at (6.60,-1.38) {\(A_3\)};
+\node[leaf] (ga4) at (4.55,-2.25) {\(A_4\)};
+\node[op] (gand) at (5.75,-2.25) {\(\wedge\)};
+\node[leaf] (ga1) at (5.32,-3.13) {\(A_1\)};
+\node[leaf] (ga2) at (6.18,-3.13) {\(A_2\)};
+\draw[edge] (gseq)--(ga0); \draw[edge] (gseq)--(gx); \draw[edge] (gseq)--(ga3);
+\draw[edge] (gx)--(ga4); \draw[edge] (gx)--(gand);
+\draw[edge] (gand)--(ga1); \draw[edge] (gand)--(ga2);
+
+\draw[rankarrow,draw=prred] (fq.east) -- (fbad.west)
+  node[midway,above=1mm,score] {rank 1};
+\draw[rankarrow,draw=prgold,densely dashed] (fbad.east) -- (fgood.west)
+  node[midway,above=1mm,score] {three more rows\\then rank 5};
+\end{tikzpicture}%
+}
+\caption{Qualitative RQ2 log-to-tree retrieval examples from the reported 64-row \texttt{simple} protocol, where \(F_k\) denotes family index \(k\) in that test split. Panel~(a) is a hit: the two observed interleavings retrieve the matching sequential-then-parallel process tree. Panel~(b) is a miss: all four rows of \(F_{320}\) precede the first relevant row of \(F_{254}\). Tree nodes \(\rightarrow\), \(\times\), and \(\wedge\) denote sequence, choice, and parallelism. Rankings and cosine scores use the complete 96-dimensional vectors and all candidates. The rank-5 tree is relabeled into the query's view-local activity convention for display only.}
+\Description{Two event-log-to-process-tree retrieval examples. The successful query retrieves a matching tree with a sequence followed by two parallel activities. The unsuccessful query retrieves a different family first; a tree from the correct family appears at rank five.}
+\label{fig:rq2-qualitative-retrieval}
+\end{figure*}
