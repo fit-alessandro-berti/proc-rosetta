@@ -1,0 +1,1115 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=22mm]{geometry}
+\usepackage{microtype}
+\usepackage{array,booktabs,longtable}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage[obeyspaces]{url}
+\usepackage{hyperref}
+\usepackage{xurl}
+\usepackage{needspace}
+\hypersetup{colorlinks=true,linkcolor=blue!45!black,urlcolor=blue!45!black,
+  pdftitle={ProcRosetta: A Simple Guide to the Streamlit Interface},
+  pdfauthor={ProcRosetta interface documentation}}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\setlength{\emergencystretch}{2em}
+\setlist{nosep,leftmargin=*}
+\AddToHook{cmd/section/before}{\Needspace{12\baselineskip}}
+\AddToHook{cmd/subsection/before}{\Needspace{10\baselineskip}}
+\renewcommand{\arraystretch}{1.15}
+\newcommand{\ui}[1]{\textbf{#1}}
+\newcommand{\code}[1]{\nolinkurl{#1}}
+\newenvironment{controls}{%
+  \small\begin{longtable}{@{}>{\raggedright\arraybackslash}p{.34\linewidth}
+    >{\raggedright\arraybackslash}p{.62\linewidth}@{}}
+  \toprule\textbf{On the screen} & \textbf{What it means or does}\\\midrule\endhead
+  \bottomrule\endfoot
+}{\end{longtable}\normalsize}
+\title{ProcRosetta\\A Simple Guide to the Streamlit Interface}
+\author{Standalone user guide}
+\date{Interface reviewed: 25 September 2026}
+
+\begin{document}
+\maketitle
+
+This guide explains the pages, buttons, settings, tables, and diagrams in the
+ProcRosetta Streamlit studio. You can use it without knowing how the neural
+model is implemented. Names in \ui{bold} match labels in the interface.
+
+The current application has a \ui{Studio overview} and four main views:
+\ui{Artifact workspace}, \ui{Translation studio}, \ui{Latent explorer}, and
+\ui{Checkpoint dashboard}. A separate \ui{Quality evaluation} page exists in
+the repository but is not included in the application's navigation. It is
+covered in Appendix~\ref{sec:evaluation} so that the guide also explains that
+interface without suggesting that it is available in the normal menu.
+
+This is an independent document. It does not need to be included in the main
+paper. Its descriptions follow the source files listed in
+Appendix~\ref{sec:sources}.
+
+\tableofcontents
+\newpage
+
+\section{Start here}
+\label{sec:start}
+
+\subsection{What the studio does}
+The studio takes a description of a process, turns it into a list of numbers,
+and uses those numbers to compare processes or generate a process model.
+There are three kinds of input:
+
+\begin{controls}
+Event log (\code{.xes}) & A record of what happened. One \emph{trace} is one
+case, such as one order. Its events list the activities performed in order.\\
+Process tree (\code{.ptml}) & A model that combines activities using sequence,
+choice, parallel work, and repetition.\\
+Petri net (\code{.pnml}) & A model with places, transitions, and connecting
+arrows. Tokens in places describe the process state.\\
+\end{controls}
+
+The interface calls an imported file an \emph{artifact}, and its type a
+\emph{modality}. An \emph{embedding} or \emph{latent vector} is the list of
+numbers describing an artifact. \emph{Encoding} creates that list.
+\emph{Decoding} turns a list back into a process tree. A \emph{checkpoint}
+is a saved trained model used for both steps.
+
+The usual path through the application is:
+\begin{center}
+\fbox{\begin{minipage}{.92\linewidth}\centering
+Choose a checkpoint $\longrightarrow$ import a file $\longrightarrow$
+inspect its input\\[3pt]
+$\longrightarrow$ compare embeddings or decode a tree
+$\longrightarrow$ inspect and download the result
+\end{minipage}}
+\end{center}
+
+The tree is the model's direct output. The displayed output Petri net is
+converted from that tree. A valid output can still describe different behavior
+from the input, so check the source comparisons as well as the validation badges.
+
+\subsection{A first walkthrough}
+\begin{enumerate}
+\item Start the application from the repository root with
+  \code{streamlit run streamlit_app.py}, and open the browser address printed
+  by Streamlit. The dependencies must already be installed.
+\item In the sidebar, choose a \ui{Checkpoint}. A trusted \code{.pt} file
+  must be installed in the server's checkpoint directory.
+\item Open \ui{Artifact workspace}. In \ui{Import artifacts}, select
+  \code{running-example.xes} under \ui{Bundled artifacts}, then press
+  \ui{Import bundled selection}. Importing also encodes the artifact.
+\item Select it under \ui{Inspect artifact}. Read \ui{Source preview},
+  \ui{Model-facing input}, and \ui{Warnings \& state}.
+\item Open \ui{Translation studio}, select the log under \ui{Latent sources},
+  keep \ui{Deterministic mean}, and press \ui{Decode process tree}.
+\item Inspect \ui{Validation gates}, \ui{Decoded process tree}, and
+  \ui{Source comparison}. Use \ui{Download PTML} to save a generated tree
+  when that button is available.
+\item To compare different representations, also import
+  \code{running-example.ptml} and \code{running-example.pnml}. Bundled files
+  with the same base name receive the same process group. Open
+  \ui{Latent explorer} to compare their embeddings.
+\end{enumerate}
+
+\section{Navigation, the sidebar, and shared behavior}
+\label{sec:shared}
+
+\subsection{Finding a page}
+\begin{controls}
+Studio overview & Starting page, workspace counts, and shortcuts to the four views.\\
+Artifact workspace & Import, inspect, group, encode, remove, and export artifacts.\\
+Translation studio & Decode embeddings into trees, inspect the generation steps,
+compare with sources, and download outputs.\\
+Latent explorer & Compare embeddings using plots, distances, neighbors, and
+experimental interpolation.\\
+Checkpoint dashboard & Inspect the saved model, training history, configuration,
+and other trusted checkpoints.\\
+\end{controls}
+
+Use the page links in the sidebar to move between views. If the sidebar is
+collapsed, expand it to see the navigation and model settings. The workspace is
+shared between pages in the same Streamlit session. It is held in session
+memory; save useful results before refreshing into a new session or closing
+your work. There is no workspace-ZIP restore button.
+
+Tabs switch between related panels. Expanders, such as \ui{Checkpoint facts},
+open and close extra details. A checkbox enables an option; a radio control
+selects one option; a multiselect allows several choices. Number fields and
+sliders change a setting. Buttons carry out an action. Greyed-out buttons need
+some prerequisite, such as an imported artifact or a selected source.
+
+Tables may need horizontal scrolling to reveal all columns. Hover over a
+chart to inspect its values where tooltips are available. Progress bars and
+loading messages indicate work in progress. Green messages report success,
+yellow messages explain limitations, red messages report errors, and information
+messages often explain why a page is empty.
+
+\subsection{Active checkpoint}
+\begin{controls}
+Checkpoint & Select a saved model by filename. Only trusted files already on
+the server are listed; the browser has no checkpoint-upload control.\\
+Inference device & Choose where model calculations run. CPU is always offered;
+the detected default accelerator is also offered when available.\\
+Epoch / latent / activities caption & The saved training epoch, the number of
+coordinates in each embedding, and the model's activity-vocabulary limit.\\
+Checkpoint facts & Opens structured text (JSON) containing the identifier,
+checkpoint type, epoch, latent and hidden dimensions, maximum activities,
+maximum tree arity, and best validation loss. The identifier distinguishes
+models; arity means the number of children of a tree operator.\\
+\end{controls}
+
+The server reads checkpoints from \code{checkpoints/}, or from the directory
+specified by \code{PROC_ROSETTA_CHECKPOINT_DIR}. A missing or unreadable
+checkpoint produces an error. The overview remains visible, but the four
+working views stop before their main controls; artifact import also needs a
+loadable checkpoint in this interface.
+
+Changing the checkpoint does not automatically re-encode existing artifacts.
+Old entries can show \code{checkpoint mismatch}; Translation studio and Latent
+explorer use only compatible embeddings. Import the files again with the new
+checkpoint to encode them for that model. Existing register counts can still
+include stored results from an earlier checkpoint. Use one checkpoint for all
+items before making a comparison or preparing a workspace export.
+
+\subsection{When settings take effect}
+File selection starts import automatically. Process-group edits take effect
+immediately. Plot controls update their displays. Decoding, interpolation,
+gallery building, evaluation, and export preparation require their action
+buttons. Changing one of their settings does not replace an already displayed
+result: run the action again before interpreting or downloading it.
+
+\section{Studio overview}
+The heading is \ui{See every transformation.} The four counters describe the
+current workspace:
+
+\begin{controls}
+Workspace artifacts & Number of imported artifacts.\\
+Embeddings ready & Artifacts with a stored, nonempty embedding and no encoding
+errors. This count does not filter by the currently selected checkpoint.\\
+Decoded artifacts & Artifacts with at least one stored decode attempt. This
+does not mean that every attempt succeeded.\\
+Process groups & Number of distinct, nonempty group names.\\
+Studio workflow / Open view & Four cards describe the four main views. Each
+\ui{Open view} link opens its corresponding page.\\
+Representation path & A text diagram showing file bytes, parsed input,
+canonical input, latent numbers, comparison, decoded tree, derived net, and
+behavior. It describes the pipeline; it is not a control.\\
+\end{controls}
+
+In the representation path, $\mu$ (mu) is the embedding's mean, used for
+ordinary deterministic comparisons. $\log\sigma^2$ is its log variance,
+which describes the spread used in experimental latent sampling.
+
+\section{Artifact workspace}
+\label{sec:workspace}
+The heading is \ui{Import once. Explore immediately.} Start here to provide
+the inputs used by the other views.
+
+\subsection{Import artifacts}
+\begin{controls}
+Upload your artifacts & Choose one or more XES, PTML, or PNML files. Parsing,
+preparation, and encoding start as soon as the files are selected.\\
+Bundled artifacts & Choose one repository example or \ui{All 9 artifacts}.
+The examples are \code{receipt}, \code{roadtraffic100traces}, and
+\code{running-example}, each in all three formats. The displayed total follows
+the files available on the server.\\
+Import bundled selection & Imports and encodes the selected example or set.
+It is disabled while \ui{Choose an example} is selected.\\
+Import progress and result message & Shows how many files were processed and
+successfully embedded. A warning lists files that failed or reached a limit.\\
+\end{controls}
+
+The workspace accepts at most 25 artifacts, with a 50 MiB limit per file.
+A repeated filename with identical content reuses its workspace entry and
+goes through encoding again. Uploaded files start without a process group;
+bundled examples receive their base filename as a suggested group.
+
+\subsection{Advanced preprocessing}
+\label{sec:preprocessing}
+Preprocessing decides what the encoder receives. Set these options
+\emph{before} selecting files or pressing the bundled-import button.
+Editing them alone does not re-encode a stored item. Re-import to apply new
+encoder limits or sampling settings. If you change parsing settings such as
+the activity attribute, remove the existing item, clear inference and evaluation
+caches in the Checkpoint dashboard, and then import it again. Duplicate imports
+reuse the already parsed artifact, and cached encoder inputs may otherwise
+still reflect the earlier parsing choices.
+
+\begin{controls}
+Activity attribute & Event field containing the activity name.
+Default: \code{concept:name}.\\
+Case identifier attribute & Field identifying the case to which an event
+belongs. Default: \code{case:concept:name}.\\
+Append lifecycle transition to activity labels & Off by default. Distinguishes
+lifecycle stages such as an activity's start and completion when the event
+contains that information. This can increase the number of distinct labels.\\
+Remove empty traces & On by default. Removes cases that contain no activities.\\
+Guess missing PNML final marking & Off by default. Allows the parser to try
+inferring the final token state if the PNML file does not supply it. Read any
+resulting warning.\\
+Maximum encoder traces & Largest number of traces passed to the log encoder.
+Default 128; allowed range 1--100,000.\\
+Maximum trace length & Largest number of events retained in each selected
+trace. Longer traces are clipped. Default 128; range 1--10,000.\\
+Maximum workspace events per log & Rejects an oversized log for encoding
+rather than silently reducing it. Default 1,000,000; range 1--10,000,000.\\
+Trace selection & Chooses which traces enter the encoder; the five options
+are explained below. Default: \ui{First N}.\\
+Compress duplicate traces to variants before selection & Off by default.
+Keeps one copy of each distinct sequence before selecting traces. This changes
+the frequency information available to selection and encoding.\\
+Variant coverage target & Appears for \ui{Variant Coverage}. Default 0.80;
+range 0.10--1.00. Sets the fraction of cases represented by the chosen frequent
+variants, subject to the trace-count limit.\\
+Selection seed & Default 13. Makes random selection or shuffling repeatable
+for the same input and settings.\\
+Maximum Petri-net nodes & Maximum total places and transitions allowed for
+encoding. Default 512; range 1--100,000. Larger nets are rejected, not cut down.\\
+Maximum process-tree tokens & Maximum encoded tree length, including boundary
+tokens. Default 512; range 2--100,000. Larger trees are rejected, not clipped.\\
+\end{controls}
+
+A \emph{variant} is a distinct activity sequence. Many cases can follow the
+same variant.
+\begin{controls}
+First N & Take the first traces in file order, up to the limit.\\
+Seeded Random & Take a reproducible random subset without selecting the same
+trace position twice.\\
+Frequency Preserving & Allocate the trace budget approximately in proportion
+to variant frequencies, then shuffle the selected cases using the seed.\\
+Most Frequent Variants & Fill the budget from the most frequent variants
+first. Repeated copies can be selected.\\
+Variant Coverage & Add frequent variants until their source frequencies reach
+the coverage target or the trace budget is exhausted. It can return fewer
+traces than the maximum.\\
+\end{controls}
+
+These settings do not enlarge a checkpoint's activity vocabulary. Tree
+operators with too many children may be regrouped into smaller operators
+without dropping branches; the preprocessing ledger records this change.
+
+\subsection{Workspace register and selection}
+\begin{controls}
+Workspace register & One row per artifact. \ui{Artifact}, \ui{Group}, and
+\ui{Modality} identify it. \ui{Size} means events for a log, nodes for a tree,
+or nodes for a net. \ui{Labels} counts distinct activities for logs/trees,
+but visible transitions for nets.\\
+State / Encoded / Decoded / Validation & Processing status; whether a stored
+embedding is usable; whether a decode has been attempted; and whether the latest
+stored decode passed all success checks. A dash means no decode is recorded.\\
+Inspect artifact & Chooses the item shown in the panels below. Selecting a
+table row is not the inspection control.\\
+Process group & Type a shared name for artifacts that describe the same process.
+For example, give a log and its tree the group \code{Order process}. A group
+is your assertion of a relationship; the app does not prove equivalence.\\
+\end{controls}
+
+Typical states are \code{parsed}, \code{canonicalizing}, \code{encoding},
+\code{embedding ready}, \code{input limitation}, and \code{encoding failed}.
+Decode attempts can add \code{Petri conversion valid}, \code{invalid tree},
+or \code{decode limit reached}. Read the detailed warnings and validation
+gates to understand a failure rather than relying on the short state alone.
+
+\subsection{Source preview}
+This tab shows the parsed source before encoder trace selection and clipping.
+For logs, parsing choices such as removing empty traces already apply.
+
+An \ui{Event log} preview contains:
+\begin{controls}
+Traces / Events / Activities / Variants / Mean length & Case count, event
+count, distinct activity count, distinct sequence count, and average events
+per trace.\\
+Activity frequency / Trace length & Counts of events by activity and counts
+of traces by their length.\\
+Start activities / End activities & Counts of the first and last activities
+of traces.\\
+Directly-follows graph & An arrow from A to B means that B immediately follows
+A in some trace. Edge labels show counts or percentages. Green activities
+can start a trace; orange activities can end one; other activities are purple.
+If an activity both starts and ends traces, the start color takes priority.\\
+Minimum edge frequency & Hide arrows with smaller counts. Default 1.\\
+Maximum displayed edges & Show only the most frequent remaining arrows.
+Default 30; range 5--100.\\
+Activity search & Keep arrows with a matching source or target activity name;
+matching ignores letter case. This filters the drawing, not the uploaded log.\\
+Frequency & \ui{Absolute} shows counts. \ui{Relative} shows the percentage
+of all directly-follows occurrences in the source, including hidden edges.\\
+Most frequent variants & Table of the 100 most frequent sequences at most,
+with their counts.\\
+\end{controls}
+
+A \ui{Process tree} preview offers \ui{Tree labels}: select
+\ui{Original labels} for source names or \ui{Canonical labels} for model
+names such as \code{A0}. The tree viewer controls are explained in
+Section~\ref{sec:viewers}. A statistics row gives size, depth, activity and
+silent leaves, counts of each operator, maximum arity, prefix-token length,
+prefix tokens, and distinct activities.
+
+A \ui{Petri net} preview uses the net viewer in Section~\ref{sec:viewers}.
+Its statistics include places, visible and invisible transitions, arcs, total
+nodes, initial and final token counts, duplicate visible labels, and isolated
+nodes (nodes with no incident arcs).
+
+\subsection{Model-facing input}
+\begin{controls}
+Canonical activity map & Shows original names and the shorter model names.
+For example, \code{Receive order} may become \code{A0}. Names are assigned in
+first-seen order within each artifact, so \code{A0} need not mean the same
+activity in different files.\\
+Original labels / Canonical labels / Checkpoint limit / Reversible & Number of
+distinct source names, number mapped, vocabulary capacity, and whether this
+input has a complete reversible map. PNML reports \ui{no} for reversibility.\\
+Mapping table & \ui{Original label}, \ui{Canonical label}, \ui{Frequency},
+and \ui{Used by encoder}. A dash or false entry can indicate an unsupported
+label or a label omitted by the structural PNML path.\\
+Preprocessing ledger & JSON record of selection, trace counts, clipping,
+discarded events, and relevant size limits or tree regrouping. It explains
+how the input changed.\\
+Model input summary & For logs: input shape, selected traces, and canonical
+clipped traces. For trees: prefix tokens, token count, and arity. For nets:
+node types, edge count, and initial/final markings.\\
+Selected-trace table & For a log, \ui{Trace} is the selected-list index;
+\ui{Events} and \ui{Selected sequence} describe the trace before clipping;
+\ui{Clipped} flags traces beyond the selected length limit. The canonical
+traces in the JSON show what was retained.\\
+\end{controls}
+
+\textbf{PNML label limitation.} The external Petri-net encoder uses graph
+structure, node types, and markings, but does not use visible activity names.
+A net can display its original names in the preview while its embedding omits
+them. Decoding from PNML therefore uses canonical names and cannot restore the
+source's activity names. The interface repeats this warning at relevant steps.
+
+\subsection{Warnings, embedding status, and attention}
+\ui{Warnings \& state} shows the current state, followed by parsing,
+preprocessing, or encoding messages. A green message means that no such
+limitations were detected; it does not certify output behavior.
+\ui{Embedding ready} reports the vector dimension and encoding time in seconds.
+
+When a log encoding includes trace attention, \ui{Event-log trace attention}
+shows which selected traces receive more weight when the model combines them.
+The table lists \ui{Trace}, \ui{Sequence}, \ui{Length},
+\ui{Variant frequency}, \ui{Clipped}, and \ui{Attention weight}, sorted by
+weight. The scatter plot puts length on the horizontal axis, weight on the
+vertical axis, and frequency in the marker size.
+
+\ui{Aggregate attention by trace variant} combines identical sequences,
+sums their attention, and shows \ui{Variant}, \ui{Frequency}, \ui{Length},
+and \ui{Attention weight}. Frequencies here concern the selected traces.
+Attention is a weight on whole traces, not an explanation of individual events.
+
+\subsection{Export and removal}
+\begin{controls}
+Prepare workspace export & Builds a snapshot of the current workspace. Press
+it again after changes to refresh the download.\\
+Download workspace ZIP & Appears after preparation. Contains a
+\code{workspace.json} manifest, embedding JSON files, stored decode reports,
+available PTML and derived PNML outputs, and simulated XES logs for valid
+stored trees. The manifest includes configuration, checkpoint metadata,
+available evaluations, pairwise cosine scores, and PCA data.\\
+Remove selected & Removes the inspected workspace entry immediately. Its
+original disk file is not deleted. Re-import the file to add it again.\\
+\end{controls}
+
+The ZIP does not contain the original uploaded files, checkpoint weights, or
+a restorable Streamlit session. Keep the original inputs separately. The
+cached reference gallery and the explorer's interpolation result are not
+workspace artifacts and are not included as stored workspace decodes.
+
+\section{Reading the reusable tree and Petri-net viewers}
+\label{sec:viewers}
+These controls recur in previews, translations, neighbor inspection, and
+reference examples. They change the display, not the underlying model.
+
+\subsection{Process-tree viewer}
+Read the tree from the root downward. Activity leaves are green boxes;
+silent leaves are grey boxes marked $\tau$. Purple operator nodes show their
+type and number of children:
+\begin{controls}
+SEQ & Perform the child processes in order.\\
+XOR & Choose one child process.\\
+AND & Perform all child processes, allowing parallel or interleaved work.\\
+LOOP & Repeat work according to the loop's body and repeat/exit branches.\\
+Focus subtree & Show the \ui{Complete tree} or a particular branch. Node paths
+such as \code{0/1} identify successive child positions, counted from zero.\\
+Displayed depth & Limit how many levels are drawn from the selected root.
+Collapsed nodes show how many descendants are hidden. A one-node view shows
+\ui{Single-node tree} instead of a slider.\\
+Highlight activity & Highlights matching displayed labels in pink. Matching
+ignores letter case; it does not remove nodes or change labels.\\
+Prefix tokens & Expands the full tree's linear description, even when the
+drawing focuses on one branch. \code{<bos>} means beginning, \code{<eos>}
+means end, and \code{ARITY_2}, for example, announces two children.\\
+\end{controls}
+
+Node tooltips provide a node identifier, subtree size, and depth. Prefix
+notation lists an operator before its children; it is another representation
+of the same tree.
+
+\subsection{Petri-net viewer}
+Circles are places. Orange boxes are visible transitions (activities). Grey
+boxes marked $\tau$ are invisible transitions, which route execution without
+recording a visible activity. Arrows are arcs. An initial-token symbol and
+count mark initially occupied places; a target-like symbol marks a final place
+when no initial-token label takes priority. Tooltips provide node names and
+marking details.
+
+\begin{controls}
+Graph view & \ui{Full graph} draws the net; \ui{Local neighborhood} draws
+nodes near a chosen node; \ui{Structural summary only} shows counts without
+the drawing.\\
+Hide invisible transitions & Hides silent transitions and their incident arcs
+from the drawing. It does not merge those arcs into new connections.\\
+Largest component only & Keeps the largest connected part, treating arrows
+as connections in either direction for this display selection.\\
+Neighborhood center / Radius & Appear in \ui{Local neighborhood}. Select a
+node and a radius of 1--4 connections. Neighbors are found in either direction;
+this is not an execution-reachability test.\\
+Places / Visible / Invisible / Arcs & Counts in the selected component or
+neighborhood. Hiding invisible transitions changes the drawing but does not
+remove them from these counts.\\
+\end{controls}
+
+\section{Translation studio}
+\label{sec:translation}
+The heading is \ui{From latent point to validated model.} At least one
+artifact must have a successful embedding for the active checkpoint.
+
+\subsection{Choose a latent source and decode}
+\begin{controls}
+Latent sources & Select one or more compatible workspace artifacts. A single
+source uses its vector; multiple sources combine their vectors. There is no
+automatic requirement that selected items share a process group.\\
+Maximum decode length & Token budget for generation. Default 256; range
+16--1,024, in steps of 16. Tokens include operators and boundary symbols,
+so this is not an activity count.\\
+Latent mode: Deterministic mean & Uses $\mu$. For several sources the default
+is their equal-weight arithmetic mean. The decoder chooses the highest-scoring
+allowed token at each step.\\
+Use custom fusion weights: experimental & Appears when several sources are
+selected. A number field named after each artifact sets its nonnegative weight,
+initially 1.0. Weights are normalized automatically; their sum must exceed zero.\\
+Latent mode: Stochastic latent samples: experimental & Draws alternative
+vectors using the encoded means and spreads, then decodes them. Token selection
+still uses the same greedy, grammar-constrained decoder.\\
+Sampling seed & Default 13. Controls the repeatable random draws for a fixed
+input and configuration.\\
+Alternatives & Number of sampled candidates, 1--12; default 4.\\
+Collapse duplicate trees & On by default. Keeps only distinct generated token
+sequences in the displayed gallery, so fewer alternatives may appear.\\
+Decode process tree & Runs generation. Disabled if no source is selected.
+The prefix display and progress bar show generated tokens, current step,
+grammar state, and number of allowed next choices.\\
+\end{controls}
+
+The \ui{Latent source} explanation card describes the default single-source
+or equal-weight choice. Custom weights and sampling override those defaults.
+Fusion is most interpretable when the inputs describe the same process.
+Sampling illustrates possible output variation; the spread is not a calibrated
+confidence score for correctness.
+
+If several distinct sampled results remain, the \ui{Stochastic decode gallery}
+shows each alternative's tokens, token count, source/seed label, and validity.
+\ui{Inspect alternative} chooses the candidate used by the panels and
+downloads below. After changing sources or decoding settings, press
+\ui{Decode process tree} again so those panels refer to the new selection.
+
+\subsection{Validation gates}
+Each badge checks a different part of the result. Green means the check passed;
+red means it failed. Warnings and errors appear below the badges.
+\begin{controls}
+EOS emitted & The decoder produced the explicit end token \code{<eos>}.\\
+Grammar valid & The generated tokens can be read as a complete process tree.\\
+Arity valid & Tree operators respect the allowed number of children.\\
+Vocabulary valid & Generated token identifiers belong to the model's vocabulary.\\
+Petri convertible & The decoded tree was successfully converted to a Petri net.\\
+Length limit & Green means the generation limit was \emph{not} reached without
+an end token. Red means the token budget was exhausted without EOS.\\
+\end{controls}
+
+These are structural and termination checks. They do not show that the tree
+reproduces the input behavior or that activity names were fully restored.
+
+\subsection{Decoder progress}
+The colored token ribbon distinguishes operators (purple), arity tokens
+(blue), activities (green), silent \code{TAU} tokens (grey), and boundary
+tokens (orange). The table explains each generation step:
+\begin{controls}
+Step / Grammar state & Step number and the kind of token the partial tree
+currently allows.\\
+Chosen / Score & Selected token and its probability among allowed choices at
+that step. This is not the probability that the entire discovered process is
+correct.\\
+Valid choices / Open slots & Number of allowed next tokens and the child
+positions that still need to be filled.\\
+Subtree position / EOS & Where the next tree content belongs, and whether
+the end token was emitted at that step.\\
+Top valid & Highest-scoring allowed token choices, with probabilities
+normalized over the allowed set.\\
+Masked high scores & Highly scored candidates blocked by the grammar. They
+were not chosen because they would violate the current syntax. Their displayed
+scores come from the full vocabulary before masking.\\
+\end{controls}
+
+\subsection{Decoded process tree and Derived Petri net}
+\ui{Decoded process tree} has two subtabs. \ui{Canonical labels} shows model
+names such as \code{A0}. \ui{Original labels} uses the source map when one is
+available. For fusion, restoration requires identical original-to-canonical
+maps in all sources. A generated activity absent from the map stays canonical.
+If any source is PNML, original-name restoration is unavailable. Thus an
+\ui{Original labels} tab can still show canonical names; read the warnings.
+
+\ui{Derived Petri net} shows the deterministic conversion of the canonical
+decoded tree. It is not a separately generated neural output. The reusable net
+viewer is followed by full-net counts of \ui{Places}, \ui{Transitions},
+\ui{Silent}, and \ui{Arcs}. These extra counts describe the full result even
+if the viewer above is filtered.
+
+\subsection{Source comparison}
+This tab compares the displayed decode with each source used in its generation.
+A summary table contains scalar measurements; additional panels depend on the
+source type.
+
+\begin{controls}
+Process-tree source & Side-by-side source and decoded trees. Exact tree/prefix
+matches test structural representations. Token edit distance counts insertions,
+deletions, and replacements; its normalized version divides by the longer
+token sequence. Lower is closer. Size, depth, operator/leaf overlaps, and count
+differences describe other structural changes. The overlap scores compare
+counts, not execution behavior.\\
+Event-log source & Compares the log with traces simulated from the decoded
+tree. Charts show activity frequencies and trace lengths; paired tables show
+the top 20 variants and top 30 directly-follows relations. The summary includes
+distribution distances and simulated trace count.\\
+Petri-net source & Side-by-side source and derived nets, with source/decoded
+counts for places, transitions, visible/invisible transitions, arcs, initial
+and final tokens, and duplicate visible labels. Label preservation is explicitly
+not evaluated.\\
+\end{controls}
+
+Distribution distances describe differences between observed frequency
+patterns. An L1 distance of zero means identical compared distributions;
+smaller is closer. The fields \code{variant_l1}, \code{directly_follows_l1},
+and \code{length_l1} compare variants, directly-follows pairs, and trace
+lengths; \code{mean_l1} averages those three. The fields
+\code{activity_frequency_l1}, \code{start_activity_l1}, and
+\code{end_activity_l1} compare activities and trace starts/ends.
+\code{aggregate_distribution_l1} averages the first three distances plus
+activity-frequency distance. \code{mean_trace_length_difference} is the
+absolute difference in average events per trace. Simulated samples are only
+samples of the model's behavior; equal summaries do not prove process
+equivalence.
+
+\subsection{Export decoded model}
+\begin{controls}
+Restore original labels in PTML & On by default where allowed. Affects the
+PTML download only. Hidden for PNML-derived output. It cannot restore a name
+that has no source mapping.\\
+Download PTML & Saves the tree. Offered when grammar validation succeeds.\\
+Download validation JSON & Saves source identifiers, tokens, trees, label map,
+validation flags, warnings, errors, decode time, and decoder settings.
+Also requires a grammar-valid tree in this interface.\\
+Download derived PNML & Saves the converted net when conversion succeeded.
+It retains canonical tree labels; the PTML restoration checkbox does not
+relabel this net.\\
+Download simulated XES & Saves a generated event log from the decoded tree,
+using 100 traces and seed 13. Uses restored labels when a restored tree is
+available. Requires a grammar-valid tree.\\
+\end{controls}
+
+A download button's presence is not a substitute for checking every validation
+gate. The report records the distinction between a parsed tree and a fully
+successful decode.
+
+\section{Latent explorer}
+\label{sec:latent}
+The heading is \ui{Make multimodal agreement visible.} The page uses
+nonempty, error-free embeddings from the active checkpoint. Different trained
+models can assign different meanings to the same vector coordinates, even
+when their dimensions match.
+
+\subsection{Embedding register}
+\begin{controls}
+Artifact / Group / Modality & File name, assigned process group, and input type.\\
+Dimension / Norm & Number of coordinates and vector length. A larger norm
+does not mean a better process or a better prediction.\\
+Latent spread & Average latent standard deviation. Describes sampling spread,
+not measured prediction accuracy.\\
+Nearest artifact / Similarity & Another workspace artifact with the highest
+cosine similarity, and that score. Empty if there is no other artifact.\\
+Encoded at / Checkpoint & Encoding timestamp and saved-model identifier.\\
+\end{controls}
+
+\subsection{PCA projection}
+PCA reduces the vectors to two plotted coordinates. Each point is an embedding;
+color and shape identify its modality. Grey lines join points with the same
+nonempty group. Hover for the artifact, group, modality, and coordinates;
+the plot supports interactive panning and zooming.
+
+\begin{controls}
+Show equal-weight fused group means & On by default. Adds a mean point for
+each group having at least two modalities, using the first artifact of each
+modality in that group.\\
+Include cached reference gallery & Adds previously generated synthetic
+examples. These are labelled as references and use the same checkpoint.\\
+Principal component 1 / Principal component 2 & Horizontal and vertical
+projection coordinates, not named process properties.\\
+Explained variance & Percentage of the vector variation retained by each
+axis. The two percentages need not add to 100\%.\\
+\end{controls}
+
+At least three points with variation in two independent directions are needed
+for the plot. Otherwise the panel recommends pairwise distances. Adding
+references or fused means recomputes the projection, so existing points can
+move on screen without their embeddings changing. Nearby projected points
+are a useful clue, not proof that the original processes are equivalent.
+
+\subsection{Similarity heatmap}
+\begin{controls}
+Ordering & Choose \ui{Upload order}, \ui{Process group}, \ui{Modality},
+\ui{Similarity to selected}, or \ui{Hierarchical clustering}. This rearranges
+rows and columns without changing their values. Clustering can fall back to
+upload order if unavailable.\\
+Similarity anchor & Appears for \ui{Similarity to selected}. Choose the
+artifact whose most similar neighbors should appear first.\\
+Pairwise measure: Cosine similarity & A colored grid comparing vector
+directions. Values near 1 mean similar directions, 0 roughly perpendicular,
+and $-1$ opposite. Green is high, dark is near zero, red is low. Hover a cell
+for both names and its score. This is not an accuracy percentage.\\
+Pairwise measure: Euclidean distance & A numeric table of straight-line
+distances in the full latent space. Zero means identical vectors; smaller is
+closer.\\
+Pairwise measure: Normalized Euclidean distance & Euclidean distance divided
+by the square root of the latent dimension. It is not constrained to 0--1.\\
+\end{controls}
+
+This panel compares the workspace embeddings; projection reference points
+and fused group points are not added to this matrix.
+
+\subsection{Group agreement}
+This table checks whether different representations assigned to one process
+group lie close together. It uses the first artifact of each modality in the
+group and requires at least two different modalities. Duplicating a log within
+a group therefore does not create a second modality for this calculation.
+
+\begin{controls}
+Process group / Artifacts & Group name and the number of modality
+representatives actually compared.\\
+Mean / Maximum within-group distance & Average and largest pairwise
+Euclidean distances. Smaller means closer agreement in the learned space.\\
+Tree--Log / Tree--Petri / Log--Petri cosine & Pairwise cosine scores for the
+modalities present in the group. Larger means closer directional agreement.\\
+Distance from fused & Each modality's Euclidean distance from the equal-weight
+group mean. A larger value identifies a representation farther from that mean.\\
+Rank groups by & \ui{Best agreement} sorts by smallest mean distance;
+\ui{Worst agreement} reverses it. \ui{Largest Petri discrepancy} and
+\ui{Largest event-log discrepancy} sort by the respective distance from the
+fused mean.\\
+\end{controls}
+
+\subsection{Nearest neighbors}
+\begin{controls}
+Neighbor pool & \ui{Workspace} or \ui{Workspace + reference gallery}.
+The latter requires a built reference gallery.\\
+Selected artifact & Workspace artifact for which to find neighbors.\\
+Modality filter & \ui{Any modality}, \ui{Other modalities only}, or
+\ui{Same modality only}.\\
+Neighbor table & Other artifacts sorted by decreasing cosine similarity,
+then increasing Euclidean distance. Includes identifiers, names, modality,
+both measures, \code{same_process_group}, and \code{source}
+(workspace or reference).\\
+behavioral\_distance & Appears when traces are available for both entries,
+either directly or through an event log in the same process group. Uses
+\code{mean_l1}; smaller means closer trace-distribution summaries. It does
+not determine the neighbor ordering.\\
+Inspect neighbor source & Select one of the first 20 neighbors to see its
+tree, net, or top 20 log variants. A workspace neighbor's latest decoded tree
+also appears when available. A reference neighbor shows its generating tree.\\
+\end{controls}
+
+\subsection{Dimensions}
+\ui{Compare artifacts} selects vectors for coordinate-by-coordinate line
+charts; the first three artifacts are selected initially. \ui{Latent mean by
+dimension} plots $\mu$. \ui{Latent standard deviation by dimension} plots
+$\exp(\tfrac12\text{logvar})$. With several selected artifacts,
+\ui{Difference from selected fused mean} plots each vector minus their
+arithmetic mean. Here every selected artifact contributes. Coordinates are
+intentionally unnamed: a peak is not labelled as a particular process property.
+
+\subsection{Interpolation}
+This is an exploratory view requiring two encoded artifacts.
+\begin{controls}
+Left endpoint / Right endpoint & Choose two different workspace vectors.\\
+alpha & Slider from 0 to 1 in steps of 0.05; default 0.5. Zero uses the left
+vector, one uses the right, and 0.5 takes their midpoint.\\
+Decode interpolation point & Decodes $(1-\alpha)\mu_{\mathrm{left}}+
+\alpha\mu_{\mathrm{right}}$ with a fixed 256-token budget.\\
+Result & Generated token sequence, \ui{Tree size}, \ui{Decode tokens}, and
+\ui{Petri conversion} status, followed by the available tree and net viewers.\\
+\end{controls}
+
+Intermediate vectors need not produce a smooth or meaningful sequence of
+process changes. This view does not restore original labels. Press the decode
+button again after changing an endpoint or alpha; the stored result otherwise
+remains the previous one.
+
+\subsection{Reference gallery}
+This tab creates synthetic comparison examples for a small workspace. It is
+available after at least one workspace artifact is encoded.
+\begin{controls}
+Reference processes & Number of synthetic processes, 3--100; default 12.\\
+Reference seed & Default 13. Controls example generation.\\
+Traces per process & Number of generated log traces per process, 8--512;
+default 64.\\
+Build reference gallery & Generates processes and encodes each tree, log,
+and net with the active checkpoint. A progress bar counts completed processes.\\
+Cached-gallery message and table & Shows process and embedding totals, then
+\ui{Reference}, \ui{Group}, \ui{Modality}, \ui{Tree size}, \ui{Traces},
+and \ui{Petri nodes}. Each process contributes three modality embeddings.\\
+Preview reference process & Select a reference group. \ui{Process tree}
+shows its tree; \ui{Event-log behavior} shows up to 30 frequent variants;
+\ui{Petri structure} shows its net.\\
+\end{controls}
+
+References live in a checkpoint-specific session cache. They can be included
+in PCA and nearest-neighbor searches. Building the gallery again replaces it;
+switching checkpoints invalidates the old gallery when this page is visited.
+
+\subsection{Inspect and export one vector}
+\begin{controls}
+Embedding & Select a workspace vector to inspect and download.\\
+Raw latent mean and log variance & Expands a table of \ui{Dimension},
+\code{mu}, and \code{logvar}. Dimension indices start at zero.\\
+JSON & Full encoding record, including vectors, source/preprocessing metadata,
+checkpoint identifier, canonical map, runtime, and diagnostics.\\
+CSV & One row per dimension with mean, log variance, and repeated metadata.
+Useful for spreadsheet analysis.\\
+NumPy & A \code{.npz} archive containing \code{mu}, \code{logvar}, and
+JSON metadata for numerical analysis.\\
+\end{controls}
+
+\section{Checkpoint dashboard}
+\label{sec:checkpoint}
+The heading is \ui{Inspect the run behind the latent space.} This page reads
+saved training information; it has no training-start button.
+
+\subsection{Model facts}
+\begin{controls}
+Epoch / Best epoch & The checkpoint's saved epoch and the latest epoch marked
+as best in its embedded history. An epoch is one training pass through the
+data. A missing value is shown as a dash.\\
+Latent dimension / Hidden dimension & Size of the shared vectors and the
+model's internal representations.\\
+Activity limit / Best validation loss & Maximum supported activity vocabulary
+and best recorded validation objective. Lower loss is better for the same
+objective and comparable data.\\
+early stopped & Annotation inferred from the recorded patience and final
+non-improving-epoch count, when that information is present.\\
+Facts table & \ui{Tree arity}, \ui{Tree token limit}, \ui{Petri node limit},
+\ui{Training traces/sample}, \ui{Trace length limit}, \ui{Checkpoint type},
+and \ui{Training/file timestamp}. These are recorded model/run facts; compare
+them with the current import settings rather than treating every value as a
+live workspace setting.\\
+\end{controls}
+
+\subsection{Training history}
+The main line chart compares training and validation loss against epoch.
+Training loss concerns the examples used to learn; validation loss concerns
+held-out examples. \ui{Validation component losses} separates the terms
+defined below. \ui{Generalization gap} plots validation loss minus training
+loss. A growing positive gap can indicate that performance on training data
+is improving faster than performance on validation data.
+
+\begin{controls}
+tree\_reconstruction & Error when predicting a tree from its own representation.\\
+trace\_to\_tree / petri\_to\_tree & Errors when predicting tree tokens from
+a log or net representation.\\
+latent\_alignment & Penalty for separating matching representations.\\
+contrastive & Encourages matching behavior representations to be closer than
+unmatched ones.\\
+kl & Regularization of the latent distributions, not a behavior-accuracy score.\\
+loss & Weighted total of the component objectives. Component scales can differ.\\
+\end{controls}
+
+The history table includes epoch, learning rate, epoch duration in seconds,
+best-epoch flag, best validation loss, training/validation components, and
+available gaps. If embedded history is absent, the page tries the adjacent
+server-side \code{training_metrics.csv}; it shows its table and available
+total-loss curves. If neither exists, an information message explains the
+absence. A usable checkpoint does not need a complete history.
+
+\subsection{Configuration}
+\ui{Training configuration} and \ui{Synthetic-data configuration} show saved
+settings as JSON. \ui{Complete checkpoint metadata} includes all recorded
+facts. These displays are read-only.
+
+\ui{Stage caches} lists \ui{Stage}, \ui{Entries}, and \ui{Invalidated by}.
+A cache is temporary storage that avoids repeating calculations. The stages
+are \ui{Parsed Artifact}, \ui{Preprocessed Input}, \ui{Embedding},
+\ui{Decode}, \ui{Simulation}, and \ui{Evaluation}. The third column describes
+which inputs identify reusable work, such as a file's content and parse
+settings, or a latent vector and decoder configuration.
+
+\ui{Clear inference and evaluation caches} clears the preprocessed-input,
+embedding, decode, simulation, and evaluation caches. It preserves the parsed
+artifact cache and the workspace items. It does not erase already displayed
+results or force an automatic re-encoding; repeat the relevant action when
+you want a new result.
+
+\subsection{Compare checkpoints}
+This table reads all trusted checkpoints and compares \ui{Checkpoint},
+\ui{Type}, \ui{Epoch}, \ui{Latent}, \ui{Hidden}, \ui{Activities},
+\ui{Arity}, and \ui{Best validation loss}. A file that cannot load receives an
+\ui{Error} entry. This is a metadata comparison; it does not re-evaluate all
+models on your workspace. Select another active model through the sidebar.
+
+\section{Common situations and next steps}
+\begin{controls}
+No checkpoint found / load failed & A loadable trusted \code{.pt} file must
+be installed in the configured server directory. Browser artifact upload does
+not accept checkpoints.\\
+No artifacts or no embeddings & Import an example in Artifact workspace.
+If parsing succeeded but encoding did not, inspect \ui{Warnings \& state}.\\
+Too many activities & The checkpoint vocabulary is too small for the input.
+Use a compatible checkpoint or an appropriate smaller input; increasing trace
+or node limits does not expand the vocabulary.\\
+Trace selection or clipping warning & Inspect the ledger and canonical traces.
+Increase the relevant limits or change selection if needed, then re-import.\\
+Tree/net size limit & Increase the corresponding preprocessing limit when
+appropriate, then re-import. Those structures are not silently truncated.\\
+Checkpoint mismatch & Re-import affected items with the active checkpoint.
+Use the same checkpoint for all vectors being compared or exported.\\
+No PCA plot & Add more varied artifacts or build references. Use the pairwise
+matrix when fewer than three independent points are available.\\
+No group agreement & Assign a shared nonempty group to at least two different
+encoded modalities that describe the same process.\\
+No EOS / incomplete decode & Inspect the token trace and error messages. A
+larger decode budget may help; it does not guarantee a useful model.\\
+Original labels are missing & Check the canonical map. PNML-derived output
+has no restoration; fused sources need identical maps; newly generated labels
+may have no source counterpart.\\
+A result seems unchanged & Settings do not replace stored action results.
+Press decode, build, run, or prepare again, as appropriate. Re-prepare a ZIP
+after workspace changes.\\
+Evaluation page is missing & It is not registered in the current navigation.
+Appendix~\ref{sec:evaluation} describes the separate source page.\\
+\end{controls}
+
+\appendix
+\section{Quality evaluation: page present in the source only}
+\label{sec:evaluation}
+\code{pages/04_evaluation.py} defines a page titled \ui{Quality evaluation},
+with the heading \ui{Results arrive while the run is still alive.} The normal
+\code{streamlit_app.py} navigation does not register it. Its ``View 04''
+heading should not be confused with the visible Checkpoint dashboard. The
+controls below describe that source page if it is integrated into a deployment;
+this guide does not change the navigation.
+
+The page requires workspace embeddings for the active checkpoint. It offers
+five tabs whose result rows arrive progressively, so completed work can be
+inspected before the entire evaluation finishes.
+
+\subsection{Shared evaluation controls}
+\begin{controls}
+Evaluation artifacts & Multiselect of workspace artifacts; initially all are
+selected. Applies to Decode \& behavior, Discovery comparison, and Embedding
+baselines. Cross-modal retrieval uses all eligible grouped workspace items;
+Neural losses reads a server-side data split.\\
+Decode token limit & Default 256; range 16--1,024 in steps of 16. Used by
+decode evaluation and discovery comparison.\\
+Quick simulation traces & Default 100; range 10--10,000, in steps of 10.
+Number of simulated traces for quick decode/behavior comparisons.\\
+\end{controls}
+
+\subsection{Decode \& behavior}
+\begin{controls}
+Also run expensive alignment fitness and precision & Off by default.
+Adds alignment-based comparison where an event-log source is available.\\
+Run progressive evaluation & Evaluates the selected artifacts and equal-weight
+fused groups with at least two modalities, using the first item of each
+modality. The progress bar shows completed tasks and elapsed time.\\
+Result table & Contains artifact, modality, latent source, EOS, tree validity,
+Petri conversion, decode length/time, source-comparison values, and any
+available alignment scores or errors. Comparison fields depend on input type
+as described in Section~\ref{sec:translation}.\\
+Rate chart & Fractions of evaluated rows with EOS, a valid tree, and successful
+Petri conversion. A rate of 1 means every evaluated row passed that check.\\
+Failed example & Appears for workspace examples whose tree or conversion
+failed. Select one for closer inspection.\\
+Open failed example in Translation studio & Navigates to translation with
+that artifact preselected so you can decode and inspect it there. Requires
+that page to be registered in the deployment.\\
+Download evaluation JSON / Download evaluation CSV & Saves this tab's
+completed rows as structured text or a spreadsheet-friendly table.\\
+\end{controls}
+
+\emph{Fitness} measures how well the model can reproduce observed behavior.
+\emph{Precision} measures how much additional behavior the model allows beyond
+the observations. F1 combines them. Higher is better for these measures, but
+they answer different questions from structural validation or quick
+distribution distances. Alignment runs can take considerably longer.
+
+\subsection{Neural losses}
+This tab evaluates the model's learning objectives on stored synthetic data.
+It does not calculate these losses on the selected uploaded files.
+\begin{controls}
+Server-side split & Choose \ui{test}, \ui{validation}, or \ui{training};
+default \ui{test}. The caption shows the resolved sample file.\\
+Batch size & Samples processed together, 1--512; default 16.\\
+Maximum batches & Maximum number of batches to evaluate, 1--10,000;
+default 20. This may evaluate only part of the split.\\
+Use deterministic latent means & On by default. Uses means instead of sampled
+latent vectors.\\
+Neural evaluation seed & Default 13. Controls repeatable random evaluation.\\
+Run neural-loss evaluation & Processes batches, updates a running-loss chart,
+and shows batch and running-average measurements in a table. Loss components
+are explained in Section~\ref{sec:checkpoint}.\\
+\end{controls}
+
+The sample path is \code{data/<split>/samples.jsonl}, or uses the root named
+by \code{PROC_ROSETTA_DATA_DIR}. If it is missing, the page displays an
+information message instead of the run button.
+
+\subsection{Cross-modal retrieval}
+\ui{Run cross-modal retrieval} checks all six directions between tree, log,
+and net. For example, tree-to-log asks whether a tree's nearest log belongs to
+the same process group. Each direction uses groups with both required
+modalities. If a group has several artifacts of one modality, this evaluator
+uses the last one for that modality; use one per modality for a clear comparison.
+
+\begin{controls}
+direction / count / available & Modality direction, number of paired groups,
+and whether a comparison can be made. A reason explains missing results.\\
+top1\_accuracy / top3\_accuracy / top5\_accuracy & Fraction of queries whose
+matching group is among the first 1, 3, or 5 candidates. Larger is better.\\
+mrr & Mean reciprocal rank: a first-place match contributes 1, second place
+contributes $1/2$, and so on. Larger is better.\\
+mean\_rank / median\_rank & Average and middle matching positions. Smaller
+is better; rank 1 is best.\\
+rank\_histogram & Counts of matches at each rank, included in the result table.\\
+Retrieval bar chart & Compares the top-1, top-3, top-5, and MRR values across
+available directions.\\
+\end{controls}
+
+With very few paired groups, a high top-$k$ score can be trivial. Use the
+\code{count} field when interpreting it.
+
+\subsection{Discovery comparison}
+\begin{controls}
+Run alignment fitness and precision & Off by default. Enables the more
+expensive conformance measurements for both discovery methods.\\
+Compare with Inductive Miner & Uses selected event logs to generate one model
+with ProcRosetta and one with the classical Inductive Miner method.\\
+Comparison table & Artifact, method, model-discovery and conversion status,
+runtime, places, transitions, silent transitions, arcs, errors, and available
+fitness, precision, and F1. Without alignment enabled, those scores remain
+empty; they are not zero.\\
+F1 chart & Appears when usable F1 values exist and compares the two methods
+for each artifact.\\
+\end{controls}
+
+The methods optimize different objectives. Runtime fields also cover different
+steps: the ProcRosetta row measures its decode, while the Inductive Miner row
+includes its discovery work and any requested conformance calculation. Do not
+treat them as a controlled end-to-end speed benchmark.
+
+\subsection{Embedding baselines}
+This tab compares learned vectors with simpler descriptions of logs or nets.
+\begin{controls}
+Include optional PM4Py Petri Node2Vec & Off by default. Adds a graph-embedding
+method based on walks through the net. Requires at least two process groups
+with paired XES and PNML inputs.\\
+Node2Vec dimensions / Walks per node / Node2Vec epochs & Appear when that
+option is enabled. Defaults 64, 5, and 5; ranges 4--512, 1--100, and 1--100.
+They control vector size and the amount of graph-embedding training.\\
+Run embedding baselines & Runs available methods progressively, with a progress
+bar, full JSON results, a ranked summary table, and available score charts.\\
+\end{controls}
+
+The methods include activity counts, variant distributions, directly-follows
+pairs, eventually-follows pairs (one activity occurs later than another), PM4Py
+log-case features, and ProcRosetta event-log means. Additional methods use
+Petri structural counts and ProcRosetta tree, net, and fused means aligned
+through process groups. Log comparisons need at least two logs; the grouped
+methods need at least two groups containing logs and the required representation.
+Unavailable methods report a reason.
+
+\begin{controls}
+Method / Dimension / Runtime & Name of the representation, vector size, and
+available runtime in seconds. A missing runtime is not a zero-time run.\\
+Behavior Spearman / Behavior Pearson & Correlations between embedding
+distances and trace-behavior distances. Spearman compares their order;
+Pearson compares their linear association. Larger positive values indicate
+stronger agreement for these samples.\\
+Nearest-neighbor behavior & Mean behavior distance to the nearest embedded
+neighbor. Smaller means more behaviorally similar neighbors.\\
+Improvement over random & Improvement relative to random-neighbor behavior
+distance. Larger positive values indicate an advantage over that reference.\\
+Top-1 neighbor agreement / Top-3 neighbor agreement & Fraction of items whose
+closest behavioral neighbor appears first, or among the first three, in the
+embedding's neighbor ordering.\\
+Rank & Orders methods by Behavior Spearman, largest first, with unavailable
+values last. The chart shows available Spearman and nearest-neighbor behavior
+values, whose scales and preferred directions differ.\\
+\end{controls}
+
+Small sets or constant distances can make correlations uninformative or
+unavailable. These comparisons measure the selected samples and their
+frequency-based behavior summaries, not universal process quality.
+
+\subsection{Complete evaluation report and cached results}
+\ui{Download complete JSON report} saves the checkpoint identifier, current
+shared configuration, and the stored results of all five tabs. Tabs that have
+not run contribute empty lists. Unlike the per-tab CSV, this includes the full
+collection of evaluation sections.
+
+An evaluation may reuse cached results, with an information message explaining
+the reuse. Changing settings does not remove old displayed rows, and the
+complete report collects the stored results. Rerun the relevant tabs after
+changing configuration or checkpoint before treating the report as one
+consistent experiment. The dashboard's cache-clear button does not erase
+those already stored result lists.
+
+\section{Document sources and compilation}
+\label{sec:sources}
+The guide was checked against repository revision \code{a1ea7ff}. The following
+files determine the interface described here; the application source takes
+precedence over older screenshots or descriptions.
+
+\begin{controls}
+Navigation and overview & \path{streamlit_app.py};
+\path{proc_rosetta_ui/home_page.py}.\\
+Shared settings and state & \path{proc_rosetta_ui/common.py};
+\path{proc_rosetta_ui/app_state.py}; \path{proc_rosetta_ui/cache_service.py}.\\
+Main pages & \path{pages/01_workspace.py}; \path{pages/02_translation.py};
+\path{pages/03_latent_explorer.py}; \path{pages/05_checkpoint.py}.\\
+Separate evaluation page & \path{pages/04_evaluation.py};
+\path{src/proc_rosetta/evaluation_iterators.py}.\\
+Shared viewers & The Python modules under
+\path{proc_rosetta_ui/visualizations/}; \path{src/proc_rosetta/visualization_data.py}.\\
+Input, decoding, and exports & \path{src/proc_rosetta/artifact_io.py};
+\path{src/proc_rosetta/inference.py}; \path{proc_rosetta_ui/ui_types.py};
+\path{proc_rosetta_ui/workspace_service.py};
+\path{proc_rosetta_ui/encoding_service.py};
+\path{proc_rosetta_ui/decoding_service.py};
+\path{proc_rosetta_ui/export_service.py}.\\
+Training and behavior measurements & \path{src/proc_rosetta/training.py};
+\path{src/proc_rosetta/losses.py}; \path{src/proc_rosetta/behavior.py};
+\path{src/proc_rosetta/benchmarks.py}.\\
+\end{controls}
+
+Build this standalone guide from the repository root:
+\begin{verbatim}
+latexmk -pdf -interaction=nonstopmode -halt-on-error \
+  -outdir=paper paper/streamlit_interface_guide.tex
+\end{verbatim}
+The output is \path{paper/streamlit_interface_guide.pdf}. A normal TeX Live
+installation with the packages listed in this file's preamble is sufficient;
+no bibliography, external images, main-paper files, or shell-escape option is
+required.
+
+\end{document}
