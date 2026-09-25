@@ -88,8 +88,9 @@ $\longrightarrow$ inspect and download the result
 \end{minipage}}
 \end{center}
 
-The tree is the model's direct output. The displayed output Petri net is
-converted from that tree. A valid output can still describe different behavior
+The decoder first produces tree tokens. The studio checks the activity names
+and simplifies the resulting tree before displaying it. The output Petri net
+is converted from that final tree. A valid output can still describe different behavior
 from the input, so check the source comparisons as well as the validation badges.
 
 \subsection{A first walkthrough}
@@ -150,8 +151,10 @@ messages often explain why a page is empty.
 
 \subsection{Active checkpoint}
 \begin{controls}
-Checkpoint & Select a saved model by filename. Only trusted files already on
-the server are listed; the browser has no checkpoint-upload control.\\
+Checkpoint & Select a saved model by its path relative to the checkpoint
+directory. Files in subdirectories are included, and names containing
+\code{best} are listed first. Only trusted files already on the server are
+listed; the browser has no checkpoint-upload control.\\
 Inference device & Choose where model calculations run. CPU is always offered;
 the detected default accelerator is also offered when available.\\
 Epoch / latent / activities caption & The saved training epoch, the number of
@@ -179,8 +182,10 @@ items before making a comparison or preparing a workspace export.
 File selection starts import automatically. Process-group edits take effect
 immediately. Plot controls update their displays. Decoding, interpolation,
 gallery building, evaluation, and export preparation require their action
-buttons. Changing one of their settings does not replace an already displayed
-result: run the action again before interpreting or downloading it.
+buttons. Changing a setting does not recompute a result: run the action again
+before interpreting or downloading it. Translation studio hides its old result
+when the token limit or either activity-constraint checkbox changes; other
+changes can leave the previous result visible until decoding runs again.
 
 \section{Studio overview}
 The heading is \ui{See every transformation.} The four counters describe the
@@ -200,9 +205,12 @@ canonical input, latent numbers, comparison, decoded tree, derived net, and
 behavior. It describes the pipeline; it is not a control.\\
 \end{controls}
 
-In the representation path, $\mu$ (mu) is the embedding's mean, used for
-ordinary deterministic comparisons. $\log\sigma^2$ is its log variance,
-which describes the spread used in experimental latent sampling.
+In the representation path, $\mu$ (mu) is the embedding vector used for
+ordinary comparisons. This branch uses deterministic encoders. The retained
+$\log\sigma^2$ (log variance) field is filled with zeros for compatibility;
+it is not a learned uncertainty estimate. The experimental sampling control
+still uses that field to add random noise, as explained in
+Section~\ref{sec:translation}.
 
 \section{Artifact workspace}
 \label{sec:workspace}
@@ -316,7 +324,10 @@ gates to understand a failure rather than relying on the short state alone.
 
 \subsection{Source preview}
 This tab shows the parsed source before encoder trace selection and clipping.
-For logs, parsing choices such as removing empty traces already apply.
+For logs, parsing choices such as removing empty traces already apply. Imported
+process trees have already undergone PM4Py's semantic folding, which simplifies
+redundant tree structure while preserving its behavior; the preview can
+therefore differ in shape from the original PTML file.
 
 An \ui{Event log} preview contains:
 \begin{controls}
@@ -347,7 +358,9 @@ A \ui{Process tree} preview offers \ui{Tree labels}: select
 names such as \code{A0}. The tree viewer controls are explained in
 Section~\ref{sec:viewers}. A statistics row gives size, depth, activity and
 silent leaves, counts of each operator, maximum arity, prefix-token length,
-prefix tokens, and distinct activities.
+prefix tokens, and distinct activities. It also records tree sizes and prefix
+lengths before and after folding, whether the fold changed the tree, and the
+fold/normalization version.
 
 A \ui{Petri net} preview uses the net viewer in Section~\ref{sec:viewers}.
 Its statistics include places, visible and invisible transitions, arcs, total
@@ -362,27 +375,31 @@ first-seen order within each artifact, so \code{A0} need not mean the same
 activity in different files.\\
 Original labels / Canonical labels / Checkpoint limit / Reversible & Number of
 distinct source names, number mapped, vocabulary capacity, and whether this
-input has a complete reversible map. PNML reports \ui{no} for reversibility.\\
+input has a complete reversible map. This includes PNML activity names.\\
 Mapping table & \ui{Original label}, \ui{Canonical label}, \ui{Frequency},
 and \ui{Used by encoder}. A dash or false entry can indicate an unsupported
-label or a label omitted by the structural PNML path.\\
+label. If the source has no visible activities, a caption explains why no
+mapping rows appear.\\
 Preprocessing ledger & JSON record of selection, trace counts, clipping,
 discarded events, and relevant size limits or tree regrouping. It explains
 how the input changed.\\
 Model input summary & For logs: input shape, selected traces, and canonical
 clipped traces. For trees: prefix tokens, token count, and arity. For nets:
-node types, edge count, and initial/final markings.\\
+node types, edge count, initial/final markings, and a flag confirming that
+visible transition labels are used by the encoder.\\
 Selected-trace table & For a log, \ui{Trace} is the selected-list index;
 \ui{Events} and \ui{Selected sequence} describe the trace before clipping;
 \ui{Clipped} flags traces beyond the selected length limit. The canonical
 traces in the JSON show what was retained.\\
 \end{controls}
 
-\textbf{PNML label limitation.} The external Petri-net encoder uses graph
-structure, node types, and markings, but does not use visible activity names.
-A net can display its original names in the preview while its embedding omits
-them. Decoding from PNML therefore uses canonical names and cannot restore the
-source's activity names. The interface repeats this warning at relevant steps.
+\textbf{PNML labels and older checkpoints.} This branch canonicalizes Petri-net
+activity names and passes their identifiers to the encoder alongside structure
+and markings. Its decodes can use the source activity set and restore original
+names. A warning appears when the checkpoint lacks the expected trained
+transition-label embedding weights. Names are still mapped, constrained, and
+restored in that case, but the warning asks you to use a checkpoint trained
+with the label-aware encoder before judging its activity-copy quality.
 
 \subsection{Warnings, embedding status, and attention}
 \ui{Warnings \& state} shows the current state, followed by parsing,
@@ -484,9 +501,18 @@ artifact must have a successful embedding for the active checkpoint.
 Latent sources & Select one or more compatible workspace artifacts. A single
 source uses its vector; multiple sources combine their vectors. There is no
 automatic requirement that selected items share a process group.\\
-Maximum decode length & Token budget for generation. Default 256; range
-16--1,024, in steps of 16. Tokens include operators and boundary symbols,
-so this is not an activity count.\\
+Maximum decode length & Total token budget, including \code{<bos>} and
+\code{<eos>}. Default 256; range 16--1,024, in steps of 16. Operators also
+use tokens, so this is not an activity count. The checkpoint's decoder capacity
+must support the chosen budget.\\
+Avoid repeated visible transitions & On by default. After a visible activity
+label is emitted, it cannot be emitted again. Silent \code{TAU} leaves remain
+allowed. This limits duplicate leaves in the tree, not repeated executions
+through a loop.\\
+Restrict activities to the selected source objects & On by default. Allows
+only activity slots present in the selected sources. Fusion uses the union of
+their canonical activity sets. Turning it off allows other checkpoint-vocabulary
+activities, which may have no original-name mapping.\\
 Latent mode: Deterministic mean & Uses $\mu$. For several sources the default
 is their equal-weight arithmetic mean. The decoder chooses the highest-scoring
 allowed token at each step.\\
@@ -494,8 +520,8 @@ Use custom fusion weights: experimental & Appears when several sources are
 selected. A number field named after each artifact sets its nonnegative weight,
 initially 1.0. Weights are normalized automatically; their sum must exceed zero.\\
 Latent mode: Stochastic latent samples: experimental & Draws alternative
-vectors using the encoded means and spreads, then decodes them. Token selection
-still uses the same greedy, grammar-constrained decoder.\\
+vectors by adding seeded noise to the encoded means, then decodes them using
+the same grammar, activity, and completion constraints.\\
 Sampling seed & Default 13. Controls the repeatable random draws for a fixed
 input and configuration.\\
 Alternatives & Number of sampled candidates, 1--12; default 4.\\
@@ -508,9 +534,26 @@ grammar state, and number of allowed next choices.\\
 
 The \ui{Latent source} explanation card describes the default single-source
 or equal-weight choice. Custom weights and sampling override those defaults.
-Fusion is most interpretable when the inputs describe the same process.
-Sampling illustrates possible output variation; the spread is not a calibrated
-confidence score for correctness.
+Fusion is most interpretable when the inputs describe the same process and
+have consistent canonical maps. Identically numbered slots from independently
+mapped files need not name the same activity.
+
+The current encoder returns unit-normalized vectors and zero \code{logvar}.
+Consequently, the sampling formula adds independent standard-normal noise
+to each coordinate; this is a perturbation experiment, not sampling from a
+learned VAE posterior. The on-screen caption still calls it VAE latent spread.
+It is not a calibrated confidence score for correctness.
+
+The ordinary decode and the first sampled alternative use greedy token choices
+while reporting progress. Subsequent sampled alternatives use beam search
+with five candidates, because they run without the live progress callback.
+There is no beam-width control on this page. In both paths, \emph{bounded
+completion} blocks choices that leave too little room to close the tree within
+the token budget. If only enough room for the shortest completion remains,
+the decoder inserts that completion deterministically. An emergency fallback
+can recover a closed tree after a decoding error; a warning reports its use.
+Structural success therefore does not imply that every decision came from
+the model without intervention.
 
 If several distinct sampled results remain, the \ui{Stochastic decode gallery}
 shows each alternative's tokens, token count, source/seed label, and validity.
@@ -526,7 +569,13 @@ EOS emitted & The decoder produced the explicit end token \code{<eos>}.\\
 Grammar valid & The generated tokens can be read as a complete process tree.\\
 Arity valid & Tree operators respect the allowed number of children.\\
 Vocabulary valid & Generated token identifiers belong to the model's vocabulary.\\
-Petri convertible & The decoded tree was successfully converted to a Petri net.\\
+Petri convertible & The final normalized tree was successfully converted to a
+Petri net.\\
+Source alphabet & The final tree respects the allowed source activity set
+when that constraint is enabled. If the restriction is off, a green badge
+does not establish that all output names came from the source.\\
+No repeated labels & No visible label occurs more than once in the final tree.
+If repeated labels were allowed, a red badge can simply report that choice.\\
 Length limit & Green means the generation limit was \emph{not} reached without
 an end token. Red means the token budget was exhausted without EOS.\\
 \end{controls}
@@ -535,36 +584,69 @@ These are structural and termination checks. They do not show that the tree
 reproduces the input behavior or that activity names were fully restored.
 
 \subsection{Decoder progress}
-The colored token ribbon distinguishes operators (purple), arity tokens
+The colored token ribbon shows the raw decoder sequence, before activity
+cleanup and tree folding. It distinguishes operators (purple), arity tokens
 (blue), activities (green), silent \code{TAU} tokens (grey), and boundary
 tokens (orange). The table explains each generation step:
 \begin{controls}
 Step / Grammar state & Step number and the kind of token the partial tree
 currently allows.\\
-Chosen / Score & Selected token and its probability among allowed choices at
-that step. This is not the probability that the entire discovered process is
-correct.\\
+Chosen & Selected token. On a beam-search result, the table follows the selected
+candidate's path; its token need not be the locally highest-scoring choice.\\
+Pre-budget score & Chosen token's probability after the grammar and activity
+rules, but before excluding choices that cannot finish within the budget.\\
+Conditional score & Chosen token's probability after renormalizing over the
+choices that also fit the remaining budget. A high value can result from
+having very few choices; it is not a process-correctness score.\\
+Pre-budget top & Highest-probability token before the budget restriction.\\
+Budget active & Whether the budget rule removed otherwise grammar-legal
+choices. It is also true during deterministic forced completion.\\
+Argmax overridden & Whether the budget rule blocked the pre-budget top token.
+It does not count every reason a beam path may choose a different token.\\
+Closure slack & Tokens left beyond the minimum needed to finish, after the
+chosen step. Zero means no spare room for a longer completion.\\
 Valid choices / Open slots & Number of allowed next tokens and the child
 positions that still need to be filled.\\
 Subtree position / EOS & Where the next tree content belongs, and whether
 the end token was emitted at that step.\\
-Top valid & Highest-scoring allowed token choices, with probabilities
-normalized over the allowed set.\\
-Masked high scores & Highly scored candidates blocked by the grammar. They
-were not chosen because they would violate the current syntax. Their displayed
-scores come from the full vocabulary before masking.\\
+Top valid & Highest-scoring feasible choices, displayed with their pre-budget
+probabilities. They need not sum to one after budget filtering.\\
+Masked high scores & Candidates excluded by the effective constraints, shown
+with their pre-budget probabilities. Grammar/activity exclusions can therefore
+have zero scores, while budget-excluded candidates can retain positive scores.\\
 \end{controls}
 
+For deterministic forced completion, the pre-budget top is blank, the
+pre-budget score is zero, and the conditional score is one. These are
+bookkeeping values, not learned confidence. An emergency fallback can append
+completion tokens beyond the recorded neural steps; consult its warning.
+
 \subsection{Decoded process tree and Derived Petri net}
+The final tree is checked against the selected activity policies and then
+folded with PM4Py. If cleanup is needed, out-of-source activities and disallowed
+duplicate leaves are replaced by silent $\tau$ leaves before folding. Folding
+simplifies the resulting structure. This cleanup can change the raw decoder
+proposal, so the token ribbon and final tree need not have the same shape.
+
+\begin{controls}
+Out-of-source labels replaced & Number of visible leaves replaced by $\tau$
+because their names were outside the enabled source constraint.\\
+Repeated labels replaced & Number of extra occurrences replaced by $\tau$
+under the no-duplicates policy. The first occurrence is retained.\\
+Fold changed output & Whether semantic folding changed the cleaned-up tree.\\
+\end{controls}
+
 \ui{Decoded process tree} has two subtabs. \ui{Canonical labels} shows model
 names such as \code{A0}. \ui{Original labels} uses the source map when one is
 available. For fusion, restoration requires identical original-to-canonical
 maps in all sources. A generated activity absent from the map stays canonical.
-If any source is PNML, original-name restoration is unavailable. Thus an
-\ui{Original labels} tab can still show canonical names; read the warnings.
+Restoration is supported for PNML as well as XES and PTML. If fused sources
+have incompatible maps, no shared restoration is applied and the
+\ui{Original labels} tab can still show canonical names.
 
-\ui{Derived Petri net} shows the deterministic conversion of the canonical
-decoded tree. It is not a separately generated neural output. The reusable net
+\ui{Derived Petri net} shows the deterministic conversion of the final tree,
+using restored activity names when available. It is not a separately generated
+neural output. The reusable net
 viewer is followed by full-net counts of \ui{Places}, \ui{Transitions},
 \ui{Silent}, and \ui{Arcs}. These extra counts describe the full result even
 if the viewer above is filtered.
@@ -587,8 +669,10 @@ the top 20 variants and top 30 directly-follows relations. The summary includes
 distribution distances and simulated trace count.\\
 Petri-net source & Side-by-side source and derived nets, with source/decoded
 counts for places, transitions, visible/invisible transitions, arcs, initial
-and final tokens, and duplicate visible labels. Label preservation is explicitly
-not evaluated.\\
+and final tokens, and duplicate visible labels. The
+\code{visible_label_subset_respected} field tests whether the final restored
+tree uses only source labels. This does not require every source activity to
+appear or prove behavior preservation.\\
 \end{controls}
 
 Distribution distances describe differences between observed frequency
@@ -607,15 +691,16 @@ equivalence.
 \subsection{Export decoded model}
 \begin{controls}
 Restore original labels in PTML & On by default where allowed. Affects the
-PTML download only. Hidden for PNML-derived output. It cannot restore a name
-that has no source mapping.\\
+PTML download only, and is also available for PNML-derived output. It cannot
+restore a name that has no source mapping.\\
 Download PTML & Saves the tree. Offered when grammar validation succeeds.\\
-Download validation JSON & Saves source identifiers, tokens, trees, label map,
-validation flags, warnings, errors, decode time, and decoder settings.
+Download validation JSON & Saves source identifiers, raw and normalized tokens,
+raw/final/restored trees, label map, validation flags, warnings, errors, decode
+time, normalization/completion diagnostics, and decoder settings.
 Also requires a grammar-valid tree in this interface.\\
 Download derived PNML & Saves the converted net when conversion succeeded.
-It retains canonical tree labels; the PTML restoration checkbox does not
-relabel this net.\\
+It uses restored labels when available; the PTML restoration checkbox does not
+change this already converted net.\\
 Download simulated XES & Saves a generated event log from the decoded tree,
 using 100 traces and seed 13. Uses restored labels when a restored tree is
 available. Requires a grammar-valid tree.\\
@@ -624,6 +709,18 @@ available. Requires a grammar-valid tree.\\
 A download button's presence is not a substitute for checking every validation
 gate. The report records the distinction between a parsed tree and a fully
 successful decode.
+
+In the JSON, \code{raw_token_ids}, \code{raw_token_names}, and \code{raw_tree}
+describe generation before cleanup; \code{model_normalized_token_ids} and
+\code{model_normalized_token_names} describe the final canonical tree.
+\code{normalization_diagnostics} records replacements, source-alphabet and
+duplicate checks, folding changes, and whether another fold leaves the result
+unchanged (\code{output_fold_idempotent}).
+\code{completion_diagnostics} records how many steps used the budget rule,
+how often it blocked the top token, its first intervention, the minimum closure
+slack, how many operator/arity choices it removed across steps, and remaining
+unfilled slots. Fallback use is explained in warnings and by the
+\code{emergency_fallback} token strategy when applicable.
 
 \section{Latent explorer}
 \label{sec:latent}
@@ -635,10 +732,12 @@ when their dimensions match.
 \subsection{Embedding register}
 \begin{controls}
 Artifact / Group / Modality & File name, assigned process group, and input type.\\
-Dimension / Norm & Number of coordinates and vector length. A larger norm
-does not mean a better process or a better prediction.\\
-Latent spread & Average latent standard deviation. Describes sampling spread,
-not measured prediction accuracy.\\
+Dimension / Norm & Number of coordinates and vector length. Current encoder
+outputs are normalized to unit length (apart from a possible zero vector);
+fused or perturbed vectors can have different lengths. A larger norm is not
+a quality score.\\
+Latent spread & Average of $\exp(\tfrac12\text{logvar})$. The deterministic
+encoder stores zero log variance, so this display is 1, not learned uncertainty.\\
 Nearest artifact / Similarity & Another workspace artifact with the highest
 cosine similarity, and that score. Empty if there is no other artifact.\\
 Encoded at / Checkpoint & Encoding timestamp and saved-model identifier.\\
@@ -735,7 +834,8 @@ also appears when available. A reference neighbor shows its generating tree.\\
 \ui{Compare artifacts} selects vectors for coordinate-by-coordinate line
 charts; the first three artifacts are selected initially. \ui{Latent mean by
 dimension} plots $\mu$. \ui{Latent standard deviation by dimension} plots
-$\exp(\tfrac12\text{logvar})$. With several selected artifacts,
+$\exp(\tfrac12\text{logvar})$; for this branch's deterministic encodings it
+is a flat line at 1. With several selected artifacts,
 \ui{Difference from selected fused mean} plots each vector minus their
 arithmetic mean. Here every selected artifact contributes. Coordinates are
 intentionally unnamed: a peak is not labelled as a particular process property.
@@ -747,13 +847,18 @@ Left endpoint / Right endpoint & Choose two different workspace vectors.\\
 alpha & Slider from 0 to 1 in steps of 0.05; default 0.5. Zero uses the left
 vector, one uses the right, and 0.5 takes their midpoint.\\
 Decode interpolation point & Decodes $(1-\alpha)\mu_{\mathrm{left}}+
-\alpha\mu_{\mathrm{right}}$ with a fixed 256-token budget.\\
+\alpha\mu_{\mathrm{right}}$ with bounded completion and a fixed 256-token
+budget including the beginning/end tokens. It uses five-candidate beam search,
+the union of source activity slots, and the no-duplicate policy.\\
 Result & Generated token sequence, \ui{Tree size}, \ui{Decode tokens}, and
 \ui{Petri conversion} status, followed by the available tree and net viewers.\\
 \end{controls}
 
 Intermediate vectors need not produce a smooth or meaningful sequence of
-process changes. This view does not restore original labels. Press the decode
+process changes. A shared original-label map is passed only if the endpoint
+maps are identical. The tree viewer shows canonical labels; the derived net
+uses restored names when that shared map is available. The token display is
+the raw sequence, while the tree is the normalized result. Press the decode
 button again after changing an endpoint or alpha; the stored result otherwise
 remains the previous one.
 
@@ -783,9 +888,11 @@ switching checkpoints invalidates the old gallery when this page is visited.
 \begin{controls}
 Embedding & Select a workspace vector to inspect and download.\\
 Raw latent mean and log variance & Expands a table of \ui{Dimension},
-\code{mu}, and \code{logvar}. Dimension indices start at zero.\\
+\code{mu}, and \code{logvar}. Dimension indices start at zero; current
+deterministic encodings have zero \code{logvar}.\\
 JSON & Full encoding record, including vectors, source/preprocessing metadata,
-checkpoint identifier, canonical map, runtime, and diagnostics.\\
+checkpoint identifier, canonical map, runtime, diagnostics, allowed source
+activity slots, and any activity-copy evidence used by decoding.\\
 CSV & One row per dimension with mean, log variance, and repeated metadata.
 Useful for spreadsheet analysis.\\
 NumPy & A \code{.npz} archive containing \code{mu}, \code{logvar}, and
@@ -816,11 +923,17 @@ them with the current import settings rather than treating every value as a
 live workspace setting.\\
 \end{controls}
 
+The recorded best epoch follows the training run's checkpoint-selection rule;
+on this branch that can combine several objectives. It need not be the epoch
+with the smallest validation loss.
+
 \subsection{Training history}
 The main line chart compares training and validation loss against epoch.
 Training loss concerns the examples used to learn; validation loss concerns
-held-out examples. \ui{Validation component losses} separates the terms
-defined below. \ui{Generalization gap} plots validation loss minus training
+held-out examples. \ui{Validation component losses} plots the available
+validation fields, including diagnostic scores when they are present. The
+fields depend on the saved run; common names are explained below.
+\ui{Generalization gap} plots validation loss minus training
 loss. A growing positive gap can indicate that performance on training data
 is improving faster than performance on validation data.
 
@@ -829,11 +942,50 @@ tree\_reconstruction & Error when predicting a tree from its own representation.
 trace\_to\_tree / petri\_to\_tree & Errors when predicting tree tokens from
 a log or net representation.\\
 latent\_alignment & Penalty for separating matching representations.\\
-contrastive & Encourages matching behavior representations to be closer than
-unmatched ones.\\
-kl & Regularization of the latent distributions, not a behavior-accuracy score.\\
+\code{fused_to_tree} / \code{fused_subset_to_tree} & Tree-token errors from
+all fused modalities or a selected subset of them.\\
+\code{deployment_to_tree} & Tree-token error for the source/duplicate policy
+used by deployment-oriented training examples.\\
+\code{exact_contrastive} / \code{contrastive} & Encourage matching
+representations to be closer than unrelated ones. In current reports,
+\code{contrastive} repeats \code{exact_contrastive}.\\
+\code{within_modality_contrastive} & Applies matching-versus-unrelated
+comparisons within one artifact type.\\
+\code{semantic_exact_contrastive} / \code{semantic_memory_contrastive} &
+Train the semantic vectors used for retrieval, using current-batch comparisons
+or stored examples from earlier batches.\\
+\code{hierarchical_metric} & Encourages distance ordering from strongly related
+examples through analogous and family-related examples to unrelated ones.\\
+\code{observation_view_consistency} & Encourages agreement between different
+observations of a related process.\\
+\code{soft_behavior_geometry} & Encourages vector neighborhoods to reflect
+behavior-summary similarities.\\
+\code{observed_behavior_regression} / \code{observed_behavior_ranking} &
+Encourage latent distances to match observed behavior distances and their
+ordering.\\
+\code{eos_calibration} / \code{generated_length} & Encourage appropriate
+termination and output length. These are loss values, not an actual token count.\\
+\code{unresolved_open_slots} / \code{completion_feasibility} & Penalize
+predictions that leave tree branches unfinished or cannot finish within the
+target budget.\\
+\code{variance} / \code{covariance} & Discourage collapsed vectors and
+redundant coordinates. These concern variation across examples, not the
+compatibility \code{logvar} field.\\
+\code{effective_rank} & Diagnostic of how many independent directions the
+vectors use. It is not a loss to minimize.\\
+\code{tree_complexity} / \code{duplicate_activity} & Optional penalties on
+tree complexity and repeated visible labels; disabled terms can be zero.\\
+\code{beam_minimum_risk} & When recorded by training, measures a loss over
+candidate trees from beam search.\\
+kl & Zero-valued compatibility field in this branch's deterministic objective.
+It is not an active VAE regularization term.\\
 loss & Weighted total of the component objectives. Component scales can differ.\\
 \end{controls}
+
+Stored runs may also include accuracy, retrieval, behavioral-distance, and
+gradient diagnostics. A smaller loss or distance is usually better; a larger
+accuracy or retrieval score is usually better. Do not minimize every curve
+simply because the panel is titled \ui{Validation component losses}.
 
 The history table includes epoch, learning rate, epoch duration in seconds,
 best-epoch flag, best validation loss, training/validation components, and
@@ -845,7 +997,8 @@ absence. A usable checkpoint does not need a complete history.
 \subsection{Configuration}
 \ui{Training configuration} and \ui{Synthetic-data configuration} show saved
 settings as JSON. \ui{Complete checkpoint metadata} includes all recorded
-facts. These displays are read-only.
+facts, including \code{petri_label_embeddings_trained}, the compatibility
+flag used for the legacy PNML warning. These displays are read-only.
 
 \ui{Stage caches} lists \ui{Stage}, \ui{Entries}, and \ui{Invalidated by}.
 A cache is temporary storage that avoids repeating calculations. The stages
@@ -861,7 +1014,8 @@ results or force an automatic re-encoding; repeat the relevant action when
 you want a new result.
 
 \subsection{Compare checkpoints}
-This table reads all trusted checkpoints and compares \ui{Checkpoint},
+This table reads all trusted checkpoints, including subdirectories, and
+identifies them by relative path. It compares \ui{Checkpoint},
 \ui{Type}, \ui{Epoch}, \ui{Latent}, \ui{Hidden}, \ui{Activities},
 \ui{Arity}, and \ui{Best validation loss}. A file that cannot load receives an
 \ui{Error} entry. This is a metadata comparison; it does not re-evaluate all
@@ -887,11 +1041,14 @@ No PCA plot & Add more varied artifacts or build references. Use the pairwise
 matrix when fewer than three independent points are available.\\
 No group agreement & Assign a shared nonempty group to at least two different
 encoded modalities that describe the same process.\\
-No EOS / incomplete decode & Inspect the token trace and error messages. A
-larger decode budget may help; it does not guarantee a useful model.\\
-Original labels are missing & Check the canonical map. PNML-derived output
-has no restoration; fused sources need identical maps; newly generated labels
-may have no source counterpart.\\
+Budget intervention / emergency fallback & Inspect the token trace, warnings,
+and report. A valid tree may use forced completion or recovery. Increasing a
+supported budget can reduce budget pressure but does not guarantee useful
+behavior. An invalid or unsupported budget produces an error.\\
+Original labels are missing & Check the canonical map. All three input types
+support restoration, but fused sources need identical maps and unconstrained
+generated labels may have no source counterpart. For a legacy PNML checkpoint,
+also read the warning about learned label embeddings.\\
 A result seems unchanged & Settings do not replace stored action results.
 Press decode, build, run, or prepare again, as appropriate. Re-prepare a ZIP
 after workspace changes.\\
@@ -926,16 +1083,26 @@ Number of simulated traces for quick decode/behavior comparisons.\\
 \end{controls}
 
 \subsection{Decode \& behavior}
+\textbf{Current implementation.} The caption says that each artifact is decoded
+twice, once with prefix-only constraints and once with bounded completion.
+The actual evaluation helper in this revision runs only the bounded deployment
+decode. There is no prefix-only result to compare on this page. Its rate chart
+groups rows by completion policy when that field is present, but current runs
+supply only \code{bounded} rows.
+
 \begin{controls}
 Also run expensive alignment fitness and precision & Off by default.
 Adds alignment-based comparison where an event-log source is available.\\
 Run progressive evaluation & Evaluates the selected artifacts and equal-weight
 fused groups with at least two modalities, using the first item of each
-modality. The progress bar shows completed tasks and elapsed time.\\
+modality. It uses bounded completion, source activity constraints, no repeated
+visible labels, and five-candidate beam search. The progress bar is labelled
+\ui{bounded guaranteed} and shows completed tasks and elapsed time.\\
 Result table & Contains artifact, modality, latent source, EOS, tree validity,
 Petri conversion, decode length/time, source-comparison values, and any
 available alignment scores or errors. Comparison fields depend on input type
-as described in Section~\ref{sec:translation}.\\
+as described in Section~\ref{sec:translation}; deployment diagnostics are
+explained below.\\
 Rate chart & Fractions of evaluated rows with EOS, a valid tree, and successful
 Petri conversion. A rate of 1 means every evaluated row passed that check.\\
 Failed example & Appears for workspace examples whose tree or conversion
@@ -945,6 +1112,23 @@ that artifact preselected so you can decode and inspect it there. Requires
 that page to be registered in the deployment.\\
 Download evaluation JSON / Download evaluation CSV & Saves this tab's
 completed rows as structured text or a spreadsheet-friendly table.\\
+\end{controls}
+
+\begin{controls}
+\code{completion_policy} / \code{evaluation_scope} & Identify the bounded
+deployment run, including its safeguards, rather than an unconstrained
+measurement of the neural model alone.\\
+\code{hard_structural_success} & Checks EOS, valid tree grammar, and valid arity.\\
+\code{fallback_used} / \code{fallback_reason} & Whether emergency recovery
+was used, and the triggering error.\\
+\code{forced_closure_used} & Whether deterministic closing tokens were needed.\\
+\code{neural_decode_without_fallback} & Structural success without emergency
+fallback. Budget filtering or forced closure can still have occurred.\\
+\code{budget_intervention_steps} / \code{argmax_override_steps} & Counts of
+steps with active budget filtering and steps where it blocked the model's
+highest-scoring ordinary choice.\\
+\code{raw_unresolved_open_slots} & Number of unfilled positions at the end of
+the returned token stream. A complete returned tree has none.\\
 \end{controls}
 
 \emph{Fitness} measures how well the model can reproduce observed behavior.
@@ -962,8 +1146,9 @@ default \ui{test}. The caption shows the resolved sample file.\\
 Batch size & Samples processed together, 1--512; default 16.\\
 Maximum batches & Maximum number of batches to evaluate, 1--10,000;
 default 20. This may evaluate only part of the split.\\
-Use deterministic latent means & On by default. Uses means instead of sampled
-latent vectors.\\
+Use deterministic latent means & On by default. Retained for compatibility;
+this branch's model returns its deterministic vector even when the option is
+off, so switching it off does not enable VAE sampling.\\
 Neural evaluation seed & Default 13. Controls repeatable random evaluation.\\
 Run neural-loss evaluation & Processes batches, updates a running-loss chart,
 and shows batch and running-average measurements in a table. Loss components
@@ -973,6 +1158,11 @@ are explained in Section~\ref{sec:checkpoint}.\\
 The sample path is \code{data/<split>/samples.jsonl}, or uses the root named
 by \code{PROC_ROSETTA_DATA_DIR}. If it is missing, the page displays an
 information message instead of the run button.
+
+This helper uses its default loss weights and the inputs available to this
+evaluation path. It does not replay every saved training objective, curriculum,
+or auxiliary supervision signal. Some components can therefore be zero or
+differ from the saved training-history values.
 
 \subsection{Cross-modal retrieval}
 \ui{Run cross-modal retrieval} checks all six directions between tree, log,
@@ -986,6 +1176,8 @@ direction / count / available & Modality direction, number of paired groups,
 and whether a comparison can be made. A reason explains missing results.\\
 top1\_accuracy / top3\_accuracy / top5\_accuracy & Fraction of queries whose
 matching group is among the first 1, 3, or 5 candidates. Larger is better.\\
+\code{recall_at_5} & Also reported by the retrieval helper. For this page's
+one-representative-per-group comparison it equals the top-5 hit fraction.\\
 mrr & Mean reciprocal rank: a first-place match contributes 1, second place
 contributes $1/2$, and so on. Larger is better.\\
 mean\_rank / median\_rank & Average and middle matching positions. Smaller
@@ -1003,7 +1195,9 @@ With very few paired groups, a high top-$k$ score can be trivial. Use the
 Run alignment fitness and precision & Off by default. Enables the more
 expensive conformance measurements for both discovery methods.\\
 Compare with Inductive Miner & Uses selected event logs to generate one model
-with ProcRosetta and one with the classical Inductive Miner method.\\
+with ProcRosetta's bounded deployment decoder (source constraints, no repeated
+labels, and five-candidate beam search), and one with the classical Inductive
+Miner method.\\
 Comparison table & Artifact, method, model-discovery and conversion status,
 runtime, places, transitions, silent transitions, arcs, errors, and available
 fitness, precision, and F1. Without alignment enabled, those scores remain
@@ -1076,9 +1270,13 @@ those already stored result lists.
 
 \section{Document sources and compilation}
 \label{sec:sources}
-The guide was checked against repository revision \code{a1ea7ff}. The following
-files determine the interface described here; the application source takes
-precedence over older screenshots or descriptions.
+The guide was checked against the \code{ft-updates} branch at repository
+revision \code{06cb6c4}. It reflects the label-aware PNML path, deterministic
+encoders, bounded decoding, and output normalization in that revision. Where
+an interface caption still describes older behavior, the guide explicitly
+identifies the discrepancy. The following files determine the interface
+described here; the application source takes precedence over older screenshots
+or descriptions.
 
 \begin{controls}
 Navigation and overview & \path{streamlit_app.py};
@@ -1096,7 +1294,9 @@ Input, decoding, and exports & \path{src/proc_rosetta/artifact_io.py};
 \path{proc_rosetta_ui/workspace_service.py};
 \path{proc_rosetta_ui/encoding_service.py};
 \path{proc_rosetta_ui/decoding_service.py};
-\path{proc_rosetta_ui/export_service.py}.\\
+\path{proc_rosetta_ui/export_service.py};
+\path{src/proc_rosetta/models.py}; \path{src/proc_rosetta/tokenizers.py};
+\path{src/proc_rosetta/tree.py}; \path{src/proc_rosetta/pm4py_bridge.py}.\\
 Training and behavior measurements & \path{src/proc_rosetta/training.py};
 \path{src/proc_rosetta/losses.py}; \path{src/proc_rosetta/behavior.py};
 \path{src/proc_rosetta/benchmarks.py}.\\
@@ -1105,9 +1305,9 @@ Training and behavior measurements & \path{src/proc_rosetta/training.py};
 Build this standalone guide from the repository root:
 \begin{verbatim}
 latexmk -pdf -interaction=nonstopmode -halt-on-error \
-  -outdir=paper paper/streamlit_interface_guide.tex
+  -outdir=paper_applsci paper_applsci/streamlit_interface_guide.tex
 \end{verbatim}
-The output is \path{paper/streamlit_interface_guide.pdf}. A normal TeX Live
+The output is \path{paper_applsci/streamlit_interface_guide.pdf}. A normal TeX Live
 installation with the packages listed in this file's preamble is sufficient;
 no bibliography, external images, main-paper files, or shell-escape option is
 required.
