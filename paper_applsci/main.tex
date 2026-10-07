@@ -112,9 +112,15 @@ The evaluation separates two capabilities that are easy to conflate: learning a 
 
 The paper makes five contributions. First, it formulates behavior-aware alignment and retrieval among event logs, process trees, and Petri nets as a cross-artifact process mining task. Second, it introduces behavior-family supervision in which relations are controlled by behavioral properties rather than surface pairing alone. Third, it proposes a multimodal architecture and relation-aware objective for within-modal and cross-modal retrieval. Fourth, it provides grammar-constrained candidate generation while separating syntactic validity and Petri net convertibility from measured behavioral fidelity. Fifth, it releases the generated benchmark, external event log stress tests, baselines, checkpoint records, and implementation needed to inspect both successful and unsuccessful behavior.
 
+The rest of the paper is organized as follows. Section~\ref{sec:related} positions cross-artifact retrieval and candidate generation within the related literature, and Section~\ref{sec:setting} defines the artifacts, behavioral relations, and tasks. Section~\ref{sec:model} develops the method, beginning with behavior-family construction because it determines the supervision used by the architecture and training objectives. Section~\ref{sec:experiment} then specifies the data configuration and evaluation protocol used to test that method. Before presenting the results, Section~\ref{sec:reproduction} explains the intended analyst workflow and reference implementation, connecting the evaluated tasks to the practical steps of retrieving, proposing, and validating artifacts. This separates how the method works, how it is evaluated, and how its outputs are used. Section~\ref{sec:results} reports the findings for the three research questions, followed by comparisons with specialized discovery, external event log stress tests, and the scope of the efficiency evidence. Finally, Section~\ref{sec:discussion} interprets the findings, Section~\ref{sec:threats} sets out their limitations, and Section~\ref{sec:conclusion} concludes with directions for further work.
+
 \section{Related Work}\label{sec:related}
 
+Cross-artifact retrieval brings together process similarity, representation learning, and structured generation. This section reviews these strands and the synthetic benchmarks used to study them, establishing which existing capabilities support \model and where alignment across event logs, process trees, and Petri nets requires a different formulation.
+
 \subsection{Process Model Similarity, Matching, and Repository Search}
+
+Similarity and matching methods provide the starting point for deciding which repository artifacts should be retrieved for a process query.
 
 Process model relations may be defined over labels, graph structure, executable traces, or behavioral ordering relations \cite{Dijkman2011}, \cite{Schoknecht2017SimilaritySurvey}, and \cite{Zampino2026BehavioralSimilarity}. Observed-behavior measures compare executions \cite{deMedeiros2008ObservedBehavior}, whereas behavioral profiles summarize ordering and exclusiveness between activities \cite{Weidlich2011BehavioralProfiles}. Workflow embeddings and Siamese graph networks support efficient similarity-based candidate retrieval within workflow-model collections \cite{Klein2019WorkflowEmbeddings,Hoffmann2020SiameseWorkflowRetrieval}. These approaches motivate repository search, but generally assume a common model representation. \model instead asks whether an event log, a process tree, or a marked Petri net can query a candidate collection expressed in another representation.
 
@@ -122,9 +128,13 @@ Conformance checking addresses a related but distinct question. Fitness measures
 
 \subsection{Representation Learning for Event Logs and Process Models}
 
+Learning a common retrieval space builds on methods that encode individual event logs or process models as vectors.
+
 Trace encodings range from handcrafted features to sequence models \cite{Barbon2023}. Prior work learns representations at activity, trace, event log, or model level \cite{DeKoninck2018}, and graph-based embeddings represent Petri nets \cite{Colonna2024}. Representation learning is also used in predictive monitoring \cite{Berti2026ICFM}, where the goal is to predict properties of ongoing cases rather than align complete event logs with formal process models. In contrast, \model learns native encoders for finite event logs, hierarchical process trees, and marked Petri nets, with all three projected into one retrieval space.
 
 \subsection{Automated and Neural Process Discovery}
+
+Process discovery provides the closest comparison for the event log input of our candidate generator, so its role must be distinguished from repository retrieval.
 
 Classical process discovery maps finite event logs to generalizing process models, with methods trading fitness, precision, simplicity, scalability, and representational bias \cite{Augusto2019DiscoveryBenchmark}. Inductive Miner recursively detects cuts and returns a sound block-structured model \cite{Leemans2013}; Split Miner targets accurate, simple BPMN models and may express non-block-structured dependencies \cite{Augusto2019SplitMiner}. Learned process discovery estimates process structure from examples, including with graph neural networks \cite{Sommers2023}. Natural-language-to-model generation and specialized language models provide further structured-generation settings \cite{Kourani2024LLMProcessModeling,Berti2025RLProcessModeling}.
 
@@ -132,13 +142,19 @@ Retrieval, process discovery, and candidate generation must be distinguished. Pr
 
 \subsection{Multimodal and Multi-View Representation Learning}
 
+Aligning several artifact types requires learning from complementary views of behavior, connecting our task to multimodal and multi-view representation learning.
+
 General multimodal-learning taxonomies cover representation, alignment, and translation across heterogeneous views \cite{Baltrusaitis2019Multimodal}. Paired observations can define a common space without identical encoders \cite{Radford2021}; supervised contrastive objectives allow several members of a semantic class to act as positives \cite{Khosla2020}; and regularization of variance and covariance discourages collapse \cite{Bardes2022}. Process artifacts are unusual views because they differ in observability, abstraction, and behavioral semantics. In process mining, ``multimodal'' can also mean augmenting event data with video, audio, sensors, text, or images \cite{Gavric2025MultimodalEvidence,Pasquadibisceglie2026MultimodalPPM}. We therefore use \emph{cross-artifact} for alignment among alternative process representations.
 
 \subsection{Grammar-Constrained Structured Prediction}
 
+The candidate-generation task also draws on structured prediction, where output constraints determine which process models a decoder can propose.
+
 Grammar-aware latent-variable models and grammar-constrained decoding restrict generation to syntactically admissible structures \cite{Kusner2017GrammarVAE,Geng2023}. Formal transformations provide stronger guarantees on narrower domains: conversion from a workflow Petri net to a process tree can return an equal-language process tree when its applicability conditions hold \cite{vanZelst2020NetToTree}. A valid process tree likewise has a standard Petri net interpretation \cite{vanDerAalst2016}. \model always attempts a process tree proposal, including where an exact projection may not exist, and therefore separates output admissibility from behavioral fidelity.
 
 \subsection{Synthetic Process Generation and Benchmark Construction}
+
+Evaluating behavior-aware alignment requires examples whose behavioral relationships can be checked, motivating the use of synthetic process benchmarks.
 
 Synthetic families provide exact control over structural contrasts, repeated observations, and split membership. They also create a generator-specific notion of generalization. Abstraction-based process discovery and event-structure approaches illustrate other semantic bridges between event logs and models \cite{vanDerAalst2018Abstractions,Dumas2015EventStructures}, while partial-order process mining shows why total-order traces alone can hide concurrency \cite{Leemans2023PartialOrderSurvey}. The present benchmark records visible-language and partial-order relations separately, but it does not provide a behavioral-equivalence oracle for arbitrary external artifacts.
 
@@ -168,6 +184,8 @@ This work & EL, PT, PN & Yes & Visible-language and partial-order relations & Ye
 Formal similarity, exact transformation, learned retrieval, and process discovery each address part of the broader problem. \model contributes their cross-artifact combination: native encoding of event logs, process trees, and Petri nets; relation-aware supervision of a common retrieval space; and an auxiliary constrained process tree proposer. It neither defines a new universal equivalence relation nor guarantees behavioral preservation.
 
 \section{Problem Definition}\label{sec:setting}
+
+To compare heterogeneous artifacts meaningfully, we must specify both the information each representation contains and the behavioral relations that connect them. This section introduces those distinctions through a worked example, then defines cross-artifact retrieval and constrained candidate generation as the two tasks addressed by \model.
 
 \subsection{Heterogeneous Process Artifacts}
 
@@ -306,6 +324,8 @@ Together, behavior-aware representation learning, cross-artifact retrieval, and 
 
 \FloatBarrier
 \section{Materials and Methods}\label{sec:model}
+
+With the tasks defined, this section explains how \model learns to compare artifacts and propose process tree candidates. We begin with behavior families and relation checks, since they determine what the model is taught to preserve across representations. We then describe the encoders and constrained decoder, their computational cost, and the objectives and curriculum used to train them. The numerical dataset configuration and evaluation protocol follow separately in Section~\ref{sec:experiment}.
 
 \subsection{Behavior families as the supervision unit}\label{sec:corpus}
 
@@ -775,9 +795,11 @@ Adaptive validation balancing also changes source reconstruction multipliers sli
 
 \section{Data and experimental design}\label{sec:experiment}
 
-Section~\ref{sec:corpus} explained the logic of behavior-family generation. This section fixes the numerical configuration, corpus sizes, evaluation subset, and metrics used in the reported experiment.
+Section~\ref{sec:model} described how behavior families supervise the shared representation and candidate generator. This section specifies how we test those capabilities: it fixes the numerical data configuration, corpus sizes, evaluation subset, metrics, and baselines for the three research questions, followed by the protocol for external event log stress tests.
 
 \subsection{Synthetic-data specification}\label{sec:data-specification}
+
+The generator settings define the range of process behavior used to train and evaluate the shared representation and candidate generator.
 
 Table~\ref{tab:generator-config} gives the fixed settings used to generate each complexity-specific corpus. Labels are assigned only after topology sampling so that the activity floor can be satisfied without changing the requested root operator. Each accepted family contains two Petri net realizations and two clean event log observations. The two-by-two expansion creates training rows but does not create four independent families.
 
@@ -813,6 +835,8 @@ Ordinary profile & Recursion cap & Min. folded depth & Folded nodes & Visible la
 The displayed size, depth, and activity intervals are acceptance criteria for ordinary folded decoder targets, not global ranges for every family. Controlled anchors bypass these profile filters and remain present at all three levels, so aggregate statistics may legitimately fall outside an ordinary-profile interval. Within each level, the training quotas are 3,056 ordinary, 347 duplicate-prefix, 347 concurrency, and 346 M-pattern families. Validation and test use 376, 45, 46, and 45 families, respectively.
 
 \subsection{Dataset at a glance}
+
+The resulting corpus determines the structural diversity available for learning and the held-out families available for evaluating the two tasks.
 
 The synthetic corpus contains three independently generated complexity-specific corpora: \texttt{simple}, \texttt{medium}, and \texttt{complex}. Table~\ref{tab:corpus} reports family counts and held-out structural statistics; the Train, Validation, and Test columns count families rather than flattened rows. Each family contributes the four rows defined in Section~\ref{sec:setting}. All representations of a family remain in one split.
 
@@ -936,6 +960,8 @@ Retrieval and generation both end with the same decision point: the analyst acce
 
 \subsection{Implementation and access}
 
+The reference implementation makes the retrieval and generation workflow available for use and inspection, linking each output to the model and preprocessing that produced it.
+
 The open-source implementation is available in the public \href{https://github.com/fit-alessandro-berti/proc-rosetta}{ProcRosetta repository}. An installation-free browser interface is available at \href{https://rosetta-pm.app}{rosetta-pm.app}. The implementation separates artifact input and preprocessing, the three artifact-specific encoders, grammar-constrained decoding, behavioral evaluation, and presentation. The command-line programs and the browser interface call the same inference services and load the same checkpoint format. The browser is therefore an inspection and execution layer over the evaluated implementation, not a separate demonstration model.
 
 On import, the implementation parses and validates the source artifact, records preprocessing warnings, and creates the first-seen canonical activity map described in Section~\ref{sec:relations}. It also checks the artifact against the selected checkpoint's vocabulary and size limits before computing a representation. The session workspace retains the source artifact, canonical map, checkpoint identity, embedding, decoding settings, and validation results. Cache keys depend on both content and configuration, which prevents an embedding or decode produced under one checkpoint or policy from being silently reused under another.
@@ -991,9 +1017,14 @@ scripts/xes_to_ptml.py input.xes decoded.ptml \
 
 The test command evaluates exactly one of the \texttt{simple}, \texttt{medium}, or \texttt{complex} curricula, so it must be repeated when results for all three are required. The complete paper configuration is recorded in the curriculum manifest, the checkpoint-provenance record, and the machine-readable evaluation evidence distributed with the manuscript. These records fix the data construction, checkpoint selection, and evaluation subset instead of relying on undocumented interface state.
 
+\FloatBarrier
 \section{Results}\label{sec:results}
 
+We now report the evidence for the representation and generation capabilities underlying the workflow in Section~\ref{sec:reproduction}, using the protocol in Section~\ref{sec:experiment}. After clarifying dataset integrity and evaluation scope, we address \RQone{} on representation alignment, \RQtwo{} on cross-artifact retrieval, and \RQthree{} on structural validity and behavioral fidelity. Comparisons with specialized process discovery and external event log stress tests then examine the practical limits of generation, before we summarize the available efficiency evidence.
+
 \subsection{Dataset Integrity and Evaluation Protocol}
+
+Interpreting retrieval and generation performance first requires establishing which artifacts were held out and what comparisons the evaluation supports.
 
 The held-out split contains 1,536 families across the three curricula, while the reported quantitative evidence uses the deterministic, family-complete 48-family subset described in Section~\ref{sec:fixed-evaluation}. Alternative rows from a family never cross split boundaries. Independently generated families were not globally deduplicated, so the present split is family-disjoint but not certified behavior-disjoint.
 The evaluation retains repeated observations and realizations within each family. Consequently, the reported retrieval results characterize the balanced multi-observation protocol only; they do not establish performance for a deduplicated process repository or a behavior-disjoint split.
@@ -1240,6 +1271,8 @@ The decoder should consequently be used as a candidate generator rather than as 
 
 \subsection{Comparison with Specialized Process Discovery}
 
+To assess the practical value of candidate generation from event logs, we compare its behavioral fidelity with a method designed specifically for process discovery.
+
 Table~\ref{tab:discovery} compares event log decoding with Inductive Miner. \model remains substantially below the specialized method on footprint F1 and has lower footprint-evaluator coverage. The strong Inductive Miner results are consistent with the favorable experimental setting: the event logs are clean and much of the synthetic corpus originates from block-structured process trees. The comparison nevertheless answers the practical question posed by \RQthree: whether \model currently improves process discovery from event logs into process trees under the conditions in which it was trained. It does not.
 
 \begin{table*}[!t]
@@ -1267,6 +1300,8 @@ Level & Method & Evaluable (\%) & Fitness & Precision & F1 & 95\% interval \\
 \end{table*}
 
 \subsection{External Event Log Generation Stress Test}
+
+The external event logs test how candidate generation behaves beyond the synthetic data, using the input-shift protocol in Section~\ref{sec:real-log-design}.
 
 For the real event logs, the dominant failure is underfitting rather than repeated labels. The decoded receipt process tree retains only six of 27 observed activities, and the road-traffic process tree retains eight of ten. Allowing repeated labels changes neither top-ranked process tree because neither unconstrained result repeats an activity. This null result only rules out forced uniqueness as the cause of these two failures; it does not show that the policies are generally equivalent. Inductive Miner attains higher footprint F1 on both samples, although its receipt process model trades perfect fitness for relatively low precision.
 
@@ -1298,6 +1333,8 @@ Figure~\ref{fig:real-log-tree} shows the road-traffic output using the process t
 
 \subsection{Efficiency and Scalability}
 
+Practical repository search and candidate generation also depend on computational cost, so we distinguish the available complexity analysis from the runtime evidence still needed.
+
 The architecture contains 6,263,248 trainable parameters, and Section~\ref{sec:complexity} gives asymptotic costs for encoding, indexed retrieval, and beam decoding. Empirical encoding latency, repository-indexing time, query latency, peak memory, and beam-decoding latency were not measured in this study. Accordingly, no empirical scalability claim is made.
 
 \section{Discussion}\label{sec:discussion}
@@ -1312,6 +1349,8 @@ These findings suggest a workflow that \emph{retrieves, proposes, and validates}
 
 \FloatBarrier
 \section{Limitations}\label{sec:threats}
+
+The proposed retrieval and validation workflow depends on how far the experimental findings extend beyond the evaluated setting. This section examines the limits imposed by the data, output language, and evaluation design on claims about alignment, retrieval, and generation.
 
 Most evidence comes from synthetic behavior families produced by the same generator used to create the training data. Holding out complete families prevents artifacts from one family from appearing in different splits, but independently generated families were not globally deduplicated by normalized process tree or visible language. The synthetic data also omit timestamps, resources, lifecycle information, drift, and meaningful activity names. In addition, the generator supplies relation labels that would be harder to obtain for real artifacts. The results therefore show generalization to new families from the same generator, not transfer to industrial data or to behavior that is guaranteed to be globally distinct from the training set.
 
