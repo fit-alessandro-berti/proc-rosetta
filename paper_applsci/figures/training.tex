@@ -1,4 +1,4 @@
-\begin{figure*}[!b]
+\begin{figure*}[!htb]
 \centering
 \begin{tikzpicture}
 \begin{axis}[
@@ -31,6 +31,6 @@
 \node[font=\scriptsize,text=prgray] at (axis cs:13.8,10.55) {\texttt{complex} mix};
 \end{axis}
 \end{tikzpicture}
-\caption{Training and macro validation objectives. Stage transitions change task difficulty. Epoch 10 is not eligible for final selection; epoch 11 is the first eligible \texttt{complex}-stage evaluation and is selected.}
+\caption{Training and macro validation objectives in the reported run. Shading shows the realized simple stage (epochs 1 to 5), medium stage (6 to 10), and complex stage (11 to 17), with transitions at epochs 6 and 11. The dashed line marks the selected checkpoint at epoch 11, the first eligible complex-stage evaluation.}
 \label{fig:training}
 \end{figure*}
