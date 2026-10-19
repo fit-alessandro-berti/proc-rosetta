@@ -702,7 +702,7 @@ These cases reveal failure patterns but do not estimate average real-world perfo
 
 \section{Application Scenario and Reference Implementation}\label{sec:reproduction}
 
-The model is useful in practice only if its output can be \emph{inspected, reproduced, and challenged}. A similarity score alone is not enough: an analyst must be able to see which artifact was encoded, which checkpoint produced the representation, why a result was retrieved, and whether a generated model passes independent checks. This section therefore presents the application scenario together with the reference implementation that supports it.
+This section shows how an analyst can use \model to find related process artifacts, propose a process tree, and check the results. It also describes the software that supports these steps. The software records the inputs, model version, and settings so that analysts can inspect and reproduce each result.
 
 \subsection{From an input artifact to an analyst decision}
 
